@@ -78,6 +78,7 @@ pub struct Task {
     pub total_size: u64,
     pub downloaded_bytes: AtomicU64,
     pub connections: usize,
+    pub referer: Option<String>,
     status: RwLock<TaskStatus>,
     segments: RwLock<Vec<Arc<DownloadSegment>>>,
     cancellation_token: RwLock<CancellationToken>,
@@ -90,6 +91,7 @@ impl Task {
         output_path: PathBuf,
         total_size: u64,
         connections: usize,
+        referer: Option<String>,
     ) -> Self {
         Self {
             id,
@@ -98,6 +100,7 @@ impl Task {
             total_size,
             downloaded_bytes: AtomicU64::new(0),
             connections,
+            referer,
             status: RwLock::new(TaskStatus::Pending),
             segments: RwLock::new(Vec::new()),
             cancellation_token: RwLock::new(CancellationToken::new()),
@@ -179,6 +182,7 @@ mod tests {
             PathBuf::from("file.zip"),
             1000,
             4,
+            None,
         );
 
         assert_eq!(task.status(), TaskStatus::Pending);

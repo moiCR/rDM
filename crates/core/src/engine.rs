@@ -69,15 +69,33 @@ impl Engine {
         &self.disk_manager
     }
 
-    pub async fn probe(&self, url: &str) -> Result<ResourceProbe, EngineError> {
-        let response = match self.client.head(url).send().await {
+    pub async fn probe(
+        &self,
+        url: &str,
+        referer: Option<&str>,
+    ) -> Result<ResourceProbe, EngineError> {
+        let resolved_referer = resolve_referer(url, referer);
+
+        let mut head_builder = self.client.head(url);
+        if let Some(ref r) = resolved_referer
+            && let Ok(val) = reqwest::header::HeaderValue::from_str(r)
+        {
+            head_builder = head_builder.header(reqwest::header::REFERER, val);
+        }
+
+        let response = match head_builder.send().await {
             Ok(res) if res.status().is_success() => res,
             _ => {
-                self.client
+                let mut get_builder = self
+                    .client
                     .get(url)
-                    .header(reqwest::header::RANGE, "bytes=0-0")
-                    .send()
-                    .await?
+                    .header(reqwest::header::RANGE, "bytes=0-0");
+                if let Some(ref r) = resolved_referer
+                    && let Ok(val) = reqwest::header::HeaderValue::from_str(r)
+                {
+                    get_builder = get_builder.header(reqwest::header::REFERER, val);
+                }
+                get_builder.send().await?
             }
         };
 
@@ -134,8 +152,9 @@ impl Engine {
         url: &str,
         output_path: Option<PathBuf>,
         connections: Option<usize>,
+        referer: Option<String>,
     ) -> Result<Arc<Task>, EngineError> {
-        let probe = self.probe(url).await?;
+        let probe = self.probe(url, referer.as_deref()).await?;
 
         let destination_path = match output_path {
             Some(path) => {
@@ -166,6 +185,7 @@ impl Engine {
             destination_path,
             probe.total_size,
             active_connections,
+            referer,
         ));
 
         let mut tasks_guard = self.tasks.write().await;
@@ -319,6 +339,13 @@ async fn download_worker(
 
     let mut request_builder = client.get(&task.url);
 
+    let resolved_ref = resolve_referer(&task.url, task.referer.as_deref());
+    if let Some(ref r) = resolved_ref
+        && let Ok(val) = reqwest::header::HeaderValue::from_str(r)
+    {
+        request_builder = request_builder.header(reqwest::header::REFERER, val);
+    }
+
     if segment.end_byte > 0 {
         request_builder = request_builder.header(
             reqwest::header::RANGE,
@@ -358,6 +385,21 @@ async fn download_worker(
     disk_manager.flush(&mut file).await?;
     segment.set_status(SegmentStatus::Completed);
     Ok(())
+}
+
+fn resolve_referer(url_str: &str, custom_referer: Option<&str>) -> Option<String> {
+    if let Some(r) = custom_referer {
+        return Some(r.to_string());
+    }
+
+    if let Ok(parsed_url) = reqwest::Url::parse(url_str)
+        && let Some(host) = parsed_url.host_str()
+    {
+        let scheme = parsed_url.scheme();
+        return Some(format!("{scheme}://{host}/"));
+    }
+
+    None
 }
 
 fn resolve_unique_path(target_path: &Path) -> PathBuf {
@@ -515,6 +557,12 @@ mod tests {
         assert_eq!(second_duplicate, temp_dir.join("sample (2).zip"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_resolve_referer_default() {
+        let referer = resolve_referer("https://us1.akirabox.com/uploads/file.zip", None);
+        assert_eq!(referer, Some("https://us1.akirabox.com/".to_string()));
     }
 
     #[test]

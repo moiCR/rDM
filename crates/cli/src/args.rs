@@ -7,6 +7,7 @@ pub struct CliArgs {
     pub url: String,
     pub output: Option<PathBuf>,
     pub connections: Option<usize>,
+    pub referer: Option<String>,
 }
 
 impl CliArgs {
@@ -22,6 +23,7 @@ impl CliArgs {
         let mut url = None;
         let mut output = None;
         let mut connections = None;
+        let mut referer = None;
 
         let mut iter = args.into_iter().map(Into::into);
 
@@ -51,6 +53,12 @@ impl CliArgs {
                     }
                     connections = Some(parsed);
                 }
+                "-r" | "--referer" => {
+                    let val = iter.next().ok_or_else(|| {
+                        CliError::InvalidArgument("Missing value for --referer".to_string())
+                    })?;
+                    referer = Some(val);
+                }
                 other if other.starts_with('-') => {
                     return Err(CliError::InvalidArgument(format!(
                         "Unknown option: {other}"
@@ -74,6 +82,7 @@ impl CliArgs {
             url,
             output,
             connections,
+            referer,
         }))
     }
 
@@ -86,6 +95,7 @@ impl CliArgs {
         println!("OPTIONS:");
         println!("    -o, --output <PATH>       Target file or directory path");
         println!("    -c, --connections <NUM>   Number of concurrent segment connections");
+        println!("    -r, --referer <URL>       Custom HTTP Referer header");
         println!("    -h, --help                Show this help message\n");
     }
 }
@@ -101,6 +111,7 @@ mod tests {
         assert_eq!(parsed.url, "https://example.com/file.zip");
         assert_eq!(parsed.output, None);
         assert_eq!(parsed.connections, None);
+        assert_eq!(parsed.referer, None);
     }
 
     #[test]
@@ -111,11 +122,14 @@ mod tests {
             "downloads/my_file.zip",
             "-c",
             "16",
+            "-r",
+            "https://example.com/",
         ];
         let parsed = CliArgs::parse_from(args).unwrap().unwrap();
         assert_eq!(parsed.url, "https://example.com/file.zip");
         assert_eq!(parsed.output, Some(PathBuf::from("downloads/my_file.zip")));
         assert_eq!(parsed.connections, Some(16));
+        assert_eq!(parsed.referer, Some("https://example.com/".to_string()));
     }
 
     #[test]

@@ -28,7 +28,11 @@ impl CliRunner {
     pub async fn run(&self, args: CliArgs) -> Result<(), CliError> {
         self.reporter.info(&format!("Probing URL: {}", args.url));
 
-        let probe = self.core.engine().probe(&args.url).await?;
+        let probe = self
+            .core
+            .engine()
+            .probe(&args.url, args.referer.as_deref())
+            .await?;
 
         self.reporter.info(&format!("File: {}", probe.file_name));
         self.reporter
@@ -53,7 +57,7 @@ impl CliRunner {
         let task = self
             .core
             .engine()
-            .create_task(&args.url, args.output, args.connections)
+            .create_task(&args.url, args.output, args.connections, args.referer)
             .await?;
 
         self.reporter

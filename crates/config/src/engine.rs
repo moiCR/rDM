@@ -46,8 +46,7 @@ pub fn get_user_agent() -> String {
     };
 
     format!(
-        "Mozilla/5.0 ({}) AppleWebKit/537.36 (KHTML, like Gecko) rDM/{}",
-        os,
+        "Mozilla/5.0 ({os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 rDM/{}",
         env!("CARGO_PKG_VERSION")
     )
 }
