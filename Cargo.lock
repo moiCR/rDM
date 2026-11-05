@@ -5242,6 +5242,7 @@ dependencies = [
  "rdm-core",
  "thiserror 2.0.21",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -5261,6 +5262,8 @@ dependencies = [
  "percent-encoding",
  "rdm-config",
  "reqwest",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",

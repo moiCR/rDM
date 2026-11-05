@@ -29,7 +29,7 @@ pub struct Engine {
     config: Arc<ConfigManager>,
     disk_manager: Arc<DiskManager>,
     client: reqwest::Client,
-    tasks: RwLock<HashMap<Uuid, Arc<Task>>>,
+    tasks: Arc<RwLock<HashMap<Uuid, Arc<Task>>>>,
 }
 
 impl Engine {
@@ -53,11 +53,23 @@ impl Engine {
             .user_agent(&engine_config.user_agent)
             .build()?;
 
+        let mut initial_tasks = HashMap::new();
+        let state_file = engine_config.state_dir.join("tasks.json");
+        if let Ok(content) = std::fs::read_to_string(&state_file)
+            && let Ok(persisted_tasks) =
+                serde_json::from_str::<Vec<crate::task::PersistedTask>>(&content)
+        {
+            for persisted in persisted_tasks {
+                let id = persisted.id;
+                initial_tasks.insert(id, Arc::new(Task::from_persisted(persisted)));
+            }
+        }
+
         Ok(Self {
             config,
             disk_manager,
             client,
-            tasks: RwLock::new(HashMap::new()),
+            tasks: Arc::new(RwLock::new(initial_tasks)),
         })
     }
 
@@ -67,6 +79,30 @@ impl Engine {
 
     pub fn disk_manager(&self) -> &Arc<DiskManager> {
         &self.disk_manager
+    }
+
+    pub async fn save_state(&self) -> Result<(), EngineError> {
+        let state_dir = &self.config.config().state_dir;
+        persist_tasks_to_disk(state_dir, &self.tasks).await;
+        Ok(())
+    }
+
+    pub async fn load_state(&self) -> Result<(), EngineError> {
+        let state_file = self.config.config().state_dir.join("tasks.json");
+        if !tokio::fs::try_exists(&state_file).await.unwrap_or(false) {
+            return Ok(());
+        }
+
+        let content = tokio::fs::read_to_string(&state_file).await?;
+        let persisted_tasks: Vec<crate::task::PersistedTask> = serde_json::from_str(&content)?;
+
+        let mut tasks_guard = self.tasks.write().await;
+        for persisted in persisted_tasks {
+            let task_id = persisted.id;
+            let task = Arc::new(Task::from_persisted(persisted));
+            tasks_guard.insert(task_id, task);
+        }
+        Ok(())
     }
 
     pub async fn probe(
@@ -188,8 +224,12 @@ impl Engine {
             referer,
         ));
 
-        let mut tasks_guard = self.tasks.write().await;
-        tasks_guard.insert(task_id, Arc::clone(&task));
+        {
+            let mut tasks_guard = self.tasks.write().await;
+            tasks_guard.insert(task_id, Arc::clone(&task));
+        }
+
+        let _ = self.save_state().await;
 
         Ok(task)
     }
@@ -214,35 +254,45 @@ impl Engine {
             self.disk_manager.flush(&mut file).await?;
         }
 
-        let segment_count = task.connections.max(1);
-        let mut segments = Vec::with_capacity(segment_count);
+        let mut segments = task.segments();
+        if segments.is_empty() {
+            let segment_count = task.connections.max(1);
+            let mut new_segments = Vec::with_capacity(segment_count);
 
-        if segment_count <= 1 || task.total_size == 0 {
-            let end_byte = if task.total_size > 0 {
-                task.total_size - 1
-            } else {
-                0
-            };
-            segments.push(Arc::new(DownloadSegment::new(0, 0, end_byte)));
-        } else {
-            let chunk_size = task.total_size / segment_count as u64;
-            for index in 0..segment_count {
-                let start_byte = index as u64 * chunk_size;
-                let end_byte = if index == segment_count - 1 {
+            if segment_count <= 1 || task.total_size == 0 {
+                let end_byte = if task.total_size > 0 {
                     task.total_size - 1
                 } else {
-                    (index as u64 + 1) * chunk_size - 1
+                    0
                 };
-                segments.push(Arc::new(DownloadSegment::new(index, start_byte, end_byte)));
+                new_segments.push(Arc::new(DownloadSegment::new(0, 0, end_byte)));
+            } else {
+                let chunk_size = task.total_size / segment_count as u64;
+                for index in 0..segment_count {
+                    let start_byte = index as u64 * chunk_size;
+                    let end_byte = if index == segment_count - 1 {
+                        task.total_size - 1
+                    } else {
+                        (index as u64 + 1) * chunk_size - 1
+                    };
+                    new_segments.push(Arc::new(DownloadSegment::new(index, start_byte, end_byte)));
+                }
             }
+
+            task.set_segments(new_segments.clone());
+            segments = new_segments;
         }
 
-        task.set_segments(segments.clone());
         task.set_status(TaskStatus::Downloading);
+        let _ = self.save_state().await;
 
         let mut worker_handles = Vec::with_capacity(segments.len());
 
         for segment in segments {
+            if segment.status() == SegmentStatus::Completed {
+                continue;
+            }
+
             let client = self.client.clone();
             let disk_manager = Arc::clone(&self.disk_manager);
             let task_ref = Arc::clone(&task);
@@ -255,7 +305,16 @@ impl Engine {
             worker_handles.push(handle);
         }
 
+        if worker_handles.is_empty() {
+            task.set_status(TaskStatus::Completed);
+            let _ = self.save_state().await;
+            return Ok(());
+        }
+
         let monitor_task = Arc::clone(&task);
+        let monitor_state_dir = self.config.config().state_dir.clone();
+        let monitor_tasks = Arc::clone(&self.tasks);
+
         tokio::spawn(async move {
             let mut all_succeeded = true;
             let mut failure_reason = None;
@@ -276,6 +335,7 @@ impl Engine {
 
             let final_status = monitor_task.status();
             if final_status == TaskStatus::Paused || final_status == TaskStatus::Cancelled {
+                persist_tasks_to_disk(&monitor_state_dir, &monitor_tasks).await;
                 return;
             }
 
@@ -288,20 +348,50 @@ impl Engine {
                 };
                 monitor_task.set_status(TaskStatus::Failed(error_text));
             }
+
+            persist_tasks_to_disk(&monitor_state_dir, &monitor_tasks).await;
         });
 
         Ok(())
     }
 
+    pub async fn resume_task(&self, task_id: Uuid) -> Result<(), EngineError> {
+        self.start_task(task_id).await
+    }
+
     pub async fn pause_task(&self, task_id: Uuid) -> Result<(), EngineError> {
         let task = self.get_task(task_id).await?;
         task.pause();
+        let _ = self.save_state().await;
         Ok(())
     }
 
     pub async fn cancel_task(&self, task_id: Uuid) -> Result<(), EngineError> {
         let task = self.get_task(task_id).await?;
         task.cancel();
+        let _ = self.save_state().await;
+        Ok(())
+    }
+
+    pub async fn delete_task(&self, task_id: Uuid, delete_file: bool) -> Result<(), EngineError> {
+        let task = {
+            let mut tasks_guard = self.tasks.write().await;
+            tasks_guard
+                .remove(&task_id)
+                .ok_or(EngineError::TaskNotFound(task_id))?
+        };
+
+        task.cancel();
+
+        if delete_file
+            && tokio::fs::try_exists(&task.output_path)
+                .await
+                .unwrap_or(false)
+        {
+            let _ = tokio::fs::remove_file(&task.output_path).await;
+        }
+
+        let _ = self.save_state().await;
         Ok(())
     }
 
@@ -319,12 +409,63 @@ impl Engine {
     }
 }
 
+async fn persist_tasks_to_disk(state_dir: &Path, tasks_map: &RwLock<HashMap<Uuid, Arc<Task>>>) {
+    if let Ok(()) = tokio::fs::create_dir_all(state_dir).await {
+        let tasks_guard = tasks_map.read().await;
+        let persisted_tasks: Vec<crate::task::PersistedTask> =
+            tasks_guard.values().map(|t| t.to_persisted()).collect();
+        if let Ok(json) = serde_json::to_string_pretty(&persisted_tasks) {
+            let _ = tokio::fs::write(state_dir.join("tasks.json"), json).await;
+        }
+    }
+}
+
 async fn download_worker(
     client: reqwest::Client,
     disk_manager: Arc<DiskManager>,
     task: Arc<Task>,
     segment: Arc<DownloadSegment>,
     cancellation_token: CancellationToken,
+) -> Result<(), EngineError> {
+    let max_retries = 5;
+    let mut attempt = 0;
+
+    loop {
+        if cancellation_token.is_cancelled() {
+            return Ok(());
+        }
+
+        let result =
+            download_worker_stream(&client, &disk_manager, &task, &segment, &cancellation_token)
+                .await;
+
+        match result {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                if cancellation_token.is_cancelled() {
+                    return Ok(());
+                }
+                attempt += 1;
+                if attempt > max_retries {
+                    segment.set_status(SegmentStatus::Failed);
+                    return Err(err);
+                }
+                let backoff_ms = (200 * (1 << attempt)).min(5000);
+                tokio::select! {
+                    _ = cancellation_token.cancelled() => return Ok(()),
+                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)) => {}
+                }
+            }
+        }
+    }
+}
+
+async fn download_worker_stream(
+    client: &reqwest::Client,
+    disk_manager: &Arc<DiskManager>,
+    task: &Arc<Task>,
+    segment: &Arc<DownloadSegment>,
+    cancellation_token: &CancellationToken,
 ) -> Result<(), EngineError> {
     segment.set_status(SegmentStatus::Downloading);
 
@@ -351,13 +492,15 @@ async fn download_worker(
             reqwest::header::RANGE,
             format!("bytes={current_offset}-{}", segment.end_byte),
         );
+    } else if current_offset > 0 {
+        request_builder =
+            request_builder.header(reqwest::header::RANGE, format!("bytes={current_offset}-"));
     }
 
     let response = request_builder.send().await?;
     let status = response.status();
 
     if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
-        segment.set_status(SegmentStatus::Failed);
         return Err(EngineError::HttpStatus(status));
     }
 
@@ -499,6 +642,7 @@ fn extract_file_name_from_url(url_str: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rdm_config::EngineConfig;
 
     #[test]
     fn test_extract_file_name_from_url() {
@@ -578,5 +722,41 @@ mod tests {
                 config.config().user_agent
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_persistence_save_and_load() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("rdm_persist_test_{}", Uuid::new_v4()));
+        let config_obj = EngineConfig::default()
+            .with_state_dir(temp_dir.clone())
+            .with_download_dir(temp_dir.clone());
+        let config = Arc::new(ConfigManager::from_config(config_obj));
+        let disk_manager = Arc::new(DiskManager::new());
+
+        let engine = Engine::new(Arc::clone(&config), Arc::clone(&disk_manager))?;
+        let task_id = Uuid::new_v4();
+        let task = Arc::new(Task::new(
+            task_id,
+            "https://example.com/test.zip".to_string(),
+            temp_dir.join("test.zip"),
+            1024,
+            2,
+            None,
+        ));
+
+        {
+            let mut tasks = engine.tasks.write().await;
+            tasks.insert(task_id, task);
+        }
+
+        engine.save_state().await?;
+
+        let engine2 = Engine::new(Arc::clone(&config), Arc::clone(&disk_manager))?;
+        let restored_task = engine2.get_task(task_id).await?;
+        assert_eq!(restored_task.id, task_id);
+        assert_eq!(restored_task.total_size, 1024);
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        Ok(())
     }
 }

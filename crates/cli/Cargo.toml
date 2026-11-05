@@ -8,3 +8,4 @@ rdm-core.workspace = true
 rdm-config.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
+uuid.workspace = true

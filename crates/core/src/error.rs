@@ -29,4 +29,10 @@ pub enum EngineError {
 
     #[error("Download was cancelled")]
     Cancelled,
+
+    #[error("Insufficient disk space: required {required} bytes, available {available} bytes")]
+    InsufficientDiskSpace { required: u64, available: u64 },
+
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
 }

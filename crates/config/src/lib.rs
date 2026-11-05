@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::engine::EngineConfig;
+pub use crate::engine::{EngineConfig, get_user_agent};
 
 pub mod engine;
 

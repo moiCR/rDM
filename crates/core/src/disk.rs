@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tokio::{
     fs::{File, OpenOptions, create_dir_all},
@@ -15,16 +15,98 @@ impl DiskManager {
         Self {}
     }
 
+    pub fn get_available_space(path: &Path) -> Result<u64, EngineError> {
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStrExt;
+
+            let mut target_dir = if path.is_dir() {
+                path.to_path_buf()
+            } else {
+                path.parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("."))
+            };
+
+            while !target_dir.exists() {
+                if let Some(parent) = target_dir.parent() {
+                    target_dir = parent.to_path_buf();
+                } else {
+                    break;
+                }
+            }
+
+            let mut wide: Vec<u16> = target_dir.as_os_str().encode_wide().collect();
+            wide.push(0);
+
+            let mut free_bytes_available: u64 = 0;
+            let mut total_number_of_bytes: u64 = 0;
+            let mut total_number_of_free_bytes: u64 = 0;
+
+            unsafe extern "system" {
+                fn GetDiskFreeSpaceExW(
+                    lpDirectoryName: *const u16,
+                    lpFreeBytesAvailableToCaller: *mut u64,
+                    lpTotalNumberOfBytes: *mut u64,
+                    lpTotalNumberOfFreeBytes: *mut u64,
+                ) -> i32;
+            }
+
+            let success = unsafe {
+                GetDiskFreeSpaceExW(
+                    wide.as_ptr(),
+                    &mut free_bytes_available,
+                    &mut total_number_of_bytes,
+                    &mut total_number_of_free_bytes,
+                )
+            };
+
+            if success != 0 {
+                Ok(free_bytes_available)
+            } else {
+                Err(EngineError::Io(std::io::Error::last_os_error()))
+            }
+        }
+
+        #[cfg(not(windows))]
+        {
+            let _ = path;
+            Ok(u64::MAX)
+        }
+    }
+
+    pub fn check_available_space(path: &Path, required_bytes: u64) -> Result<(), EngineError> {
+        let available = Self::get_available_space(path)?;
+        if available < required_bytes {
+            return Err(EngineError::InsufficientDiskSpace {
+                required: required_bytes,
+                available,
+            });
+        }
+        Ok(())
+    }
+
     pub async fn allocate_file(&self, path: &Path, size: u64) -> Result<File, EngineError> {
         if let Some(parent) = path.parent() {
             create_dir_all(parent).await?;
+        }
+
+        let existing_len = if let Ok(metadata) = tokio::fs::metadata(path).await {
+            metadata.len()
+        } else {
+            0
+        };
+
+        let additional_required = size.saturating_sub(existing_len);
+        if additional_required > 0 {
+            Self::check_available_space(path, additional_required)?;
         }
 
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
-            .truncate(true)
+            .truncate(false)
             .open(path)
             .await?;
 
@@ -116,5 +198,13 @@ mod tests {
         let _ = tokio::fs::remove_dir(&temp_dir).await;
 
         Ok(())
+    }
+
+    #[test]
+    fn test_disk_space_check() {
+        let temp_dir = std::env::temp_dir();
+        let space = DiskManager::get_available_space(&temp_dir);
+        assert!(space.is_ok());
+        assert!(space.unwrap() > 0);
     }
 }

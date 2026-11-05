@@ -5,35 +5,48 @@ use std::path::PathBuf;
 pub struct EngineConfig {
     pub default_connections: usize,
     pub download_dir: PathBuf,
+    pub state_dir: PathBuf,
     pub user_agent: String,
 }
 
 impl Default for EngineConfig {
     fn default() -> Self {
-        let download_dir = match dirs::download_dir() {
-            Some(dir) => dir,
-            None => PathBuf::from("."),
-        };
+        let download_dir = dirs::download_dir().unwrap_or_else(|| PathBuf::from("."));
+        let state_dir = dirs::data_local_dir()
+            .map(|dir| dir.join("rdm"))
+            .unwrap_or_else(|| PathBuf::from(".rdm"));
 
         Self {
             default_connections: 8,
             download_dir,
+            state_dir,
             user_agent: get_user_agent(),
         }
     }
 }
 
 impl EngineConfig {
-    pub fn new(default_connections: usize, download_dir: PathBuf, user_agent: String) -> Self {
+    pub fn new(
+        default_connections: usize,
+        download_dir: PathBuf,
+        state_dir: PathBuf,
+        user_agent: String,
+    ) -> Self {
         Self {
             default_connections,
             download_dir,
+            state_dir,
             user_agent,
         }
     }
 
     pub fn with_download_dir(mut self, download_dir: PathBuf) -> Self {
         self.download_dir = download_dir;
+        self
+    }
+
+    pub fn with_state_dir(mut self, state_dir: PathBuf) -> Self {
+        self.state_dir = state_dir;
         self
     }
 }

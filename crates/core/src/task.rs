@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
     sync::{
@@ -8,7 +9,7 @@ use std::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskStatus {
     Pending,
     Connecting,
@@ -19,12 +20,21 @@ pub enum TaskStatus {
     Failed(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SegmentStatus {
     Pending,
     Downloading,
     Completed,
     Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PersistedSegment {
+    pub index: usize,
+    pub start_byte: u64,
+    pub end_byte: u64,
+    pub downloaded_bytes: u64,
+    pub status: SegmentStatus,
 }
 
 #[derive(Debug)]
@@ -68,6 +78,43 @@ impl DownloadSegment {
             Err(poisoned) => *poisoned.into_inner() = status,
         }
     }
+
+    pub fn to_persisted(&self) -> PersistedSegment {
+        PersistedSegment {
+            index: self.index,
+            start_byte: self.start_byte,
+            end_byte: self.end_byte,
+            downloaded_bytes: self.downloaded_bytes.load(Ordering::Relaxed),
+            status: self.status(),
+        }
+    }
+
+    pub fn from_persisted(persisted: PersistedSegment) -> Self {
+        let status = match persisted.status {
+            SegmentStatus::Downloading => SegmentStatus::Pending,
+            other => other,
+        };
+        Self {
+            index: persisted.index,
+            start_byte: persisted.start_byte,
+            end_byte: persisted.end_byte,
+            downloaded_bytes: AtomicU64::new(persisted.downloaded_bytes),
+            status: RwLock::new(status),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PersistedTask {
+    pub id: Uuid,
+    pub url: String,
+    pub output_path: PathBuf,
+    pub total_size: u64,
+    pub downloaded_bytes: u64,
+    pub connections: usize,
+    pub referer: Option<String>,
+    pub status: TaskStatus,
+    pub segments: Vec<PersistedSegment>,
 }
 
 #[derive(Debug)]
@@ -168,6 +215,50 @@ impl Task {
             Err(poisoned) => poisoned.into_inner().clone(),
         }
     }
+
+    pub fn to_persisted(&self) -> PersistedTask {
+        let segments = self
+            .segments()
+            .into_iter()
+            .map(|s| s.to_persisted())
+            .collect();
+        PersistedTask {
+            id: self.id,
+            url: self.url.clone(),
+            output_path: self.output_path.clone(),
+            total_size: self.total_size,
+            downloaded_bytes: self.downloaded_bytes.load(Ordering::Relaxed),
+            connections: self.connections,
+            referer: self.referer.clone(),
+            status: self.status(),
+            segments,
+        }
+    }
+
+    pub fn from_persisted(persisted: PersistedTask) -> Self {
+        let status = match persisted.status {
+            TaskStatus::Downloading | TaskStatus::Connecting => TaskStatus::Paused,
+            other => other,
+        };
+        let segments: Vec<Arc<DownloadSegment>> = persisted
+            .segments
+            .into_iter()
+            .map(|s| Arc::new(DownloadSegment::from_persisted(s)))
+            .collect();
+
+        Self {
+            id: persisted.id,
+            url: persisted.url,
+            output_path: persisted.output_path,
+            total_size: persisted.total_size,
+            downloaded_bytes: AtomicU64::new(persisted.downloaded_bytes),
+            connections: persisted.connections,
+            referer: persisted.referer,
+            status: RwLock::new(status),
+            segments: RwLock::new(segments),
+            cancellation_token: RwLock::new(CancellationToken::new()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -211,5 +302,42 @@ mod tests {
 
         segment.set_status(SegmentStatus::Downloading);
         assert_eq!(segment.status(), SegmentStatus::Downloading);
+    }
+
+    #[test]
+    fn test_persisted_conversion() {
+        let id = Uuid::new_v4();
+        let task = Task::new(
+            id,
+            "https://example.com/file.zip".to_string(),
+            PathBuf::from("file.zip"),
+            1000,
+            2,
+            Some("https://example.com/".to_string()),
+        );
+
+        let s1 = Arc::new(DownloadSegment::new(0, 0, 499));
+        s1.downloaded_bytes.store(200, Ordering::Relaxed);
+        let s2 = Arc::new(DownloadSegment::new(1, 500, 999));
+        task.set_segments(vec![s1, s2]);
+        task.downloaded_bytes.store(200, Ordering::Relaxed);
+        task.set_status(TaskStatus::Downloading);
+
+        let persisted = task.to_persisted();
+        assert_eq!(persisted.id, id);
+        assert_eq!(persisted.downloaded_bytes, 200);
+        assert_eq!(persisted.segments.len(), 2);
+        assert_eq!(persisted.segments[0].downloaded_bytes, 200);
+
+        let restored = Task::from_persisted(persisted);
+        assert_eq!(restored.id, id);
+        assert_eq!(restored.status(), TaskStatus::Paused);
+        assert_eq!(restored.segments().len(), 2);
+        assert_eq!(
+            restored.segments()[0]
+                .downloaded_bytes
+                .load(Ordering::Relaxed),
+            200
+        );
     }
 }
