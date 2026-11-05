@@ -2,13 +2,20 @@ pub mod sidebar;
 pub mod sidebar_item;
 pub mod titlebar;
 
-use gpui::*;
+use gpui::{prelude::FluentBuilder, *};
 use gpui_router::Layout;
 
 use crate::{
     layout::{sidebar::Sidebar, titlebar::Titlebar},
     theme::ActiveTheme,
 };
+
+#[derive(Default, Clone, Copy)]
+pub struct SidebarState {
+    pub collapsed: bool,
+}
+
+impl Global for SidebarState {}
 
 #[derive(Default)]
 pub struct AppLayout {
@@ -27,6 +34,11 @@ impl Layout for AppLayout {
     }
 
     fn render_layout(self: Box<Self>, _window: &mut Window, cx: &mut App) -> AnyElement {
+        let collapsed = cx
+            .try_global::<SidebarState>()
+            .map(|state| state.collapsed)
+            .unwrap_or(false);
+
         div()
             .flex()
             .flex_col()
@@ -40,7 +52,7 @@ impl Layout for AppLayout {
                     .flex_row()
                     .flex_1()
                     .size_full()
-                    .child(Sidebar::new())
+                    .when(!collapsed, |this| this.child(Sidebar::new()))
                     .child(
                         div()
                             .flex()

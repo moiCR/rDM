@@ -3,21 +3,21 @@ use gpui::*;
 use crate::theme::ActiveTheme;
 
 #[derive(IntoElement)]
-pub struct SettingsView;
+pub struct DashboardView;
 
-impl SettingsView {
+impl DashboardView {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for SettingsView {
+impl Default for DashboardView {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl RenderOnce for SettingsView {
+impl RenderOnce for DashboardView {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
             .flex()
@@ -25,7 +25,7 @@ impl RenderOnce for SettingsView {
             .size_full()
             .bg(cx.theme().background())
             .text_color(cx.theme().text_color())
-            .p_4()
-            .child("Settings")
+            .p_8()
+            .child("Dashboard")
     }
 }

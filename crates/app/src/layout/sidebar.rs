@@ -25,38 +25,41 @@ impl RenderOnce for Sidebar {
         div()
             .flex()
             .flex_col()
+            .items_start()
             .justify_between()
-            .w(px(220.0))
+            .w(px(200.0))
             .h_full()
-            .bg(cx.theme().surface())
-            .border_r_1()
-            .border_color(cx.theme().border())
-            .p_3()
+            .bg(cx.theme().background())
+            .px_4()
+            .pb_5()
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .justify_center()
+                    .gap_2()
+                    .child(sidebar_item(
+                        "Dashboard",
+                        "icons/dashboard.svg",
+                        Some("/"),
+                        path == "/",
+                    ))
+                    .child(sidebar_item(
+                        "Downloads",
+                        "icons/download.svg",
+                        Some("/downloads"),
+                        path == "/downloads",
+                    )),
+            )
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .px_3()
-                            .py_3()
-                            .font_weight(FontWeight::BOLD)
-                            .text_base()
-                            .text_color(cx.theme().accent())
-                            .child("rDM"),
-                    )
-                    .child(sidebar_item("Descargas", "/", path == "/", None))
-                    .child(sidebar_item("Nueva descarga", "/new", path == "/new", None)),
+                    .items_start()
+                    .pt_2()
+                    .child(sidebar_item("Ajustes", "icons/settings.svg", None, false)),
             )
-            .child(div().flex().flex_col().gap_1().child(sidebar_item(
-                "Ajustes",
-                "/settings",
-                path == "/settings",
-                None,
-            )))
     }
 }

@@ -1,21 +1,21 @@
 pub mod dark;
 pub mod light;
 
-use gpui::{App, Context, Hsla};
+use gpui::{App, Context, Rgba};
 
 pub trait Theme: 'static + Send + Sync {
-    fn background(&self) -> Hsla;
-    fn surface(&self) -> Hsla;
-    fn surface_hover(&self) -> Hsla;
-    fn border(&self) -> Hsla;
-    fn text_color(&self) -> Hsla;
-    fn text_muted(&self) -> Hsla;
-    fn accent(&self) -> Hsla;
+    fn background(&self) -> Rgba;
+    fn surface(&self) -> Rgba;
+    fn surface_hover(&self) -> Rgba;
+    fn border(&self) -> Rgba;
+    fn text_color(&self) -> Rgba;
+    fn text_muted(&self) -> Rgba;
+    fn accent(&self) -> Rgba;
 
-    fn downloading(&self) -> Hsla;
-    fn paused(&self) -> Hsla;
-    fn completed(&self) -> Hsla;
-    fn error(&self) -> Hsla;
+    fn downloading(&self) -> Rgba;
+    fn paused(&self) -> Rgba;
+    fn completed(&self) -> Rgba;
+    fn error(&self) -> Rgba;
 }
 
 pub struct ThemeManager {

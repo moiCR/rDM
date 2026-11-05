@@ -3,7 +3,7 @@ use gpui_router::{Route, Routes};
 
 use crate::{
     layout::AppLayout,
-    views::{DownloadsView, NewDownloadView, SettingsView},
+    views::{DashboardView, DownloadsView, NewDownloadView},
 };
 
 pub struct RootRouter;
@@ -27,17 +27,17 @@ pub fn app_routes() -> Routes {
             .child(
                 Route::new()
                     .index()
+                    .element(|_window, _cx| DashboardView::new()),
+            )
+            .child(
+                Route::new()
+                    .path("downloads")
                     .element(|_window, _cx| DownloadsView::new()),
             )
             .child(
                 Route::new()
                     .path("new")
                     .element(|_window, _cx| NewDownloadView::new()),
-            )
-            .child(
-                Route::new()
-                    .path("settings")
-                    .element(|_window, _cx| SettingsView::new()),
             ),
     )
 }

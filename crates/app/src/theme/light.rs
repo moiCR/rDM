@@ -1,4 +1,4 @@
-use gpui::{Hsla, hsla};
+use gpui::{Rgba, rgb};
 
 use super::Theme;
 
@@ -6,47 +6,47 @@ use super::Theme;
 pub struct LightTheme;
 
 impl Theme for LightTheme {
-    fn background(&self) -> Hsla {
-        hsla(0.0, 0.0, 0.98, 1.0)
+    fn background(&self) -> Rgba {
+        rgb(0xfaf8f6)
     }
 
-    fn surface(&self) -> Hsla {
-        hsla(0.0, 0.0, 1.0, 1.0)
+    fn surface(&self) -> Rgba {
+        rgb(0xf0eeeb)
     }
 
-    fn surface_hover(&self) -> Hsla {
-        hsla(220.0 / 360.0, 0.14, 0.94, 1.0)
+    fn surface_hover(&self) -> Rgba {
+        rgb(0xe2dfdc)
     }
 
-    fn border(&self) -> Hsla {
-        hsla(220.0 / 360.0, 0.13, 0.88, 1.0)
+    fn border(&self) -> Rgba {
+        rgb(0xd6d3d0)
     }
 
-    fn text_color(&self) -> Hsla {
-        hsla(220.0 / 360.0, 0.20, 0.10, 1.0)
+    fn text_color(&self) -> Rgba {
+        rgb(0x171717)
     }
 
-    fn text_muted(&self) -> Hsla {
-        hsla(220.0 / 360.0, 0.10, 0.45, 1.0)
+    fn text_muted(&self) -> Rgba {
+        rgb(0x85827e)
     }
 
-    fn accent(&self) -> Hsla {
-        hsla(217.0 / 360.0, 0.91, 0.55, 1.0)
+    fn accent(&self) -> Rgba {
+        rgb(0x2563eb)
     }
 
-    fn downloading(&self) -> Hsla {
-        hsla(199.0 / 360.0, 0.89, 0.45, 1.0)
+    fn downloading(&self) -> Rgba {
+        rgb(0x0284c7)
     }
 
-    fn paused(&self) -> Hsla {
-        hsla(38.0 / 360.0, 0.92, 0.48, 1.0)
+    fn paused(&self) -> Rgba {
+        rgb(0xd97706)
     }
 
-    fn completed(&self) -> Hsla {
-        hsla(142.0 / 360.0, 0.71, 0.40, 1.0)
+    fn completed(&self) -> Rgba {
+        rgb(0x16a34a)
     }
 
-    fn error(&self) -> Hsla {
-        hsla(0.0, 0.84, 0.55, 1.0)
+    fn error(&self) -> Rgba {
+        rgb(0xdc2626)
     }
 }

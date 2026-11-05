@@ -1,0 +1,15 @@
+code = "en"
+name = "English"
+notifications = "Notifications"
+settings = "Settings"
+
+[common]
+cancel = "Cancel"
+save = "Save"
+close = "Close"
+ok = "OK"
+
+[sidebar]
+dashboard = "Dashboard"
+downloads = "Downloads"
+

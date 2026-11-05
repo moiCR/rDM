@@ -25,7 +25,7 @@ impl RenderOnce for NewDownloadView {
             .size_full()
             .bg(cx.theme().background())
             .text_color(cx.theme().text_color())
-            .p_4()
+            .p_8()
             .child("New Download")
     }
 }
