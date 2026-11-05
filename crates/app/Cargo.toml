@@ -1,7 +1,12 @@
 [package]
-name = "rdm"
+name = "rDM"
 version.workspace = true
 edition.workspace = true
+
+
+[[bin]]
+name = "rDM"
+path = "src/main.rs"
 
 [dependencies]
 gpui-pre = "0.3.11"

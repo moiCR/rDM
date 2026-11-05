@@ -3,6 +3,10 @@ name = "rdm-config"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "rdm_config"
+path = "src/lib.rs"
+
 [dependencies]
 serde.workspace = true
 dirs.workspace = true

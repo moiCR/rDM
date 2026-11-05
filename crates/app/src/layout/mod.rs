@@ -3,50 +3,53 @@ pub mod sidebar_item;
 pub mod titlebar;
 
 use gpui::*;
+use gpui_router::Layout;
 
 use crate::{
     layout::{sidebar::Sidebar, titlebar::Titlebar},
-    router::app_routes,
     theme::ActiveTheme,
 };
 
+#[derive(Default)]
 pub struct AppLayout {
-    titlebar: Entity<Titlebar>,
-    sidebar: Entity<Sidebar>,
+    outlet: Option<AnyElement>,
 }
 
 impl AppLayout {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        let titlebar = cx.new(|_cx| Titlebar::new());
-        let sidebar = cx.new(|_cx| Sidebar::new());
-        Self { titlebar, sidebar }
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
-impl Render for AppLayout {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl Layout for AppLayout {
+    fn outlet(&mut self, element: AnyElement) {
+        self.outlet = Some(element);
+    }
+
+    fn render_layout(self: Box<Self>, _window: &mut Window, cx: &mut App) -> AnyElement {
         div()
             .flex()
             .flex_col()
             .size_full()
             .bg(cx.theme().background())
             .text_color(cx.theme().text_color())
-            .child(self.titlebar.clone())
+            .child(Titlebar::new())
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .flex_1()
                     .size_full()
-                    .child(self.sidebar.clone())
+                    .child(Sidebar::new())
                     .child(
                         div()
                             .flex()
                             .flex_1()
                             .size_full()
                             .overflow_hidden()
-                            .child(app_routes()),
+                            .children(self.outlet),
                     ),
             )
+            .into_any_element()
     }
 }

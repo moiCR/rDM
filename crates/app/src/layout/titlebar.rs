@@ -2,6 +2,7 @@ use gpui::*;
 
 use crate::theme::ActiveTheme;
 
+#[derive(IntoElement)]
 pub struct Titlebar;
 
 impl Titlebar {
@@ -16,8 +17,8 @@ impl Default for Titlebar {
     }
 }
 
-impl Render for Titlebar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl RenderOnce for Titlebar {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
             .flex()
             .items_center()

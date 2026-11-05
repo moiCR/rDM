@@ -2,6 +2,7 @@ use gpui::*;
 
 use crate::{layout::sidebar_item::sidebar_item, theme::ActiveTheme};
 
+#[derive(IntoElement)]
 pub struct Sidebar;
 
 impl Sidebar {
@@ -16,8 +17,8 @@ impl Default for Sidebar {
     }
 }
 
-impl Render for Sidebar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl RenderOnce for Sidebar {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let location = gpui_router::use_location(cx);
         let path = location.pathname.as_str();
 

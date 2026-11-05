@@ -3,6 +3,10 @@ name = "rdm-cli"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "rdm-cli"
+path = "src/main.rs"
+
 [dependencies]
 rdm-core.workspace = true
 rdm-config.workspace = true

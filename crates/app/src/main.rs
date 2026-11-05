@@ -10,7 +10,7 @@ use std::sync::Arc;
 use gpui::*;
 use rdm_core::Core;
 
-use crate::{assets::Assets, layout::AppLayout, state::AppState, theme::ThemeManager};
+use crate::{assets::Assets, router::RootRouter, state::AppState, theme::ThemeManager};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let core = Arc::new(Core::new()?);
@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         };
 
-        let _ = cx.open_window(window_options, |_window, cx| cx.new(AppLayout::new));
+        let _ = cx.open_window(window_options, |_window, cx| cx.new(RootRouter::new));
     });
 
     Ok(())
