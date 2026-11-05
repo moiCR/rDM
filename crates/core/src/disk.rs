@@ -33,7 +33,17 @@ impl DiskManager {
     }
 
     pub async fn open_for_write(&self, path: &Path) -> Result<File, EngineError> {
-        let file = OpenOptions::new().read(true).write(true).open(path).await?;
+        if let Some(parent) = path.parent() {
+            create_dir_all(parent).await?;
+        }
+
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .await?;
 
         Ok(file)
     }
@@ -80,6 +90,27 @@ mod tests {
 
         assert_eq!(&buffer[10..15], b"hello");
         assert_eq!(&buffer[20..25], b"world");
+
+        let _ = tokio::fs::remove_file(&file_path).await;
+        let _ = tokio::fs::remove_dir(&temp_dir).await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_open_for_write_creates_file_if_not_exists()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let disk_manager = DiskManager::new();
+        let temp_dir =
+            std::env::temp_dir().join(format!("rdm_test_create_{}", uuid::Uuid::new_v4()));
+        let file_path = temp_dir.join("new_file.bin");
+
+        let mut file = disk_manager.open_for_write(&file_path).await?;
+        disk_manager.write_at(&mut file, 0, b"data").await?;
+        disk_manager.flush(&mut file).await?;
+        drop(file);
+
+        assert!(tokio::fs::try_exists(&file_path).await?);
 
         let _ = tokio::fs::remove_file(&file_path).await;
         let _ = tokio::fs::remove_dir(&temp_dir).await;

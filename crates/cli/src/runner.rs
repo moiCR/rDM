@@ -42,6 +42,14 @@ impl CliRunner {
             }
         ));
 
+        if let Some(content_type) = &probe.content_type
+            && content_type.contains("text/html")
+        {
+            self.reporter.info(
+                "Warning: Content-Type is text/html. The URL may have expired or redirected to a web page.",
+            );
+        }
+
         let task = self
             .core
             .engine()

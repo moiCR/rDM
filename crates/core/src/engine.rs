@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering},
 };
 
@@ -22,6 +22,7 @@ pub struct ResourceProbe {
     pub file_name: String,
     pub total_size: u64,
     pub supports_ranges: bool,
+    pub content_type: Option<String>,
 }
 
 pub struct Engine {
@@ -108,6 +109,11 @@ impl Engine {
                 .unwrap_or(0)
         };
 
+        let content_type = headers
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|val| val.to_str().ok())
+            .map(|s| s.to_string());
+
         let file_name = headers
             .get(reqwest::header::CONTENT_DISPOSITION)
             .and_then(|val| val.to_str().ok())
@@ -119,6 +125,7 @@ impl Engine {
             file_name,
             total_size,
             supports_ranges,
+            content_type,
         })
     }
 
@@ -131,8 +138,17 @@ impl Engine {
         let probe = self.probe(url).await?;
 
         let destination_path = match output_path {
-            Some(path) => path,
-            None => self.config.config().download_dir.join(&probe.file_name),
+            Some(path) => {
+                if path.is_dir() {
+                    resolve_unique_path(&path.join(&probe.file_name))
+                } else {
+                    resolve_unique_path(&path)
+                }
+            }
+            None => {
+                let target = self.config.config().download_dir.join(&probe.file_name);
+                resolve_unique_path(&target)
+            }
         };
 
         let active_connections = if probe.supports_ranges && probe.total_size > 0 {
@@ -173,6 +189,9 @@ impl Engine {
             self.disk_manager
                 .allocate_file(&task.output_path, task.total_size)
                 .await?;
+        } else {
+            let mut file = self.disk_manager.open_for_write(&task.output_path).await?;
+            self.disk_manager.flush(&mut file).await?;
         }
 
         let segment_count = task.connections.max(1);
@@ -341,17 +360,88 @@ async fn download_worker(
     Ok(())
 }
 
+fn resolve_unique_path(target_path: &Path) -> PathBuf {
+    if !target_path.exists() {
+        return target_path.to_path_buf();
+    }
+
+    let parent = match target_path.parent() {
+        Some(p) => p,
+        None => Path::new("."),
+    };
+
+    let stem = match target_path.file_stem() {
+        Some(s) => s.to_str().unwrap_or("download"),
+        None => "download",
+    };
+
+    let extension = match target_path.extension() {
+        Some(e) => e.to_str(),
+        None => None,
+    };
+
+    let mut counter = 1usize;
+    loop {
+        let candidate_name = match extension {
+            Some(ext) => format!("{stem} ({counter}).{ext}"),
+            None => format!("{stem} ({counter})"),
+        };
+        let candidate_path = parent.join(candidate_name);
+        if !candidate_path.exists() {
+            return candidate_path;
+        }
+        counter += 1;
+    }
+}
+
+fn decode_and_sanitize_filename(raw_name: &str) -> String {
+    let replaced_plus = raw_name.replace('+', " ");
+    let decoded = percent_encoding::percent_decode_str(&replaced_plus)
+        .decode_utf8_lossy()
+        .into_owned();
+
+    let sanitized: String = decoded
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+
+    let normalized: String = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    let trimmed = normalized.trim();
+    if trimmed.is_empty() {
+        "download.bin".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn extract_file_name_from_disposition(disposition: &str) -> Option<String> {
+    let mut fallback_filename = None;
+    let mut star_filename = None;
+
     for part in disposition.split(';') {
         let trimmed = part.trim();
-        if let Some(filename_part) = trimmed.strip_prefix("filename=") {
-            let clean = filename_part.trim_matches('"').trim();
-            if !clean.is_empty() {
-                return Some(clean.to_string());
-            }
+        if let Some(val) = trimmed.strip_prefix("filename*=") {
+            let clean_val = val.trim_matches('"').trim();
+            let encoded_part = if let Some((_, encoded)) = clean_val.split_once("''") {
+                encoded
+            } else if let Some(last_quote) = clean_val.rfind('\'') {
+                &clean_val[last_quote + 1..]
+            } else {
+                clean_val
+            };
+            star_filename = Some(decode_and_sanitize_filename(encoded_part));
+        } else if let Some(val) = trimmed.strip_prefix("filename=") {
+            let clean_val = val.trim_matches('"').trim();
+            fallback_filename = Some(decode_and_sanitize_filename(clean_val));
         }
     }
-    None
+
+    star_filename.or(fallback_filename)
 }
 
 fn extract_file_name_from_url(url_str: &str) -> String {
@@ -359,7 +449,7 @@ fn extract_file_name_from_url(url_str: &str) -> String {
         && let Some(mut segments) = parsed_url.path_segments()
         && let Some(file_name) = segments.rfind(|s| !s.is_empty())
     {
-        return file_name.to_string();
+        return decode_and_sanitize_filename(file_name);
     }
     "download.bin".to_string()
 }
@@ -382,6 +472,13 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_file_name_with_percent_encoding() {
+        let raw_url = "https://example.com/files/%21++%C2%A74Demon+Red+%C2%A78%5Bx32%5D.zip";
+        let extracted = extract_file_name_from_url(raw_url);
+        assert_eq!(extracted, "! §4Demon Red §8[x32].zip");
+    }
+
+    #[test]
     fn test_extract_file_name_from_disposition() {
         assert_eq!(
             extract_file_name_from_disposition("attachment; filename=\"package.zip\""),
@@ -392,6 +489,32 @@ mod tests {
             Some("document.pdf".to_string())
         );
         assert_eq!(extract_file_name_from_disposition("inline"), None);
+    }
+
+    #[test]
+    fn test_extract_file_name_from_disposition_rfc5987() {
+        let disposition = "attachment; filename=\"fallback.zip\"; filename*=UTF-8''%21++%C2%A74Demon+Red+%C2%A78%5Bx32%5D.zip";
+        let extracted = extract_file_name_from_disposition(disposition);
+        assert_eq!(extracted, Some("! §4Demon Red §8[x32].zip".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_unique_path() {
+        let temp_dir = std::env::temp_dir().join(format!("rdm_unique_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let base_file = temp_dir.join("sample.zip");
+
+        assert_eq!(resolve_unique_path(&base_file), base_file);
+
+        let _ = std::fs::write(&base_file, b"test");
+        let first_duplicate = resolve_unique_path(&base_file);
+        assert_eq!(first_duplicate, temp_dir.join("sample (1).zip"));
+
+        let _ = std::fs::write(&first_duplicate, b"test");
+        let second_duplicate = resolve_unique_path(&base_file);
+        assert_eq!(second_duplicate, temp_dir.join("sample (2).zip"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]

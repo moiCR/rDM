@@ -12,3 +12,4 @@ futures-util.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+percent-encoding.workspace = true

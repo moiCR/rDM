@@ -3,7 +3,8 @@ resolver = "2"
 members = [
     "crates/core",
     "crates/config",
-    "crates/cli", "crates/app",
+    "crates/cli",
+    "crates/app",
 ]
 
 [workspace.package]
@@ -24,3 +25,4 @@ thiserror = "2.0.21"
 gpui-pre = "0.3.11"
 uuid = { version = "1.29.0", features = ["v4"] }
 dirs = "7.0.0"
+percent-encoding = "2.3.2"

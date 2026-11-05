@@ -5258,6 +5258,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "futures-util",
+ "percent-encoding",
  "rdm-config",
  "reqwest",
  "thiserror 2.0.21",
