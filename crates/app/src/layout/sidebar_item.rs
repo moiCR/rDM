@@ -42,14 +42,14 @@ impl RenderOnce for SidebarItem {
         let spring_config = SpringConfig::new(180.0, 26.0, 1.0);
         let color_spring = SpringAnimation::new(spring_config).to(highlighted);
         let scale_spring = SpringAnimation::new(spring_config).to(active);
-        let icon_color_spring = SpringAnimation::new(spring_config).to(highlighted);
 
         div()
             .id(ElementId::Name(label.into()))
             .flex()
             .items_center()
-            .gap_2p5()
+            .gap_1p5()
             .rounded(px(24.0))
+            .line_height(relative(1.0))
             .cursor_pointer()
             .when(active, |this| this.font_weight(FontWeight::MEDIUM))
             .on_hover(move |is_hovered, _window, cx| {
@@ -65,29 +65,41 @@ impl RenderOnce for SidebarItem {
                     gpui_router::use_navigate(window, cx).push(target_path);
                 })
             })
-            .child(
-                svg()
-                    .path(icon_path)
-                    .when(active, |this| {
-                        this.size(px(17.0))
-                            .with_transformation(Transformation::scale(size(1.05, 1.05)))
-                    })
-                    .when(!active, |this| this.size_4())
-                    .with_spring(
-                        ElementId::Name(format!("{label}-icon-color").into()),
-                        icon_color_spring,
-                        move |this, phase| {
-                            this.text_color(phase.interpolate_clamped(text_muted, text_color))
-                        },
-                    ),
-            )
-            .child(label)
             .with_spring(
                 ElementId::Name(format!("{label}-color").into()),
                 color_spring,
                 move |this, phase| {
-                    this.bg(phase.interpolate_clamped(surface, surface_hover))
-                        .text_color(phase.interpolate_clamped(text_muted, text_color))
+                    let fg = phase.interpolate_clamped(text_muted, text_color);
+                    let bg = phase.interpolate_clamped(surface, surface_hover);
+
+                    this.bg(bg)
+                        .text_color(fg)
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .flex_shrink_0()
+                                .child(
+                                    svg()
+                                        .path(icon_path)
+                                        .text_color(fg)
+                                        .when(active, |icon| {
+                                            icon.size(px(17.0)).with_transformation(
+                                                Transformation::scale(size(1.05, 1.05)),
+                                            )
+                                        })
+                                        .when(!active, |icon| icon.size_4()),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .line_height(relative(1.0))
+                                .pb(px(1.5))
+                                .child(label),
+                        )
                 },
             )
             .with_spring(

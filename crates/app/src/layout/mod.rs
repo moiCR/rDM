@@ -43,6 +43,7 @@ impl Layout for AppLayout {
             .flex()
             .flex_col()
             .size_full()
+            .font_family("Geist")
             .bg(cx.theme().background())
             .text_color(cx.theme().text_color())
             .child(Titlebar::new())

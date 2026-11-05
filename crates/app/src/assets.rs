@@ -1,6 +1,6 @@
 use std::{borrow::Cow, path::PathBuf};
 
-use gpui::{AssetSource, SharedString};
+use gpui::{App, AssetSource, SharedString};
 
 pub struct Assets {
     base_dir: PathBuf,
@@ -21,6 +21,25 @@ impl Default for Assets {
 impl Assets {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn load_fonts(&self, cx: &App) {
+        let Ok(font_files) = self.list("fonts") else {
+            return;
+        };
+
+        let mut fonts = Vec::new();
+        for file in font_files {
+            if file.ends_with(".ttf")
+                && let Ok(Some(bytes)) = self.load(&format!("fonts/{file}"))
+            {
+                fonts.push(bytes);
+            }
+        }
+
+        if !fonts.is_empty() {
+            let _ = cx.text_system().add_fonts(fonts);
+        }
     }
 }
 

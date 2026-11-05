@@ -18,6 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = gpui_kit::application().with_assets(Assets::new());
 
     app.run(move |cx: &mut App| {
+        Assets::new().load_fonts(cx);
         gpui_router::init(cx);
         cx.set_global(ThemeManager::new());
         cx.set_global(AppState::new(core));
