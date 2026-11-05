@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use crate::{disk::DiskManager, engine::Engine, error::EngineError};
 use rdm_config::ConfigManager;
@@ -17,28 +17,29 @@ pub struct Core {
 
 impl Core {
     pub fn new() -> Result<Self, EngineError> {
+        let config = Arc::new(ConfigManager::new());
         let disk_manager = Arc::new(DiskManager::new());
-        let engine = Arc::new(Engine::new(Arc::clone(&disk_manager))?);
+        let engine = Arc::new(Engine::new(Arc::clone(&config), Arc::clone(&disk_manager))?);
 
-        Ok((Self {
+        Ok(Self {
             disk_manager,
-            config: Arc::new(ConfigManager::new()),
+            config,
             engine,
-        }))
+        })
     }
 
     #[inline]
-    fn disk(&self) -> &DiskManager {
+    pub fn disk(&self) -> &Arc<DiskManager> {
         &self.disk_manager
     }
 
     #[inline]
-    fn engine(&self) -> &Engine {
+    pub fn engine(&self) -> &Arc<Engine> {
         &self.engine
     }
 
     #[inline]
-    fn config(&self) -> &ConfigManager{
+    pub fn config(&self) -> &Arc<ConfigManager> {
         &self.config
     }
 }

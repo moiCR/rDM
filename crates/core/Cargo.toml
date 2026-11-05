@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 rdm-config.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 reqwest.workspace = true
 futures-util.workspace = true
 bytes.workspace = true
