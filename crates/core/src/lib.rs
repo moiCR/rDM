@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{disk::DiskManager, engine::Engine, error::EngineError};
+pub use crate::{disk::DiskManager, engine::Engine, error::EngineError};
 use rdm_config::ConfigManager;
 
 pub mod disk;

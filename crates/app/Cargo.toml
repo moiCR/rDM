@@ -7,3 +7,8 @@ edition.workspace = true
 gpui-pre = "0.3.11"
 gpui-kit = "0.9.0"
 gpui-router = { version = "0.7", default-features = false, features = ["gpui-pre"] }
+tokio.workspace = true
+rdm-core.workspace = true
+rdm-config.workspace = true
+uuid.workspace = true
+anyhow = { workspace = true }

@@ -5229,9 +5229,14 @@ dependencies = [
 name = "rdm"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "gpui-kit",
  "gpui-pre",
  "gpui-router",
+ "rdm-config",
+ "rdm-core",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
