@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/config",
+    "crates/cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+
+[workspace.dependencies]
+rdm-config = { path = "crates/config" }
+rdm-core = { path = "crates/core" }
+
+tokio = { version = "1.54.1", features = ["full"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["stream", "rustls"] }
+futures-util = "0.3.34"
+bytes = "1.12.1"
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+gpui-pre = "0.3.11"
+uuid ={ version = "1.29.0", features = ["v4"]}
