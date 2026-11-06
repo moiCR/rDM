@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_config_manager_default_download_dir() {
-        let manager = ConfigManager::new();
+        let manager = ConfigManager::from_config(EngineConfig::default());
         let config = manager.config();
 
         assert_eq!(config.default_connections, 8);

@@ -45,7 +45,13 @@ impl Layout for AppLayout {
             .use_keyed_state("app-layout-focus", cx, |_, cx| cx.focus_handle())
             .read(cx)
             .clone();
-        if !focus_handle.is_focused(window) {
+
+        let is_modal_open = cx
+            .try_global::<crate::views::SettingsModalState>()
+            .map(|s| s.open)
+            .unwrap_or(false);
+
+        if !is_modal_open && window.focused(cx).is_none() {
             window.focus(&focus_handle, cx);
         }
 

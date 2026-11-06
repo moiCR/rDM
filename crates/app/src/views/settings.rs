@@ -1,6 +1,6 @@
 use gpui::*;
 use gpui_kit::component::button::ButtonRounded;
-use gpui_kit::component::input::{Input, InputState, NumberInput};
+use gpui_kit::component::input::{Input, InputState};
 use std::{path::PathBuf, sync::Arc};
 
 use crate::{
@@ -92,11 +92,6 @@ impl RenderOnce for SettingsModal {
         let cfg_for_inputs = config_manager.clone();
         let inputs_state = window.use_keyed_state("settings-inputs-state", cx, |window, cx| {
             let speed = cx.new(|cx| {
-                let mut s = InputState::new(window, cx)
-                    .placeholder("0")
-                    .step(1.0)
-                    .min(0.0)
-                    .max(1000.0);
                 let mb = if current_cfg.max_speed_bytes_per_sec > 0 {
                     format!(
                         "{:.1}",
@@ -105,6 +100,14 @@ impl RenderOnce for SettingsModal {
                 } else {
                     "0".to_string()
                 };
+                let mut s = InputState::new(window, cx)
+                    .placeholder("0")
+                    .validate(|text, _| {
+                        text.is_empty()
+                            || text.parse::<f64>().is_ok()
+                            || (text.ends_with('.')
+                                && text[..text.len() - 1].parse::<f64>().is_ok())
+                    });
                 s.set_value(mb, window, cx);
                 s
             });
@@ -112,9 +115,11 @@ impl RenderOnce for SettingsModal {
             let connections = cx.new(|cx| {
                 let mut s = InputState::new(window, cx)
                     .placeholder("8")
-                    .step(1.0)
-                    .min(1.0)
-                    .max(32.0);
+                    .validate(|text, _| {
+                        text.is_empty()
+                            || (text.chars().all(|c| c.is_ascii_digit())
+                                && text.parse::<usize>().map(|v| v <= 32).unwrap_or(false))
+                    });
                 s.set_value(current_cfg.default_connections.to_string(), window, cx);
                 s
             });
@@ -317,14 +322,68 @@ impl RenderOnce for SettingsModal {
                                         div()
                                             .flex()
                                             .items_center()
-                                            .gap_2()
+                                            .gap_1p5()
                                             .child(
-                                                div().w(px(140.0)).child(
-                                                    NumberInput::new(&inputs.speed)
-                                                        .placeholder("0")
+                                                IconButton::new("btn-speed-dec", "icons/minus.svg")
+                                                    .size(px(32.0))
+                                                    .icon_size(px(14.0))
+                                                    .color(palette.text_muted)
+                                                    .hover_bg(palette.surface_hover)
+                                                    .on_click({
+                                                        let speed = inputs.speed.clone();
+                                                        move |_, window, cx| {
+                                                            speed.update(cx, |state, cx| {
+                                                                let current = state
+                                                                    .value()
+                                                                    .trim()
+                                                                    .parse::<f64>()
+                                                                    .unwrap_or(0.0);
+                                                                let next = (current - 1.0).max(0.0);
+                                                                state.set_value(
+                                                                    format!("{next:.1}"),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                            window.refresh();
+                                                        }
+                                                    }),
+                                            )
+                                            .child(
+                                                div().w(px(80.0)).child(
+                                                    Input::new(&inputs.speed)
+                                                        .id("input-speed-limit")
+                                                        .text_align(TextAlign::Center)
                                                         .h(px(36.0))
                                                         .w_full(),
                                                 ),
+                                            )
+                                            .child(
+                                                IconButton::new("btn-speed-inc", "icons/plus.svg")
+                                                    .size(px(32.0))
+                                                    .icon_size(px(14.0))
+                                                    .color(palette.text_muted)
+                                                    .hover_bg(palette.surface_hover)
+                                                    .on_click({
+                                                        let speed = inputs.speed.clone();
+                                                        move |_, window, cx| {
+                                                            speed.update(cx, |state, cx| {
+                                                                let current = state
+                                                                    .value()
+                                                                    .trim()
+                                                                    .parse::<f64>()
+                                                                    .unwrap_or(0.0);
+                                                                let next =
+                                                                    (current + 1.0).min(1000.0);
+                                                                state.set_value(
+                                                                    format!("{next:.1}"),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                            window.refresh();
+                                                        }
+                                                    }),
                                             )
                                             .child(
                                                 div()
@@ -363,12 +422,74 @@ impl RenderOnce for SettingsModal {
                                             ),
                                     )
                                     .child(
-                                        div().w(px(120.0)).child(
-                                            NumberInput::new(&inputs.connections)
-                                                .placeholder("8")
-                                                .h(px(36.0))
-                                                .w_full(),
-                                        ),
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(
+                                                IconButton::new("btn-conn-dec", "icons/minus.svg")
+                                                    .size(px(32.0))
+                                                    .icon_size(px(14.0))
+                                                    .color(palette.text_muted)
+                                                    .hover_bg(palette.surface_hover)
+                                                    .on_click({
+                                                        let conn = inputs.connections.clone();
+                                                        move |_, window, cx| {
+                                                            conn.update(cx, |state, cx| {
+                                                                let current = state
+                                                                    .value()
+                                                                    .trim()
+                                                                    .parse::<usize>()
+                                                                    .unwrap_or(8);
+                                                                let next = current
+                                                                    .saturating_sub(1)
+                                                                    .clamp(1, 32);
+                                                                state.set_value(
+                                                                    next.to_string(),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                            window.refresh();
+                                                        }
+                                                    }),
+                                            )
+                                            .child(
+                                                div().w(px(64.0)).child(
+                                                    Input::new(&inputs.connections)
+                                                        .id("input-connections")
+                                                        .text_align(TextAlign::Center)
+                                                        .h(px(36.0))
+                                                        .w_full(),
+                                                ),
+                                            )
+                                            .child(
+                                                IconButton::new("btn-conn-inc", "icons/plus.svg")
+                                                    .size(px(32.0))
+                                                    .icon_size(px(14.0))
+                                                    .color(palette.text_muted)
+                                                    .hover_bg(palette.surface_hover)
+                                                    .on_click({
+                                                        let conn = inputs.connections.clone();
+                                                        move |_, window, cx| {
+                                                            conn.update(cx, |state, cx| {
+                                                                let current = state
+                                                                    .value()
+                                                                    .trim()
+                                                                    .parse::<usize>()
+                                                                    .unwrap_or(8);
+                                                                let next =
+                                                                    (current + 1).clamp(1, 32);
+                                                                state.set_value(
+                                                                    next.to_string(),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                            window.refresh();
+                                                        }
+                                                    }),
+                                            ),
                                     ),
                             )
                             .child(
@@ -404,13 +525,23 @@ impl RenderOnce for SettingsModal {
                                             .items_center()
                                             .gap_2()
                                             .child(
-                                                div().w(px(280.0)).child(
-                                                    Input::new(&inputs.download_dir)
-                                                        .id("input-download-dir")
-                                                        .cleanable(false)
-                                                        .h(px(36.0))
-                                                        .w_full(),
-                                                ),
+                                                div()
+                                                    .w(px(280.0))
+                                                    .on_mouse_down(MouseButton::Left, {
+                                                        let dir = inputs.download_dir.clone();
+                                                        move |_, window, cx| {
+                                                            dir.update(cx, |s, cx| {
+                                                                s.focus(window, cx)
+                                                            });
+                                                        }
+                                                    })
+                                                    .child(
+                                                        Input::new(&inputs.download_dir)
+                                                            .id("input-download-dir")
+                                                            .cleanable(false)
+                                                            .h(px(36.0))
+                                                            .w_full(),
+                                                    ),
                                             )
                                             .child({
                                                 let dir_entity = inputs.download_dir.clone();
@@ -494,13 +625,21 @@ impl RenderOnce for SettingsModal {
                                             }),
                                     )
                                     .child(
-                                        div().flex_1().child(
-                                            Input::new(&inputs.user_agent)
-                                                .id("input-user-agent")
-                                                .cleanable(true)
-                                                .h(px(36.0))
-                                                .w_full(),
-                                        ),
+                                        div()
+                                            .flex_1()
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let ua = inputs.user_agent.clone();
+                                                move |_, window, cx| {
+                                                    ua.update(cx, |s, cx| s.focus(window, cx));
+                                                }
+                                            })
+                                            .child(
+                                                Input::new(&inputs.user_agent)
+                                                    .id("input-user-agent")
+                                                    .cleanable(true)
+                                                    .h(px(36.0))
+                                                    .w_full(),
+                                            ),
                                     ),
                             ),
                     ),

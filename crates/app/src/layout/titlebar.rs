@@ -42,10 +42,6 @@ impl RenderOnce for Titlebar {
             InputState::new(window, cx).placeholder("Pega URL y presiona Enter...")
         });
 
-        if is_expanded && !quick_input.read(cx).focus_handle(cx).is_focused(window) {
-            quick_input.update(cx, |s, cx| s.focus(window, cx));
-        }
-
         let spring_config = SpringConfig::new(220.0, 24.0, 1.0);
         let quick_spring = SpringAnimation::new(spring_config).to(is_expanded);
 
@@ -96,10 +92,14 @@ impl RenderOnce for Titlebar {
                             .items_center()
                             .h_8()
                             .hover(move |style| style.bg(surface_hover))
-                            .on_click(move |_event, window, cx| {
-                                if !is_expanded {
-                                    cx.set_global(QuickDownloadState { expanded: true });
-                                    window.refresh();
+                            .on_click({
+                                let q_input = quick_input.clone();
+                                move |_event, window, cx| {
+                                    if !is_expanded {
+                                        cx.set_global(QuickDownloadState { expanded: true });
+                                        q_input.update(cx, |s, cx| s.focus(window, cx));
+                                        window.refresh();
+                                    }
                                 }
                             })
                             .on_key_down({
