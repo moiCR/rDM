@@ -192,18 +192,31 @@ impl DownloadsView {
 
         let view_state_toggle = ctx.view_state.clone();
 
+        let appear_spring = SpringAnimation::new(SpringConfig::new(220.0, 24.0, 1.0))
+            .to(true)
+            .from(false);
+
         div()
             .id(ElementId::Name(format!("task-row-{}", task.id).into()))
             .relative()
             .flex()
             .items_center()
             .w_full()
-            .h_12()
             .px_5()
             .border_b_1()
             .border_color(palette.border)
             .text_xs()
+            .overflow_hidden()
             .hover(move |s| s.bg(palette.surface_hover))
+            .with_spring(
+                ElementId::Name(format!("task-row-appear-{}", task.id).into()),
+                appear_spring,
+                |this, phase| {
+                    let height = phase.interpolate_clamped(px(0.0), px(48.0));
+                    let alpha = phase.interpolate_clamped(0.0, 1.0);
+                    this.h(height).opacity(alpha)
+                },
+            )
             .child(
                 div()
                     .flex()

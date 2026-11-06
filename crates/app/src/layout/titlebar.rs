@@ -96,6 +96,10 @@ impl RenderOnce for Titlebar {
         let quick_spring = SpringAnimation::new(spring_config).to(is_expanded);
 
         let current_text = input_state.read(cx).text.clone();
+        let input_state_key = input_state.clone();
+        let input_state_submit = input_state.clone();
+        let input_state_clear = input_state.clone();
+        let has_text = !current_text.trim().is_empty();
 
         div()
             .flex()
@@ -154,28 +158,74 @@ impl RenderOnce for Titlebar {
                     )
                     .child(
                         div()
-                            .id("quick-download-container")
+                            .id("quick-download-morph")
+                            .group("quick-download-morph")
+                            .track_focus(&input_focus)
+                            .key_context("QuickDownloadInput")
                             .overflow_hidden()
+                            .flex()
+                            .items_center()
                             .h_8()
-                            .with_spring(
-                                "quick-download-spring",
-                                quick_spring,
-                                move |this, phase| {
-                                    let width = phase.interpolate_clamped(px(32.0), px(360.0));
-                                    this.w(width)
-                                },
-                            )
-                            .child(if !is_expanded {
+                            .hover(move |style| style.bg(surface_hover))
+                            .on_click(move |_event, window, cx| {
+                                if !is_expanded {
+                                    cx.set_global(QuickDownloadState { expanded: true });
+                                    window.refresh();
+                                }
+                            })
+                            .on_key_down(move |event, window, cx| {
+                                if !is_expanded {
+                                    return;
+                                }
+                                if event.keystroke.key == "escape" {
+                                    input_state_key.update(cx, |s, _| s.text.clear());
+                                    cx.set_global(QuickDownloadState { expanded: false });
+                                    window.refresh();
+                                } else if event.keystroke.key == "enter" {
+                                    let text = input_state_key.read(cx).text.trim().to_string();
+                                    if !text.is_empty() {
+                                        let model = cx.tasks_model().clone();
+                                        model.update(cx, |model, cx| {
+                                            model.start_download(text, None, cx);
+                                        });
+                                        input_state_key.update(cx, |s, _| s.text.clear());
+                                        cx.set_global(QuickDownloadState { expanded: false });
+                                        window.refresh();
+                                    }
+                                } else if event.keystroke.key == "backspace" {
+                                    input_state_key.update(cx, |s, _| {
+                                        s.text.pop();
+                                    });
+                                    window.refresh();
+                                } else if event.keystroke.modifiers.control
+                                    && event.keystroke.key.eq_ignore_ascii_case("v")
+                                    && let Some(item) = cx.read_from_clipboard()
+                                    && let Some(text) = item.text()
+                                {
+                                    input_state_key.update(cx, |s, _| {
+                                        s.text.push_str(text.trim());
+                                    });
+                                    window.refresh();
+                                } else if !event.keystroke.modifiers.control
+                                    && !event.keystroke.modifiers.alt
+                                    && !event.keystroke.modifiers.platform
+                                    && let Some(ch) = event.keystroke.key_char.as_deref()
+                                {
+                                    input_state_key.update(cx, |s, _| {
+                                        s.text.push_str(ch);
+                                    });
+                                    window.refresh();
+                                }
+                            })
+                            .child(
                                 div()
-                                    .id("btn-create-task")
-                                    .group("btn-create-task")
+                                    .id("btn-create-task-icon")
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .size_8()
-                                    .rounded_lg()
+                                    .flex_shrink_0()
                                     .cursor_pointer()
-                                    .hover(move |style| style.bg(surface_hover))
                                     .tooltip(|_, cx| {
                                         cx.new(|_| ActionTooltip {
                                             label: "Nueva descarga".into(),
@@ -183,91 +233,36 @@ impl RenderOnce for Titlebar {
                                         })
                                         .into()
                                     })
-                                    .on_click(|_event, window, cx| {
-                                        cx.set_global(QuickDownloadState { expanded: true });
-                                        window.refresh();
-                                    })
                                     .child(
                                         svg()
-                                            .path("icons/plus.svg")
+                                            .path(if is_expanded {
+                                                "icons/download.svg"
+                                            } else {
+                                                "icons/plus.svg"
+                                            })
                                             .size_4()
-                                            .text_color(text_muted)
-                                            .group_hover("btn-create-task", move |style| {
-                                                style.text_color(text_color)
+                                            .text_color(if is_expanded {
+                                                accent
+                                            } else {
+                                                text_muted
+                                            })
+                                            .group_hover("quick-download-morph", move |style| {
+                                                style.text_color(if is_expanded {
+                                                    accent
+                                                } else {
+                                                    text_color
+                                                })
                                             }),
-                                    )
-                                    .into_any_element()
-                            } else {
-                                let input_state_clone = input_state.clone();
-                                let input_state_submit = input_state.clone();
-                                let input_state_clear = input_state.clone();
-
+                                    ),
+                            )
+                            .child(
                                 div()
-                                    .id("quick-download-input-wrapper")
-                                    .track_focus(&input_focus)
-                                    .key_context("QuickDownloadInput")
                                     .flex()
                                     .items_center()
-                                    .h_8()
-                                    .w(px(360.0))
-                                    .px_3()
-                                    .rounded(px(24.0))
-                                    .bg(surface_hover)
-                                    .border_1()
-                                    .border_color(border)
+                                    .w(px(328.0))
+                                    .pr_2p5()
+                                    .flex_shrink_0()
                                     .cursor_text()
-                                    .on_key_down(move |event, window, cx| {
-                                        if event.keystroke.key == "escape" {
-                                            input_state_clone.update(cx, |s, _| s.text.clear());
-                                            cx.set_global(QuickDownloadState { expanded: false });
-                                            window.refresh();
-                                        } else if event.keystroke.key == "enter" {
-                                            let text =
-                                                input_state_clone.read(cx).text.trim().to_string();
-                                            if !text.is_empty() {
-                                                let model = cx.tasks_model().clone();
-                                                model.update(cx, |model, cx| {
-                                                    model.start_download(text, None, cx);
-                                                });
-                                                input_state_clone.update(cx, |s, _| s.text.clear());
-                                                cx.set_global(QuickDownloadState {
-                                                    expanded: false,
-                                                });
-                                                window.refresh();
-                                            }
-                                        } else if event.keystroke.key == "backspace" {
-                                            input_state_clone.update(cx, |s, _| {
-                                                s.text.pop();
-                                            });
-                                            window.refresh();
-                                        } else if event.keystroke.modifiers.control
-                                            && event.keystroke.key.eq_ignore_ascii_case("v")
-                                            && let Some(item) = cx.read_from_clipboard()
-                                            && let Some(text) = item.text()
-                                        {
-                                            input_state_clone.update(cx, |s, _| {
-                                                s.text.push_str(text.trim());
-                                            });
-                                            window.refresh();
-                                        } else if !event.keystroke.modifiers.control
-                                            && !event.keystroke.modifiers.alt
-                                            && !event.keystroke.modifiers.platform
-                                            && let Some(ref ch) = event.keystroke.key_char
-                                        {
-                                            input_state_clone.update(cx, |s, _| {
-                                                s.text.push_str(ch);
-                                            });
-                                            window.refresh();
-                                        }
-                                    })
-                                    .child(
-                                        svg()
-                                            .path("icons/download.svg")
-                                            .size_3p5()
-                                            .text_color(accent)
-                                            .mr_2()
-                                            .flex_shrink_0(),
-                                    )
                                     .child(div().flex_1().overflow_hidden().text_xs().child(
                                         if current_text.is_empty() {
                                             div()
@@ -290,7 +285,7 @@ impl RenderOnce for Titlebar {
                                                 .into_any_element()
                                         },
                                     ))
-                                    .children(if !input_state.read(cx).text.trim().is_empty() {
+                                    .children(if has_text {
                                         Some(
                                             div()
                                                 .id("btn-submit-quick-download")
@@ -353,9 +348,39 @@ impl RenderOnce for Titlebar {
                                                     .size_3()
                                                     .text_color(text_muted),
                                             ),
-                                    )
-                                    .into_any_element()
-                            }),
+                                    ),
+                            )
+                            .with_spring(
+                                "quick-download-spring",
+                                quick_spring,
+                                move |this, phase| {
+                                    let width = phase.interpolate_clamped(px(32.0), px(360.0));
+                                    let radius = phase.interpolate_clamped(px(8.0), px(24.0));
+                                    let bg_color = phase.interpolate_clamped(
+                                        Rgba {
+                                            r: surface_hover.r,
+                                            g: surface_hover.g,
+                                            b: surface_hover.b,
+                                            a: 0.0,
+                                        },
+                                        surface_hover,
+                                    );
+                                    let border_col = phase.interpolate_clamped(
+                                        Rgba {
+                                            r: border.r,
+                                            g: border.g,
+                                            b: border.b,
+                                            a: 0.0,
+                                        },
+                                        border,
+                                    );
+                                    this.w(width)
+                                        .rounded(radius)
+                                        .bg(bg_color)
+                                        .border_1()
+                                        .border_color(border_col)
+                                },
+                            ),
                     ),
             )
             .child(
