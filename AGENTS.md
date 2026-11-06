@@ -82,28 +82,6 @@ crates/
 
 Each module in `crates/app` should have its own widgets separated from module state logic. Do not cram everything into the module file. Shared UI components and assets live directly inside `crates/app`:
 
-```
-crates/
-└── app/
-    ├── assets/
-    │   └── icons/
-    ├── components/
-    │   ├── select.rs
-    │   ├── progress.rs
-    │   ├── input.rs
-    │   ├── button.rs
-    │   └── modal.rs
-    ├── modules/
-    │   ├── downloads.rs
-    │   ├── add_url_dialog.rs
-    │   └── settings.rs
-    └── widgets/
-        └── downloads/
-            ├── task_row.rs
-            ├── progress_bar.rs
-            └── speed_graph.rs
-```
-
 ## Multiple Instances
 
 Avoid creating multiple instances of core services or managers. `Core` (`Engine`, `DiskManager`, `ConfigManager`) must be instantiated once and shared globally (`Arc` / GPUI global `AppState`).

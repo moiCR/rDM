@@ -2,6 +2,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use std::rc::Rc;
 
+use super::button::{ButtonRounded, IconButton};
 use crate::theme::ActiveTheme;
 
 pub type ModalCloseHandler = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
@@ -134,24 +135,15 @@ impl RenderOnce for Modal {
                                 })),
                         )
                         .children(on_close_btn.map(|handler| {
-                            div()
-                                .id("btn-close-modal")
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .size_8()
-                                .rounded_full()
-                                .cursor_pointer()
-                                .hover(move |s| s.bg(palette_surface_hover))
+                            IconButton::new("btn-close-modal", "icons/x.svg")
+                                .size(px(32.0))
+                                .icon_size(px(16.0))
+                                .rounded(ButtonRounded::Size(px(99.0)))
+                                .color(palette_text_muted)
+                                .hover_bg(palette_surface_hover)
                                 .on_click(move |_event, window, cx| {
                                     handler(window, cx);
                                 })
-                                .child(
-                                    svg()
-                                        .path("icons/x.svg")
-                                        .size_4()
-                                        .text_color(palette_text_muted),
-                                )
                         }))
                         .into_any_element(),
                 )
@@ -225,6 +217,12 @@ impl RenderOnce for Modal {
                                     .shadow_xl()
                                     .flex()
                                     .flex_col()
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation();
+                                    })
+                                    .on_click(|_, _, cx| {
+                                        cx.stop_propagation();
+                                    })
                                     .children(header_element)
                                     .children(self.children)
                                     .children(footer_element)

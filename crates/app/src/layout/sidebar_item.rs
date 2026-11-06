@@ -1,9 +1,6 @@
 use gpui::{prelude::FluentBuilder, *};
 
-use crate::{
-    ext::transitions::{DivTransitionsExt, millis},
-    theme::ActiveTheme,
-};
+use crate::{ext::transitions::*, theme::ActiveTheme};
 
 pub type SidebarItemAction = Box<dyn Fn(&mut Window, &mut App) + 'static>;
 
@@ -76,6 +73,7 @@ impl RenderOnce for SidebarItem {
         let variant = self.variant;
 
         if variant == SidebarVariant::Classic {
+            let hover_state_classic = hover_state.clone();
             return div()
                 .id(ElementId::Name(format!("classic-{label}").into()))
                 .flex()
@@ -84,6 +82,15 @@ impl RenderOnce for SidebarItem {
                 .py_2()
                 .px_1()
                 .cursor_pointer()
+                .on_hover(move |is_hovered, window, cx| {
+                    hover_state_classic.update(cx, |state, cx| {
+                        if *state != *is_hovered {
+                            *state = *is_hovered;
+                            cx.notify();
+                        }
+                    });
+                    window.refresh();
+                })
                 .when_some(path, |this, target_path| {
                     this.on_click(move |_event, window, cx| {
                         gpui_router::use_navigate(window, cx).push(target_path);
@@ -96,6 +103,10 @@ impl RenderOnce for SidebarItem {
                 })
                 .child(
                     div()
+                        .id(ElementId::Name(format!("classic-text-{label}").into()))
+                        .with_transitions(format!("classic-text-trans-{label}"), |t| {
+                            t.all(millis(300))
+                        })
                         .text_size(px(18.0))
                         .line_height(relative(1.2))
                         .font_weight(if active {
@@ -103,9 +114,12 @@ impl RenderOnce for SidebarItem {
                         } else {
                             FontWeight::MEDIUM
                         })
-                        .text_color(if active { text_color } else { text_muted })
-                        .hover(move |s| s.text_color(text_color))
-                        .with_transitions("sidebar-text", |t| t.all(millis(300)))
+                        .text_color(if active || hovered {
+                            text_color
+                        } else {
+                            text_muted
+                        })
+                        .hover_style(|s| s.text_color(text_color))
                         .child(label),
                 )
                 .into_any_element();

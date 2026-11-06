@@ -2,6 +2,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use std::rc::Rc;
 
+use super::button::{ButtonRounded, IconButton};
 use crate::theme::ActiveTheme;
 
 pub type ModalSubViewCloseHandler = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
@@ -126,24 +127,15 @@ impl RenderOnce for ModalSubView {
                                 })),
                         )
                         .children(on_back_btn.map(|handler| {
-                            div()
-                                .id("btn-subview-close")
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .size_7()
-                                .rounded_full()
-                                .cursor_pointer()
-                                .hover(move |s| s.bg(palette_surface_hover))
+                            IconButton::new("btn-subview-close", "icons/x.svg")
+                                .size(px(28.0))
+                                .icon_size(px(14.0))
+                                .rounded(ButtonRounded::Size(px(99.0)))
+                                .color(palette_text_muted)
+                                .hover_bg(palette_surface_hover)
                                 .on_click(move |_event, window, cx| {
                                     handler(window, cx);
                                 })
-                                .child(
-                                    svg()
-                                        .path("icons/x.svg")
-                                        .size_3p5()
-                                        .text_color(palette_text_muted),
-                                )
                         }))
                         .into_any_element(),
                 )

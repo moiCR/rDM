@@ -1,53 +1,12 @@
 use gpui::*;
+use gpui_kit::component::input::{Input, InputState};
 
 use crate::{
+    components::{ActionTooltip, IconButton},
     layout::SidebarState,
     state::{CoreContext, QuickDownloadState},
     theme::ActiveTheme,
 };
-
-#[derive(Default)]
-pub struct QuickDownloadInputState {
-    pub text: String,
-}
-
-struct ActionTooltip {
-    label: SharedString,
-    shortcut: Option<SharedString>,
-}
-
-impl Render for ActionTooltip {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let surface = cx.theme().surface();
-        let border = cx.theme().border();
-        let text_color = cx.theme().text_color();
-        let text_muted = cx.theme().text_muted();
-        let surface_hover = cx.theme().surface_hover();
-
-        div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(surface)
-            .border_1()
-            .border_color(border)
-            .shadow_md()
-            .text_xs()
-            .child(div().text_color(text_color).child(self.label.clone()))
-            .children(self.shortcut.as_ref().map(|s| {
-                div()
-                    .px_1()
-                    .py_0p5()
-                    .rounded_sm()
-                    .bg(surface_hover)
-                    .text_color(text_muted)
-                    .child(s.clone())
-            }))
-    }
-}
 
 #[derive(IntoElement)]
 pub struct Titlebar;
@@ -79,26 +38,21 @@ impl RenderOnce for Titlebar {
             .map(|s| s.expanded)
             .unwrap_or(false);
 
-        let input_focus = window
-            .use_keyed_state("quick-download-input-focus", cx, |_, cx| cx.focus_handle())
-            .read(cx)
-            .clone();
-
-        let input_state = window.use_keyed_state("quick-download-input-state", cx, |_, _| {
-            QuickDownloadInputState::default()
+        let quick_input = window.use_keyed_state("quick-download-input-state", cx, |window, cx| {
+            InputState::new(window, cx).placeholder("Pega URL y presiona Enter...")
         });
 
-        if is_expanded && !input_focus.is_focused(window) {
-            window.focus(&input_focus, cx);
+        if is_expanded && !quick_input.read(cx).focus_handle(cx).is_focused(window) {
+            quick_input.update(cx, |s, cx| s.focus(window, cx));
         }
 
         let spring_config = SpringConfig::new(220.0, 24.0, 1.0);
         let quick_spring = SpringAnimation::new(spring_config).to(is_expanded);
 
-        let current_text = input_state.read(cx).text.clone();
-        let input_state_key = input_state.clone();
-        let input_state_submit = input_state.clone();
-        let input_state_clear = input_state.clone();
+        let quick_input_key = quick_input.clone();
+        let q_submit = quick_input.clone();
+        let q_clear = quick_input.clone();
+        let current_text = quick_input.read(cx).text().to_string();
         let has_text = !current_text.trim().is_empty();
 
         div()
@@ -119,23 +73,9 @@ impl RenderOnce for Titlebar {
                     .h_full()
                     .flex_shrink_0()
                     .child(
-                        div()
-                            .id("btn-collapse-sidebar")
-                            .group("btn-collapse-sidebar")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size_8()
-                            .rounded_lg()
-                            .cursor_pointer()
-                            .hover(move |style| style.bg(surface_hover))
-                            .tooltip(|_, cx| {
-                                cx.new(|_| ActionTooltip {
-                                    label: "Alternar barra lateral".into(),
-                                    shortcut: Some("Ctrl+B".into()),
-                                })
-                                .into()
-                            })
+                        IconButton::new("btn-collapse-sidebar", "icons/panel-left.svg")
+                            .tooltip("Alternar barra lateral")
+                            .shortcut("Ctrl+B")
                             .on_click(|_event, window, cx| {
                                 let current = cx
                                     .try_global::<SidebarState>()
@@ -145,23 +85,12 @@ impl RenderOnce for Titlebar {
                                     collapsed: !current,
                                 });
                                 window.refresh();
-                            })
-                            .child(
-                                svg()
-                                    .path("icons/panel-left.svg")
-                                    .size_4()
-                                    .text_color(text_muted)
-                                    .group_hover("btn-collapse-sidebar", move |style| {
-                                        style.text_color(text_color)
-                                    }),
-                            ),
+                            }),
                     )
                     .child(
                         div()
                             .id("quick-download-morph")
                             .group("quick-download-morph")
-                            .track_focus(&input_focus)
-                            .key_context("QuickDownloadInput")
                             .overflow_hidden()
                             .flex()
                             .items_center()
@@ -173,48 +102,36 @@ impl RenderOnce for Titlebar {
                                     window.refresh();
                                 }
                             })
-                            .on_key_down(move |event, window, cx| {
-                                if !is_expanded {
-                                    return;
-                                }
-                                if event.keystroke.key == "escape" {
-                                    input_state_key.update(cx, |s, _| s.text.clear());
-                                    cx.set_global(QuickDownloadState { expanded: false });
-                                    window.refresh();
-                                } else if event.keystroke.key == "enter" {
-                                    let text = input_state_key.read(cx).text.trim().to_string();
-                                    if !text.is_empty() {
-                                        let model = cx.tasks_model().clone();
-                                        model.update(cx, |model, cx| {
-                                            model.start_download(text, None, cx);
+                            .on_key_down({
+                                let q_state = quick_input_key.clone();
+                                move |event, window, cx| {
+                                    if !is_expanded {
+                                        return;
+                                    }
+                                    if event.keystroke.key == "escape" {
+                                        q_state.update(cx, |s, cx| {
+                                            s.set_value("", window, cx);
                                         });
-                                        input_state_key.update(cx, |s, _| s.text.clear());
                                         cx.set_global(QuickDownloadState { expanded: false });
                                         window.refresh();
+                                    } else if event.keystroke.key == "enter" {
+                                        let text = q_state.read(cx).text().to_string();
+                                        if !text.trim().is_empty() {
+                                            let model = cx.tasks_model().clone();
+                                            model.update(cx, |model, cx| {
+                                                model.start_download(
+                                                    text.trim().to_string(),
+                                                    None,
+                                                    cx,
+                                                );
+                                            });
+                                            q_state.update(cx, |s, cx| {
+                                                s.set_value("", window, cx);
+                                            });
+                                            cx.set_global(QuickDownloadState { expanded: false });
+                                            window.refresh();
+                                        }
                                     }
-                                } else if event.keystroke.key == "backspace" {
-                                    input_state_key.update(cx, |s, _| {
-                                        s.text.pop();
-                                    });
-                                    window.refresh();
-                                } else if event.keystroke.modifiers.control
-                                    && event.keystroke.key.eq_ignore_ascii_case("v")
-                                    && let Some(item) = cx.read_from_clipboard()
-                                    && let Some(text) = item.text()
-                                {
-                                    input_state_key.update(cx, |s, _| {
-                                        s.text.push_str(text.trim());
-                                    });
-                                    window.refresh();
-                                } else if !event.keystroke.modifiers.control
-                                    && !event.keystroke.modifiers.alt
-                                    && !event.keystroke.modifiers.platform
-                                    && let Some(ch) = event.keystroke.key_char.as_deref()
-                                {
-                                    input_state_key.update(cx, |s, _| {
-                                        s.text.push_str(ch);
-                                    });
-                                    window.refresh();
                                 }
                             })
                             .child(
@@ -227,9 +144,8 @@ impl RenderOnce for Titlebar {
                                     .flex_shrink_0()
                                     .cursor_pointer()
                                     .tooltip(|_, cx| {
-                                        cx.new(|_| ActionTooltip {
-                                            label: "Nueva descarga".into(),
-                                            shortcut: Some("Ctrl+N".into()),
+                                        cx.new(|_| {
+                                            ActionTooltip::new("Nueva descarga").shortcut("Ctrl+N")
                                         })
                                         .into()
                                     })
@@ -262,29 +178,17 @@ impl RenderOnce for Titlebar {
                                     .w(px(328.0))
                                     .pr_2p5()
                                     .flex_shrink_0()
-                                    .cursor_text()
-                                    .child(div().flex_1().overflow_hidden().text_xs().child(
-                                        if current_text.is_empty() {
-                                            div()
-                                                .text_color(text_muted)
-                                                .child("Pega URL y presiona Enter...")
-                                                .into_any_element()
-                                        } else {
-                                            div()
-                                                .flex()
-                                                .items_center()
+                                    .child(
+                                        div().flex_1().h_full().flex().items_center().child(
+                                            Input::new(&quick_input)
+                                                .id("quick-download-text-input")
+                                                .appearance(false)
+                                                .text_size(px(12.0))
                                                 .text_color(text_color)
-                                                .child(current_text)
-                                                .child(
-                                                    div()
-                                                        .w(px(1.5))
-                                                        .h(px(13.0))
-                                                        .bg(accent)
-                                                        .ml_0p5(),
-                                                )
-                                                .into_any_element()
-                                        },
-                                    ))
+                                                .w_full()
+                                                .h_full(),
+                                        ),
+                                    )
                                     .children(if has_text {
                                         Some(
                                             div()
@@ -297,18 +201,19 @@ impl RenderOnce for Titlebar {
                                                 .cursor_pointer()
                                                 .hover(move |s| s.bg(surface_hover))
                                                 .on_click(move |_event, window, cx| {
-                                                    let text = input_state_submit
-                                                        .read(cx)
-                                                        .text
-                                                        .trim()
-                                                        .to_string();
-                                                    if !text.is_empty() {
+                                                    let text = q_submit.read(cx).text().to_string();
+                                                    if !text.trim().is_empty() {
                                                         let model = cx.tasks_model().clone();
                                                         model.update(cx, |model, cx| {
-                                                            model.start_download(text, None, cx);
+                                                            model.start_download(
+                                                                text.trim().to_string(),
+                                                                None,
+                                                                cx,
+                                                            );
                                                         });
-                                                        input_state_submit
-                                                            .update(cx, |s, _| s.text.clear());
+                                                        q_submit.update(cx, |s, cx| {
+                                                            s.set_value("", window, cx);
+                                                        });
                                                         cx.set_global(QuickDownloadState {
                                                             expanded: false,
                                                         });
@@ -336,7 +241,9 @@ impl RenderOnce for Titlebar {
                                             .cursor_pointer()
                                             .hover(move |s| s.bg(surface_hover))
                                             .on_click(move |_event, window, cx| {
-                                                input_state_clear.update(cx, |s, _| s.text.clear());
+                                                q_clear.update(cx, |s, cx| {
+                                                    s.set_value("", window, cx);
+                                                });
                                                 cx.set_global(QuickDownloadState {
                                                     expanded: false,
                                                 });

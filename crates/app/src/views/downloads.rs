@@ -3,6 +3,7 @@ use rdm_core::task::TaskStatus;
 use uuid::Uuid;
 
 use crate::{
+    components::{IconButton, ProgressBar, Separator},
     state::{CoreContext, TaskSnapshot},
     theme::ActiveTheme,
 };
@@ -248,19 +249,12 @@ impl DownloadsView {
                     .items_center()
                     .gap_2p5()
                     .child(
-                        div()
-                            .flex_1()
-                            .h(px(5.0))
-                            .rounded_full()
-                            .bg(palette.surface_hover)
-                            .overflow_hidden()
-                            .child(
-                                div()
-                                    .h_full()
-                                    .rounded_full()
-                                    .bg(status_color)
-                                    .w(relative(progress_ratio)),
-                            ),
+                        ProgressBar::new(
+                            ElementId::Name(format!("progress-bar-{}", task.id).into()),
+                            progress_ratio * 100.0,
+                        )
+                        .color(status_color)
+                        .track_color(palette.surface_hover),
                     )
                     .child(
                         div()
@@ -295,31 +289,24 @@ impl DownloadsView {
                     .justify_end()
                     .relative()
                     .child(
-                        div()
-                            .id(ElementId::Name(format!("btn-ellipsis-{}", task.id).into()))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size_7()
-                            .rounded_lg()
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(palette.surface_hover))
-                            .on_click(move |_event, window, cx| {
-                                view_state_toggle.update(cx, |s, _| {
-                                    if s.active_menu_id == Some(task_id) {
-                                        s.active_menu_id = None;
-                                    } else {
-                                        s.active_menu_id = Some(task_id);
-                                    }
-                                });
-                                window.refresh();
-                            })
-                            .child(
-                                svg()
-                                    .path("icons/ellipsis.svg")
-                                    .size_4()
-                                    .text_color(palette.text_muted),
-                            ),
+                        IconButton::new(
+                            ElementId::Name(format!("btn-ellipsis-{}", task.id).into()),
+                            "icons/ellipsis.svg",
+                        )
+                        .size(px(28.0))
+                        .icon_size(px(16.0))
+                        .hover_bg(palette.surface_hover)
+                        .color(palette.text_muted)
+                        .on_click(move |_event, window, cx| {
+                            view_state_toggle.update(cx, |s, _| {
+                                if s.active_menu_id == Some(task_id) {
+                                    s.active_menu_id = None;
+                                } else {
+                                    s.active_menu_id = Some(task_id);
+                                }
+                            });
+                            window.refresh();
+                        }),
                     )
                     .children(if is_menu_open {
                         Some(deferred(Self::render_context_menu(&task, ctx, palette)))
@@ -495,7 +482,7 @@ impl DownloadsView {
                             .child("Copiar enlace"),
                     ),
             )
-            .child(div().h(px(1.0)).bg(palette.border).my_0p5())
+            .child(Separator::horizontal().color(palette.border).my_0p5())
             .child(
                 div()
                     .id(ElementId::Name(format!("menu-del-list-{}", task_id).into()))
