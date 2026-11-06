@@ -7,7 +7,7 @@ pub type SidebarItemAction = Box<dyn Fn(&mut Window, &mut App) + 'static>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarVariant {
     Classic,
-    Minimal,
+    Modern,
 }
 
 #[derive(IntoElement)]
@@ -61,10 +61,10 @@ impl RenderOnce for SidebarItem {
         let surface_hover = cx.theme().surface_hover();
         let text_color = cx.theme().text_color();
         let text_muted = cx.theme().text_muted();
+        let accent = cx.theme().accent();
 
         let hover_state = window.use_keyed_state(self.label, cx, |_, _| false);
         let hovered = *hover_state.read(cx);
-        let highlighted = self.active || hovered;
         let active = self.active;
         let label = self.label;
         let icon_path = self.icon_path;
@@ -72,9 +72,9 @@ impl RenderOnce for SidebarItem {
         let action = self.action;
         let variant = self.variant;
 
-        if variant == SidebarVariant::Minimal {
+        if variant == SidebarVariant::Classic {
             return div()
-                .id(ElementId::Name(format!("minimal-{label}").into()))
+                .id(ElementId::Name(format!("classic-{label}").into()))
                 .flex()
                 .items_center()
                 .w_full()
@@ -107,19 +107,20 @@ impl RenderOnce for SidebarItem {
                 .into_any_element();
         }
 
+        let highlighted = active || hovered;
         let spring_config = SpringConfig::new(180.0, 26.0, 1.0);
         let color_spring = SpringAnimation::new(spring_config).to(highlighted);
-        let scale_spring = SpringAnimation::new(spring_config).to(active);
 
         div()
-            .id(ElementId::Name(label.into()))
+            .id(ElementId::Name(format!("modern-{label}").into()))
             .flex()
             .items_center()
-            .gap_1p5()
-            .rounded(px(24.0))
-            .line_height(relative(1.0))
+            .gap_3()
+            .w_full()
+            .px_3()
+            .py_2()
+            .rounded(px(14.0))
             .cursor_pointer()
-            .when(active, |this| this.font_weight(FontWeight::MEDIUM))
             .on_hover(move |is_hovered, _window, cx| {
                 hover_state.update(cx, |state, cx| {
                     if *state != *is_hovered {
@@ -139,51 +140,37 @@ impl RenderOnce for SidebarItem {
                 })
             })
             .with_spring(
-                ElementId::Name(format!("{label}-color").into()),
+                ElementId::Name(format!("{label}-modern-bg").into()),
                 color_spring,
                 move |this, phase| {
-                    let fg = phase.interpolate_clamped(text_muted, text_color);
-                    let bg = phase.interpolate_clamped(surface, surface_hover);
+                    let bg = if active {
+                        surface_hover
+                    } else {
+                        phase.interpolate_clamped(surface.opacity(0.0), surface_hover.opacity(0.6))
+                    };
+                    let icon_fg = if active { accent } else { text_muted };
+                    let fg = if active { text_color } else { text_muted };
 
                     this.bg(bg)
-                        .text_color(fg)
                         .child(
                             div()
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .flex_shrink_0()
-                                .child(
-                                    svg()
-                                        .path(icon_path)
-                                        .text_color(fg)
-                                        .when(active, |icon| {
-                                            icon.size(px(17.0)).with_transformation(
-                                                Transformation::scale(size(1.05, 1.05)),
-                                            )
-                                        })
-                                        .when(!active, |icon| icon.size_4()),
-                                ),
+                                .size_5()
+                                .child(svg().path(icon_path).size_4().text_color(icon_fg)),
                         )
                         .child(
                             div()
-                                .flex()
-                                .items_center()
-                                .line_height(relative(1.0))
-                                .pb(px(1.5))
+                                .text_size(px(14.0))
+                                .font_weight(if active {
+                                    FontWeight::SEMIBOLD
+                                } else {
+                                    FontWeight::NORMAL
+                                })
+                                .text_color(fg)
                                 .child(label),
                         )
-                },
-            )
-            .with_spring(
-                ElementId::Name(format!("{label}-scale").into()),
-                scale_spring,
-                move |this, phase| {
-                    let pad_x = phase.interpolate_clamped(px(16.0), px(20.0));
-                    let pad_y = phase.interpolate_clamped(px(9.0), px(11.5));
-                    let font_px = phase.interpolate_clamped(px(14.0), px(15.0));
-
-                    this.map_element(|div| div.px(pad_x).py(pad_y).text_size(font_px))
                 },
             )
             .into_any_element()

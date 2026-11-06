@@ -29,8 +29,8 @@ impl RenderOnce for Sidebar {
 
         let core = cx.core().clone();
         let ui_cfg = core.config().ui_config();
-        let variant = if ui_cfg.sidebar_style == "minimal" {
-            SidebarVariant::Minimal
+        let variant = if ui_cfg.sidebar_style == "modern" {
+            SidebarVariant::Modern
         } else {
             SidebarVariant::Classic
         };
@@ -51,8 +51,9 @@ impl RenderOnce for Sidebar {
                     .flex()
                     .flex_col()
                     .items_start()
-                    .justify_center()
-                    .gap_2()
+                    .justify_start()
+                    .pt_4()
+                    .gap_3()
                     .child(sidebar_item_with_variant(
                         "Dashboard",
                         "icons/dashboard.svg",
@@ -70,26 +71,21 @@ impl RenderOnce for Sidebar {
                         variant,
                     )),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .pt_2()
-                    .child(sidebar_item_with_variant(
-                        "Ajustes",
-                        "icons/settings.svg",
-                        None,
-                        false,
-                        Some(Box::new(|window, cx| {
-                            cx.set_global(SettingsModalState {
-                                open: true,
-                                subview: None,
-                            });
-                            window.refresh();
-                        })),
-                        variant,
-                    )),
-            )
+            .child(div().flex().flex_col().items_start().w_full().pt_2().child(
+                sidebar_item_with_variant(
+                    "Ajustes",
+                    "icons/settings.svg",
+                    None,
+                    false,
+                    Some(Box::new(|window, cx| {
+                        cx.set_global(SettingsModalState {
+                            open: true,
+                            subview: None,
+                        });
+                        window.refresh();
+                    })),
+                    variant,
+                ),
+            ))
     }
 }

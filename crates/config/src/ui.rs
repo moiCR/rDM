@@ -9,7 +9,7 @@ fn default_sidebar_style() -> String {
 }
 
 fn default_accent_color() -> String {
-    "#3b82f6".to_string()
+    "#0088ff".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

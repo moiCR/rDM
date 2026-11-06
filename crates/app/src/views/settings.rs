@@ -128,8 +128,9 @@ impl RenderOnce for SettingsModal {
             .child(
                 Modal::new("settings-modal")
                     .open(modal_state.open)
-                    .title("Ajustes del Sistema")
-                    .icon("icons/settings.svg")
+                    .width(px(900.0))
+                    .max_height(px(640.0))
+                    .title("Configuración")
                     .on_close(move |window, cx| {
                         cx.set_global(SettingsModalState {
                             open: false,
@@ -141,15 +142,14 @@ impl RenderOnce for SettingsModal {
                         div()
                             .flex()
                             .flex_col()
-                            .gap_4()
-                            .text_xs()
+                            .gap_6()
                             .child(
                                 div()
                                     .id("btn-appearance-row")
                                     .flex()
                                     .items_center()
                                     .justify_between()
-                                    .p_3()
+                                    .p_4()
                                     .rounded(px(16.0))
                                     .bg(palette.surface_hover)
                                     .border_1()
@@ -166,87 +166,75 @@ impl RenderOnce for SettingsModal {
                                     .child(
                                         div()
                                             .flex()
-                                            .items_center()
-                                            .gap_3()
+                                            .flex_col()
+                                            .gap_1()
                                             .child(
-                                                svg()
-                                                    .path("icons/palette.svg")
-                                                    .size_5()
-                                                    .text_color(palette.accent),
+                                                div()
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_size(px(15.0))
+                                                    .text_color(palette.text_color)
+                                                    .child("Apariencia y Estilo"),
                                             )
                                             .child(
                                                 div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .gap_0p5()
-                                                    .child(
-                                                        div()
-                                                            .font_weight(FontWeight::BOLD)
-                                                            .text_size(px(13.0))
-                                                            .text_color(palette.text_color)
-                                                            .child("Apariencia y Estilo"),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_color(palette.text_muted)
-                                                            .child(format!(
-                                                                "Tema: {} · Sidebar: {}",
-                                                                if form.theme == "light" {
-                                                                    "Claro"
-                                                                } else {
-                                                                    "Oscuro"
-                                                                },
-                                                                if form.sidebar_style == "minimal" {
-                                                                    "Texto Grande"
-                                                                } else {
-                                                                    "Clásica"
-                                                                }
-                                                            )),
-                                                    ),
+                                                    .text_xs()
+                                                    .text_color(palette.text_muted)
+                                                    .child("Cambie el tema, el estilo del panel de navegacion y más"),
                                             ),
                                     )
                                     .child(
-                                        div()
-                                            .px_3()
-                                            .py_1p5()
-                                            .rounded(px(24.0))
-                                            .bg(palette.border)
-                                            .text_color(palette.text_color)
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child("Personalizar →"),
+                                        svg()
+                                            .path("icons/chevron-right.svg")
+                                            .size_5()
+                                            .text_color(palette.text_muted),
                                     ),
                             )
                             .child(
                                 div()
                                     .flex()
-                                    .flex_col()
-                                    .gap_1p5()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_6()
+                                    .p_3()
                                     .child(
                                         div()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(palette.text_color)
-                                            .child("Límite de velocidad global (MB/s)"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_color(palette.text_muted)
-                                            .child("Escribe la velocidad que desees o usa 0 para ilimitada."),
+                                            .flex_1()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_size(px(14.0))
+                                                    .text_color(palette.text_color)
+                                                    .child("Límite de velocidad global"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(palette.text_muted)
+                                                    .child("Usa 0 para velocidad sin límites."),
+                                            ),
                                     )
                                     .child(
                                         div()
                                             .flex()
                                             .items_center()
                                             .gap_2()
-                                            .child(Self::text_input_field(
-                                                "input-speed",
-                                                &speed_str,
-                                                "MB/s",
-                                                focused.as_deref() == Some("speed"),
-                                                form_state.clone(),
-                                                "speed",
-                                                palette,
-                                            ))
-                                            .child(Self::speed_preset_button("0 (Ilim.)", 0, form_state.clone(), palette))
+                                            .child(
+                                                div()
+                                                    .w(px(130.0))
+                                                    .child(Self::text_input_field(
+                                                        "input-speed",
+                                                        &speed_str,
+                                                        "MB/s",
+                                                        focused.as_deref() == Some("speed"),
+                                                        form_state.clone(),
+                                                        "speed",
+                                                        palette,
+                                                    )),
+                                            )
+                                            .child(Self::speed_preset_button("Ilimitado", 0, form_state.clone(), palette))
                                             .child(Self::speed_preset_button("10 MB/s", 10, form_state.clone(), palette))
                                             .child(Self::speed_preset_button("50 MB/s", 50, form_state.clone(), palette)),
                                     ),
@@ -254,33 +242,48 @@ impl RenderOnce for SettingsModal {
                             .child(
                                 div()
                                     .flex()
-                                    .flex_col()
-                                    .gap_1p5()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_6()
+                                    .p_3()
                                     .child(
                                         div()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(palette.text_color)
-                                            .child("Conexiones simultáneas por descarga"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_color(palette.text_muted)
-                                            .child("Segmentos concurrentes (1 a 32)."),
+                                            .flex_1()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_size(px(14.0))
+                                                    .text_color(palette.text_color)
+                                                    .child("Conexiones simultáneas"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(palette.text_muted)
+                                                    .child("Segmentos concurrentes por descarga (1 a 32)."),
+                                            ),
                                     )
                                     .child(
                                         div()
                                             .flex()
                                             .items_center()
                                             .gap_2()
-                                            .child(Self::text_input_field(
-                                                "input-connections",
-                                                &connections_str,
-                                                "conex.",
-                                                focused.as_deref() == Some("connections"),
-                                                form_state.clone(),
-                                                "connections",
-                                                palette,
-                                            ))
+                                            .child(
+                                                div()
+                                                    .w(px(80.0))
+                                                    .child(Self::text_input_field(
+                                                        "input-connections",
+                                                        &connections_str,
+                                                        "8",
+                                                        focused.as_deref() == Some("connections"),
+                                                        form_state.clone(),
+                                                        "connections",
+                                                        palette,
+                                                    )),
+                                            )
                                             .child(Self::connection_preset_button(4, form_state.clone(), palette))
                                             .child(Self::connection_preset_button(8, form_state.clone(), palette))
                                             .child(Self::connection_preset_button(16, form_state.clone(), palette))
@@ -290,13 +293,29 @@ impl RenderOnce for SettingsModal {
                             .child(
                                 div()
                                     .flex()
-                                    .flex_col()
-                                    .gap_1p5()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_6()
+                                    .p_3()
                                     .child(
                                         div()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(palette.text_color)
-                                            .child("Carpeta de descargas"),
+                                            .flex_1()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_size(px(14.0))
+                                                    .text_color(palette.text_color)
+                                                    .child("Carpeta de descargas"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(palette.text_muted)
+                                                    .child("Directorio predeterminado donde se guardarán los archivos."),
+                                            ),
                                     )
                                     .child(
                                         div()
@@ -305,7 +324,7 @@ impl RenderOnce for SettingsModal {
                                             .gap_2()
                                             .child(
                                                 div()
-                                                    .flex_1()
+                                                    .w(px(260.0))
                                                     .h_9()
                                                     .px_3()
                                                     .rounded(px(24.0))
@@ -315,6 +334,7 @@ impl RenderOnce for SettingsModal {
                                                     .flex()
                                                     .items_center()
                                                     .truncate()
+                                                    .text_xs()
                                                     .text_color(palette.text_color)
                                                     .child(download_dir_str),
                                             )
@@ -323,7 +343,7 @@ impl RenderOnce for SettingsModal {
                                                 div()
                                                     .id("btn-browse-download-dir")
                                                     .h_9()
-                                                    .px_3()
+                                                    .px_4()
                                                     .rounded(px(24.0))
                                                     .bg(palette.surface_hover)
                                                     .border_1()
@@ -355,31 +375,40 @@ impl RenderOnce for SettingsModal {
                                                             }
                                                         }).detach();
                                                     })
-                                                    .child("Cambiar...")
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .child("Cambiar..."),
+                                                    )
                                             }),
                                     ),
                             )
                             .child(
                                 div()
                                     .flex()
-                                    .flex_col()
-                                    .gap_1p5()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_6()
+                                    .p_3()
                                     .child(
                                         div()
+                                            .w(px(260.0))
                                             .flex()
-                                            .items_center()
-                                            .justify_between()
+                                            .flex_col()
+                                            .gap_1()
                                             .child(
                                                 div()
                                                     .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_size(px(14.0))
                                                     .text_color(palette.text_color)
-                                                    .child("User-Agent personalizado"),
+                                                    .child("User-Agent"),
                                             )
                                             .child({
                                                 let form_reset = form_state.clone();
                                                 div()
                                                     .id("btn-reset-user-agent")
                                                     .cursor_pointer()
+                                                    .text_xs()
                                                     .text_color(palette.accent)
                                                     .hover(move |s| s.underline())
                                                     .on_click(move |_event, window, cx| {
@@ -391,15 +420,19 @@ impl RenderOnce for SettingsModal {
                                                     .child("Restaurar por defecto")
                                             }),
                                     )
-                                    .child(Self::text_input_field(
-                                        "input-user-agent",
-                                        &user_agent_str,
-                                        "Escribe o pega User-Agent...",
-                                        focused.as_deref() == Some("user_agent"),
-                                        form_state.clone(),
-                                        "user_agent",
-                                        palette,
-                                    )),
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .child(Self::text_input_field(
+                                                "input-user-agent",
+                                                &user_agent_str,
+                                                "Escribe o pega User-Agent...",
+                                                focused.as_deref() == Some("user_agent"),
+                                                form_state.clone(),
+                                                "user_agent",
+                                                palette,
+                                            )),
+                                    ),
                             ),
                     )
                     .footer(
@@ -408,7 +441,7 @@ impl RenderOnce for SettingsModal {
                             .items_center()
                             .justify_end()
                             .gap_3()
-                            .pt_2()
+                            .pt_3()
                             .border_t_1()
                             .border_color(palette.border)
                             .child(
@@ -438,7 +471,7 @@ impl RenderOnce for SettingsModal {
                                 div()
                                     .id("btn-save-settings")
                                     .h_9()
-                                    .px_5()
+                                    .px_6()
                                     .rounded(px(24.0))
                                     .bg(palette.accent)
                                     .cursor_pointer()
@@ -500,7 +533,9 @@ impl RenderOnce for SettingsModal {
             .child(
                 ModalSubView::new("settings-subview-appearance")
                     .open(is_subview_open)
-                    .title("Apariencia y Estilo")
+                    .width(px(520.0))
+                    .max_height(px(490.0))
+                    .title("Apariencia")
                     .icon("icons/palette.svg")
                     .on_back(move |window, cx| {
                         cx.set_global(SettingsModalState {
@@ -625,6 +660,7 @@ impl SettingsModal {
             .child(
                 div()
                     .truncate()
+                    .text_xs()
                     .text_color(if value.is_empty() {
                         palette.text_muted
                     } else {
@@ -641,115 +677,126 @@ impl SettingsModal {
         state: Entity<SettingsFormState>,
         palette: ModalPalette,
     ) -> impl IntoElement {
+        let colors = [
+            "#0088ff", "#ff0000", "#ff0099", "#9900ff", "#ff6600", "#00e659", "#4422ff", "#9e9e9e",
+            "#e07070", "#f2aa00",
+        ];
+
         div()
             .flex()
             .flex_col()
-            .gap_5()
-            .text_xs()
+            .gap_6()
+            .child(
+                div()
+                    .grid()
+                    .flex()
+                    .flex_wrap()
+                    .gap_4()
+                    .justify_between()
+                    .children(colors.iter().map(|&hex| {
+                        Self::figma_color_squircle(hex, current_accent, state.clone())
+                    })),
+            )
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .pt_3()
                     .child(
                         div()
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.text_color)
-                            .child("Tema de la interfaz"),
+                            .child("Navegación"),
                     )
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .child(Self::theme_button("dark", "Oscuro", current_theme, state.clone(), palette))
-                            .child(Self::theme_button("light", "Claro", current_theme, state.clone(), palette)),
+                            .gap_2p5()
+                            .child(Self::pill_button(
+                                "classic",
+                                "Normal",
+                                current_sidebar,
+                                state.clone(),
+                                palette,
+                            ))
+                            .child(Self::pill_button(
+                                "minimal",
+                                "Moderna",
+                                current_sidebar,
+                                state.clone(),
+                                palette,
+                            )),
                     ),
             )
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap_2()
+                    .items_center()
+                    .justify_between()
                     .child(
                         div()
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.text_color)
-                            .child("Estilo de Navegación (Sidebar)"),
-                    )
-                    .child(
-                        div()
-                            .text_color(palette.text_muted)
-                            .child("Selecciona entre navegación compacta con chips o minimalista con texto grande."),
+                            .child("Tema"),
                     )
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .child(Self::sidebar_style_button("classic", "Clásica", current_sidebar, state.clone(), palette))
-                            .child(Self::sidebar_style_button("minimal", "Texto Grande", current_sidebar, state.clone(), palette)),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2p5()
-                    .child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(palette.text_color)
-                            .child("Color de Acento"),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap_3()
-                            .child(Self::color_circle("#3b82f6", current_accent, state.clone()))
-                            .child(Self::color_circle("#2563eb", current_accent, state.clone()))
-                            .child(Self::color_circle("#6366f1", current_accent, state.clone()))
-                            .child(Self::color_circle("#8b5cf6", current_accent, state.clone()))
-                            .child(Self::color_circle("#d946ef", current_accent, state.clone()))
-                            .child(Self::color_circle("#ec4899", current_accent, state.clone()))
-                            .child(Self::color_circle("#ef4444", current_accent, state.clone()))
-                            .child(Self::color_circle("#f97316", current_accent, state.clone()))
-                            .child(Self::color_circle("#10b981", current_accent, state.clone()))
-                            .child(Self::color_circle("#71717a", current_accent, state)),
+                            .gap_2p5()
+                            .child(Self::theme_icon_button(
+                                "dark",
+                                "icons/moon.svg",
+                                current_theme,
+                                state.clone(),
+                                palette,
+                            ))
+                            .child(Self::theme_icon_button(
+                                "light",
+                                "icons/sun.svg",
+                                current_theme,
+                                state.clone(),
+                                palette,
+                            )),
                     ),
             )
     }
 
-    fn color_circle(
+    fn figma_color_squircle(
         hex: &'static str,
         current: &str,
         state: Entity<SettingsFormState>,
     ) -> impl IntoElement {
         let is_selected = current.eq_ignore_ascii_case(hex);
         let parsed_color = match hex {
-            "#3b82f6" => rgb(0x3b82f6),
-            "#2563eb" => rgb(0x2563eb),
-            "#6366f1" => rgb(0x6366f1),
-            "#8b5cf6" => rgb(0x8b5cf6),
-            "#d946ef" => rgb(0xd946ef),
-            "#ec4899" => rgb(0xec4899),
-            "#ef4444" => rgb(0xef4444),
-            "#f97316" => rgb(0xf97316),
-            "#10b981" => rgb(0x10b981),
-            _ => rgb(0x71717a),
+            "#0088ff" => rgb(0x0088ff),
+            "#ff0000" => rgb(0xff0000),
+            "#ff0099" => rgb(0xff0099),
+            "#9900ff" => rgb(0x9900ff),
+            "#ff6600" => rgb(0xff6600),
+            "#00e659" => rgb(0x00e659),
+            "#4422ff" => rgb(0x4422ff),
+            "#9e9e9e" => rgb(0x9e9e9e),
+            "#e07070" => rgb(0xe07070),
+            "#f2aa00" => rgb(0xf2aa00),
+            _ => rgb(0x0088ff),
         };
         let state_click = state.clone();
 
         div()
             .id(ElementId::Name(format!("color-{hex}").into()))
-            .size_8()
-            .rounded_full()
+            .size(px(52.0))
+            .rounded(px(16.0))
             .bg(parsed_color)
             .cursor_pointer()
             .flex()
             .items_center()
             .justify_center()
+            .hover(move |s| s.opacity(0.85))
             .when(is_selected, |s| s.border_2().border_color(rgb(0xffffff)))
             .on_click(move |_event, window, cx| {
                 state_click.update(cx, |f, _| {
@@ -759,7 +806,7 @@ impl SettingsModal {
             })
     }
 
-    fn sidebar_style_button(
+    fn pill_button(
         style_key: &'static str,
         label: &'static str,
         current: &str,
@@ -770,17 +817,17 @@ impl SettingsModal {
         let state_click = state.clone();
         div()
             .id(ElementId::Name(format!("btn-style-{style_key}").into()))
-            .flex_1()
+            .px_5()
             .h_9()
             .rounded(px(24.0))
             .bg(if is_selected {
-                palette.accent
-            } else {
                 palette.surface_hover
+            } else {
+                palette.border
             })
             .border_1()
             .border_color(if is_selected {
-                palette.accent
+                palette.text_color
             } else {
                 palette.border
             })
@@ -791,7 +838,7 @@ impl SettingsModal {
             .text_color(if is_selected {
                 rgb(0xffffff)
             } else {
-                palette.text_color
+                palette.text_muted
             })
             .font_weight(if is_selected {
                 FontWeight::SEMIBOLD
@@ -804,7 +851,49 @@ impl SettingsModal {
                 });
                 window.refresh();
             })
-            .child(label)
+            .child(div().text_xs().child(label))
+    }
+
+    fn theme_icon_button(
+        mode: &'static str,
+        icon_path: &'static str,
+        current: &str,
+        state: Entity<SettingsFormState>,
+        palette: ModalPalette,
+    ) -> impl IntoElement {
+        let is_selected = current == mode;
+        let state_click = state.clone();
+        div()
+            .id(ElementId::Name(format!("btn-theme-{mode}").into()))
+            .w(px(58.0))
+            .h_9()
+            .rounded(px(24.0))
+            .bg(if is_selected {
+                palette.surface_hover
+            } else {
+                palette.border
+            })
+            .border_1()
+            .border_color(if is_selected {
+                palette.text_color
+            } else {
+                palette.border
+            })
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .on_click(move |_event, window, cx| {
+                state_click.update(cx, |f, _| {
+                    f.theme = mode.to_string();
+                });
+                window.refresh();
+            })
+            .child(svg().path(icon_path).size_4().text_color(if is_selected {
+                rgb(0xffffff)
+            } else {
+                palette.text_muted
+            }))
     }
 
     fn speed_preset_button(
@@ -833,7 +922,7 @@ impl SettingsModal {
                 });
                 window.refresh();
             })
-            .child(label)
+            .child(div().text_xs().child(label))
     }
 
     fn connection_preset_button(
@@ -861,54 +950,6 @@ impl SettingsModal {
                 });
                 window.refresh();
             })
-            .child(format!("{count}"))
-    }
-
-    fn theme_button(
-        mode: &'static str,
-        label: &'static str,
-        current: &str,
-        state: Entity<SettingsFormState>,
-        palette: ModalPalette,
-    ) -> impl IntoElement {
-        let is_selected = current == mode;
-        let state_click = state.clone();
-        div()
-            .id(ElementId::Name(format!("btn-theme-{}", mode).into()))
-            .flex_1()
-            .h_9()
-            .rounded(px(24.0))
-            .bg(if is_selected {
-                palette.accent
-            } else {
-                palette.surface_hover
-            })
-            .border_1()
-            .border_color(if is_selected {
-                palette.accent
-            } else {
-                palette.border
-            })
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .text_color(if is_selected {
-                rgb(0xffffff)
-            } else {
-                palette.text_color
-            })
-            .font_weight(if is_selected {
-                FontWeight::SEMIBOLD
-            } else {
-                FontWeight::NORMAL
-            })
-            .on_click(move |_event, window, cx| {
-                state_click.update(cx, |f, _| {
-                    f.theme = mode.to_string();
-                });
-                window.refresh();
-            })
-            .child(label)
+            .child(div().text_xs().child(format!("{count}")))
     }
 }

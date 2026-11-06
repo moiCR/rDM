@@ -92,8 +92,8 @@ impl RenderOnce for Modal {
         let palette_text_muted = cx.theme().text_muted();
         let palette_accent = cx.theme().accent();
 
-        let card_w = self.width.unwrap_or_else(|| px(520.0));
-        let card_max_h = self.max_height.unwrap_or_else(|| px(640.0));
+        let card_w = self.width.unwrap_or_else(|| px(880.0));
+        let card_max_h = self.max_height.unwrap_or_else(|| px(620.0));
 
         let on_close_backdrop = self.on_close.clone();
         let on_close_btn = self.on_close.clone();
@@ -114,13 +114,13 @@ impl RenderOnce for Modal {
                             div()
                                 .flex()
                                 .items_center()
-                                .gap_2p5()
+                                .gap_3()
                                 .children(icon_str.map(|path| {
-                                    svg().path(path).size_5().text_color(palette_accent)
+                                    svg().path(path).size_6().text_color(palette_accent)
                                 }))
                                 .children(title_str.map(|title| {
                                     div()
-                                        .text_lg()
+                                        .text_2xl()
                                         .font_weight(FontWeight::BOLD)
                                         .text_color(palette_text)
                                         .child(title)
@@ -133,7 +133,7 @@ impl RenderOnce for Modal {
                                 .items_center()
                                 .justify_center()
                                 .size_8()
-                                .rounded_lg()
+                                .rounded_full()
                                 .cursor_pointer()
                                 .hover(move |s| s.bg(palette_surface_hover))
                                 .on_click(move |_event, window, cx| {
@@ -207,9 +207,9 @@ impl RenderOnce for Modal {
                                     .opacity(alpha)
                                     .w(card_w)
                                     .max_h(card_max_h)
-                                    .p_6()
-                                    .gap_5()
-                                    .rounded(px(16.0))
+                                    .p_8()
+                                    .gap_6()
+                                    .rounded(px(24.0))
                                     .bg(palette_surface)
                                     .border_1()
                                     .border_color(palette_border)
