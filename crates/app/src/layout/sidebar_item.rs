@@ -4,6 +4,12 @@ use crate::theme::ActiveTheme;
 
 pub type SidebarItemAction = Box<dyn Fn(&mut Window, &mut App) + 'static>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarVariant {
+    Classic,
+    Minimal,
+}
+
 #[derive(IntoElement)]
 pub struct SidebarItem {
     label: &'static str,
@@ -11,6 +17,7 @@ pub struct SidebarItem {
     path: Option<&'static str>,
     active: bool,
     action: Option<SidebarItemAction>,
+    variant: SidebarVariant,
 }
 
 pub fn sidebar_item(
@@ -26,6 +33,25 @@ pub fn sidebar_item(
         path,
         active,
         action,
+        variant: SidebarVariant::Classic,
+    }
+}
+
+pub fn sidebar_item_with_variant(
+    label: &'static str,
+    icon_path: &'static str,
+    path: Option<&'static str>,
+    active: bool,
+    action: Option<SidebarItemAction>,
+    variant: SidebarVariant,
+) -> SidebarItem {
+    SidebarItem {
+        label,
+        icon_path,
+        path,
+        active,
+        action,
+        variant,
     }
 }
 
@@ -44,6 +70,42 @@ impl RenderOnce for SidebarItem {
         let icon_path = self.icon_path;
         let path = self.path;
         let action = self.action;
+        let variant = self.variant;
+
+        if variant == SidebarVariant::Minimal {
+            return div()
+                .id(ElementId::Name(format!("minimal-{label}").into()))
+                .flex()
+                .items_center()
+                .w_full()
+                .py_2()
+                .px_1()
+                .cursor_pointer()
+                .when_some(path, |this, target_path| {
+                    this.on_click(move |_event, window, cx| {
+                        gpui_router::use_navigate(window, cx).push(target_path);
+                    })
+                })
+                .when_some(action, |this, on_click_action| {
+                    this.on_click(move |_event, window, cx| {
+                        (on_click_action)(window, cx);
+                    })
+                })
+                .child(
+                    div()
+                        .text_size(px(18.0))
+                        .line_height(relative(1.2))
+                        .font_weight(if active {
+                            FontWeight::BOLD
+                        } else {
+                            FontWeight::MEDIUM
+                        })
+                        .text_color(if active { text_color } else { text_muted })
+                        .hover(move |s| s.text_color(text_color))
+                        .child(label),
+                )
+                .into_any_element();
+        }
 
         let spring_config = SpringConfig::new(180.0, 26.0, 1.0);
         let color_spring = SpringAnimation::new(spring_config).to(highlighted);
@@ -124,5 +186,6 @@ impl RenderOnce for SidebarItem {
                     this.map_element(|div| div.px(pad_x).py(pad_y).text_size(font_px))
                 },
             )
+            .into_any_element()
     }
 }

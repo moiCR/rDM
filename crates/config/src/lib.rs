@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::RwLock,
@@ -5,8 +6,17 @@ use std::{
 use thiserror::Error;
 
 pub use crate::engine::{EngineConfig, get_user_agent};
+pub use crate::ui::UIConfig;
 
 pub mod engine;
+pub mod ui;
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct AppConfig {
+    pub engine: EngineConfig,
+    pub ui: UIConfig,
+}
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
@@ -18,7 +28,7 @@ pub enum ConfigError {
 }
 
 pub struct ConfigManager {
-    engine_config: RwLock<EngineConfig>,
+    app_config: RwLock<AppConfig>,
     config_file_path: PathBuf,
 }
 
@@ -30,26 +40,44 @@ impl Default for ConfigManager {
 
 impl ConfigManager {
     pub fn new() -> Self {
-        let default_config = EngineConfig::default();
-        let config_file_path = default_config.state_dir.join("settings.json");
-        let initial_config = Self::load_from_path(&config_file_path).unwrap_or(default_config);
+        let default_app = AppConfig::default();
+        let config_file_path = default_app.engine.state_dir.join("settings.json");
+        let initial_config = Self::load_from_path(&config_file_path).unwrap_or(default_app);
 
         Self {
-            engine_config: RwLock::new(initial_config),
+            app_config: RwLock::new(initial_config),
             config_file_path,
         }
     }
 
     pub fn from_config(engine_config: EngineConfig) -> Self {
         let config_file_path = engine_config.state_dir.join("settings.json");
+        let app_config = AppConfig {
+            engine: engine_config,
+            ui: UIConfig::default(),
+        };
         Self {
-            engine_config: RwLock::new(engine_config),
+            app_config: RwLock::new(app_config),
             config_file_path,
         }
     }
 
     pub fn config(&self) -> EngineConfig {
-        match self.engine_config.read() {
+        match self.app_config.read() {
+            Ok(guard) => guard.engine.clone(),
+            Err(poisoned) => poisoned.into_inner().engine.clone(),
+        }
+    }
+
+    pub fn ui_config(&self) -> UIConfig {
+        match self.app_config.read() {
+            Ok(guard) => guard.ui.clone(),
+            Err(poisoned) => poisoned.into_inner().ui.clone(),
+        }
+    }
+
+    pub fn app_config(&self) -> AppConfig {
+        match self.app_config.read() {
             Ok(guard) => guard.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         }
@@ -63,13 +91,30 @@ impl ConfigManager {
     where
         F: FnOnce(&mut EngineConfig),
     {
-        let mut guard = match self.engine_config.write() {
+        let mut guard = match self.app_config.write() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };
 
-        update_fn(&mut guard);
-        let updated = guard.clone();
+        update_fn(&mut guard.engine);
+        let updated = guard.engine.clone();
+        drop(guard);
+
+        self.save()?;
+        Ok(updated)
+    }
+
+    pub fn update_ui_config<F>(&self, update_fn: F) -> Result<UIConfig, ConfigError>
+    where
+        F: FnOnce(&mut UIConfig),
+    {
+        let mut guard = match self.app_config.write() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        update_fn(&mut guard.ui);
+        let updated = guard.ui.clone();
         drop(guard);
 
         self.save()?;
@@ -77,7 +122,7 @@ impl ConfigManager {
     }
 
     pub fn save(&self) -> Result<(), ConfigError> {
-        let current = self.config();
+        let current = self.app_config();
         if let Some(parent) = self.config_file_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -86,7 +131,7 @@ impl ConfigManager {
         Ok(())
     }
 
-    pub fn load_from_path(path: &Path) -> Result<EngineConfig, ConfigError> {
+    pub fn load_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
         if !path.exists() {
             return Err(ConfigError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -94,7 +139,16 @@ impl ConfigManager {
             )));
         }
         let raw = std::fs::read_to_string(path)?;
-        let parsed = serde_json::from_str::<EngineConfig>(&raw)?;
+        if let Ok(app_cfg) = serde_json::from_str::<AppConfig>(&raw) {
+            return Ok(app_cfg);
+        }
+        if let Ok(engine_cfg) = serde_json::from_str::<EngineConfig>(&raw) {
+            return Ok(AppConfig {
+                engine: engine_cfg,
+                ui: UIConfig::default(),
+            });
+        }
+        let parsed = serde_json::from_str::<AppConfig>(&raw)?;
         Ok(parsed)
     }
 }
@@ -146,8 +200,15 @@ mod tests {
         assert_eq!(loaded.max_speed_bytes_per_sec, 5242880);
 
         let from_disk = ConfigManager::load_from_path(manager.config_path())?;
-        assert_eq!(from_disk.default_connections, 16);
-        assert_eq!(from_disk.max_speed_bytes_per_sec, 5242880);
+        assert_eq!(from_disk.engine.default_connections, 16);
+        assert_eq!(from_disk.engine.max_speed_bytes_per_sec, 5242880);
+
+        manager.update_ui_config(|u| {
+            u.sidebar_style = "minimal".to_string();
+            u.accent_color = "#ef4444".to_string();
+        })?;
+        assert_eq!(manager.ui_config().sidebar_style, "minimal");
+        assert_eq!(manager.ui_config().accent_color, "#ef4444");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())

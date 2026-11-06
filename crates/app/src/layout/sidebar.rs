@@ -1,6 +1,11 @@
 use gpui::*;
 
-use crate::{layout::sidebar_item::sidebar_item, theme::ActiveTheme, views::SettingsModalState};
+use crate::{
+    layout::sidebar_item::{SidebarVariant, sidebar_item_with_variant},
+    state::CoreContext,
+    theme::ActiveTheme,
+    views::SettingsModalState,
+};
 
 #[derive(IntoElement)]
 pub struct Sidebar;
@@ -22,6 +27,14 @@ impl RenderOnce for Sidebar {
         let location = gpui_router::use_location(cx);
         let path = location.pathname.as_str();
 
+        let core = cx.core().clone();
+        let ui_cfg = core.config().ui_config();
+        let variant = if ui_cfg.sidebar_style == "minimal" {
+            SidebarVariant::Minimal
+        } else {
+            SidebarVariant::Classic
+        };
+
         div()
             .flex()
             .flex_col()
@@ -40,19 +53,21 @@ impl RenderOnce for Sidebar {
                     .items_start()
                     .justify_center()
                     .gap_2()
-                    .child(sidebar_item(
+                    .child(sidebar_item_with_variant(
                         "Dashboard",
                         "icons/dashboard.svg",
                         Some("/"),
                         path == "/",
                         None,
+                        variant,
                     ))
-                    .child(sidebar_item(
+                    .child(sidebar_item_with_variant(
                         "Downloads",
                         "icons/download.svg",
                         Some("/downloads"),
                         path == "/downloads",
                         None,
+                        variant,
                     )),
             )
             .child(
@@ -61,15 +76,19 @@ impl RenderOnce for Sidebar {
                     .flex_col()
                     .items_start()
                     .pt_2()
-                    .child(sidebar_item(
+                    .child(sidebar_item_with_variant(
                         "Ajustes",
                         "icons/settings.svg",
                         None,
                         false,
                         Some(Box::new(|window, cx| {
-                            cx.set_global(SettingsModalState { open: true });
+                            cx.set_global(SettingsModalState {
+                                open: true,
+                                subview: None,
+                            });
                             window.refresh();
                         })),
+                        variant,
                     )),
             )
     }
