@@ -17,6 +17,7 @@ pub struct Modal {
     on_close: Option<ModalCloseHandler>,
     header: Option<AnyElement>,
     footer: Option<AnyElement>,
+    subview: Option<AnyElement>,
     children: Vec<AnyElement>,
 }
 
@@ -32,6 +33,7 @@ impl Modal {
             on_close: None,
             header: None,
             footer: None,
+            subview: None,
             children: Vec::new(),
         }
     }
@@ -73,6 +75,11 @@ impl Modal {
 
     pub fn footer(mut self, footer: impl IntoElement) -> Self {
         self.footer = Some(footer.into_any_element());
+        self
+    }
+
+    pub fn subview(mut self, subview: impl IntoElement) -> Self {
+        self.subview = Some(subview.into_any_element());
         self
     }
 }
@@ -153,6 +160,7 @@ impl RenderOnce for Modal {
             };
 
         let footer_element = self.footer;
+        let subview_element = self.subview;
 
         let slide_spring = SpringAnimation::new(SpringConfig::new(260.0, 26.0, 1.0)).to(self.open);
 
@@ -202,6 +210,7 @@ impl RenderOnce for Modal {
                                 div()
                                     .id(card_id.clone())
                                     .relative()
+                                    .overflow_hidden()
                                     .occlude()
                                     .top(slide_y)
                                     .opacity(alpha)
@@ -218,7 +227,8 @@ impl RenderOnce for Modal {
                                     .flex_col()
                                     .children(header_element)
                                     .children(self.children)
-                                    .children(footer_element),
+                                    .children(footer_element)
+                                    .children(subview_element),
                             ),
                     )
             })

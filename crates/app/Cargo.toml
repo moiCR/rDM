@@ -17,3 +17,4 @@ rdm-core.workspace = true
 rdm-config.workspace = true
 uuid.workspace = true
 anyhow = { workspace = true }
+smallvec = "1.16.4"

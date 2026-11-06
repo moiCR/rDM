@@ -5041,6 +5041,7 @@ dependencies = [
  "gpui-router",
  "rdm-config",
  "rdm-core",
+ "smallvec",
  "tokio",
  "uuid",
 ]

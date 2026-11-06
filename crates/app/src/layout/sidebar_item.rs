@@ -1,6 +1,9 @@
 use gpui::{prelude::FluentBuilder, *};
 
-use crate::theme::ActiveTheme;
+use crate::{
+    ext::transitions::{DivTransitionsExt, millis},
+    theme::ActiveTheme,
+};
 
 pub type SidebarItemAction = Box<dyn Fn(&mut Window, &mut App) + 'static>;
 
@@ -102,6 +105,7 @@ impl RenderOnce for SidebarItem {
                         })
                         .text_color(if active { text_color } else { text_muted })
                         .hover(move |s| s.text_color(text_color))
+                        .with_transitions("sidebar-text", |t| t.all(millis(300)))
                         .child(label),
                 )
                 .into_any_element();

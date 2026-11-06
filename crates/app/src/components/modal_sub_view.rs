@@ -90,10 +90,9 @@ impl RenderOnce for ModalSubView {
         let palette_border = cx.theme().border();
         let palette_text = cx.theme().text_color();
         let palette_text_muted = cx.theme().text_muted();
-        let palette_accent = cx.theme().accent();
 
-        let card_w = self.width.unwrap_or_else(|| px(540.0));
-        let card_max_h = self.max_height.unwrap_or_else(|| px(520.0));
+        let card_w = self.width.unwrap_or_else(|| px(440.0));
+        let card_max_h = self.max_height.unwrap_or_else(|| px(460.0));
 
         let on_back_backdrop = self.on_back.clone();
         let on_back_btn = self.on_back.clone();
@@ -114,13 +113,13 @@ impl RenderOnce for ModalSubView {
                             div()
                                 .flex()
                                 .items_center()
-                                .gap_3()
+                                .gap_2p5()
                                 .children(icon_str.map(|path| {
-                                    svg().path(path).size_6().text_color(palette_accent)
+                                    svg().path(path).size_5().text_color(rgb(0xffffff))
                                 }))
                                 .children(title_str.map(|title| {
                                     div()
-                                        .text_2xl()
+                                        .text_xl()
                                         .font_weight(FontWeight::BOLD)
                                         .text_color(palette_text)
                                         .child(title)
@@ -132,7 +131,7 @@ impl RenderOnce for ModalSubView {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .size_8()
+                                .size_7()
                                 .rounded_full()
                                 .cursor_pointer()
                                 .hover(move |s| s.bg(palette_surface_hover))
@@ -142,7 +141,7 @@ impl RenderOnce for ModalSubView {
                                 .child(
                                     svg()
                                         .path("icons/x.svg")
-                                        .size_4()
+                                        .size_3p5()
                                         .text_color(palette_text_muted),
                                 )
                         }))
@@ -164,14 +163,15 @@ impl RenderOnce for ModalSubView {
             .absolute()
             .inset_0()
             .size_full()
+            .rounded(px(24.0))
             .with_spring(card_spring_id, slide_spring, move |this, phase| {
                 let alpha = phase.interpolate_clamped(0.0, 1.0);
                 if alpha <= 0.001 {
                     return this.invisible();
                 }
 
-                let backdrop_alpha = phase.interpolate_clamped(0.0, 0.55);
-                let slide_y = phase.interpolate_clamped(px(40.0), px(0.0));
+                let backdrop_alpha = phase.interpolate_clamped(0.0, 0.70);
+                let slide_y = phase.interpolate_clamped(px(30.0), px(0.0));
 
                 this.visible()
                     .child(
@@ -180,36 +180,35 @@ impl RenderOnce for ModalSubView {
                             .absolute()
                             .inset_0()
                             .size_full()
+                            .rounded(px(24.0))
                             .bg(rgb(0x000000))
-                            .opacity(backdrop_alpha),
+                            .opacity(backdrop_alpha)
+                            .when_some(on_back_backdrop.clone(), |el, handler| {
+                                el.on_click(move |_event, window, cx| {
+                                    handler(window, cx);
+                                })
+                            }),
                     )
                     .child(
                         div()
                             .id("modal-subview-positioner")
-                            .occlude()
                             .absolute()
                             .inset_0()
                             .size_full()
                             .flex()
                             .items_center()
                             .justify_center()
-                            .when_some(on_back_backdrop.clone(), |el, handler| {
-                                el.on_click(move |_event, window, cx| {
-                                    handler(window, cx);
-                                })
-                            })
                             .child(
                                 div()
                                     .id(card_id.clone())
                                     .relative()
-                                    .occlude()
                                     .top(slide_y)
                                     .opacity(alpha)
                                     .w(card_w)
                                     .max_h(card_max_h)
-                                    .p_7()
-                                    .gap_6()
-                                    .rounded(px(24.0))
+                                    .p_6()
+                                    .gap_4()
+                                    .rounded(px(20.0))
                                     .bg(palette_surface)
                                     .border_1()
                                     .border_color(palette_border)

@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod components;
+pub mod ext;
 pub mod layout;
 pub mod router;
 pub mod state;

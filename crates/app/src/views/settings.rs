@@ -1,7 +1,6 @@
-use gpui::prelude::FluentBuilder;
 use gpui::*;
 use rdm_config::EngineConfig;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::{
     components::{Modal, ModalSubView},
@@ -29,6 +28,14 @@ struct ModalPalette {
     text_color: Rgba,
     text_muted: Rgba,
     accent: Rgba,
+}
+
+struct TextInputFieldParams<'a> {
+    id_str: &'static str,
+    value: &'a str,
+    placeholder: &'static str,
+    is_focused: bool,
+    field_key: &'static str,
 }
 
 #[derive(Clone)]
@@ -115,9 +122,6 @@ impl RenderOnce for SettingsModal {
         let current_accent = form.accent_color.clone();
         let focused = form.focused_field.clone();
 
-        let form_save = form.clone();
-        let config_save = config_manager.clone();
-
         let is_subview_open = modal_state.open && modal_state.subview.is_some();
 
         div()
@@ -138,6 +142,29 @@ impl RenderOnce for SettingsModal {
                         });
                         window.refresh();
                     })
+                    .subview(
+                        ModalSubView::new("settings-subview-appearance")
+                            .open(is_subview_open)
+                            .width(px(380.0))
+                            .max_height(px(350.0))
+                            .title("Apariencia")
+                            .icon("icons/palette.svg")
+                            .on_back(move |window, cx| {
+                                cx.set_global(SettingsModalState {
+                                    open: true,
+                                    subview: None,
+                                });
+                                window.refresh();
+                            })
+                            .child(Self::render_appearance_subview(
+                                &current_theme,
+                                &current_sidebar,
+                                &current_accent,
+                                form_state.clone(),
+                                palette,
+                                config_manager.clone(),
+                            )),
+                    )
                     .child(
                         div()
                             .flex()
@@ -145,29 +172,16 @@ impl RenderOnce for SettingsModal {
                             .gap_6()
                             .child(
                                 div()
-                                    .id("btn-appearance-row")
+                                    .id("row-appearance")
                                     .flex()
                                     .items_center()
                                     .justify_between()
-                                    .p_4()
-                                    .rounded(px(16.0))
-                                    .bg(palette.surface_hover)
-                                    .border_1()
-                                    .border_color(palette.border)
-                                    .cursor_pointer()
-                                    .hover(move |s| s.border_color(palette.accent))
-                                    .on_click(move |_event, window, cx| {
-                                        cx.set_global(SettingsModalState {
-                                            open: true,
-                                            subview: Some(SettingsSubView::Appearance),
-                                        });
-                                        window.refresh();
-                                    })
+                                    .py_2()
                                     .child(
                                         div()
                                             .flex()
                                             .flex_col()
-                                            .gap_1()
+                                            .gap_1p5()
                                             .child(
                                                 div()
                                                     .font_weight(FontWeight::BOLD)
@@ -183,10 +197,28 @@ impl RenderOnce for SettingsModal {
                                             ),
                                     )
                                     .child(
-                                        svg()
-                                            .path("icons/chevron-right.svg")
-                                            .size_5()
-                                            .text_color(palette.text_muted),
+                                        div()
+                                            .id("btn-open-appearance-subview")
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .size_8()
+                                            .rounded_lg()
+                                            .cursor_pointer()
+                                            .hover(move |s| s.bg(palette.surface_hover))
+                                            .on_click(move |_event, window, cx| {
+                                                cx.set_global(SettingsModalState {
+                                                    open: true,
+                                                    subview: Some(SettingsSubView::Appearance),
+                                                });
+                                                window.refresh();
+                                            })
+                                            .child(
+                                                svg()
+                                                    .path("icons/chevron-right.svg")
+                                                    .size_5()
+                                                    .text_color(palette.text_muted),
+                                            ),
                                     ),
                             )
                             .child(
@@ -195,13 +227,13 @@ impl RenderOnce for SettingsModal {
                                     .items_center()
                                     .justify_between()
                                     .gap_6()
-                                    .p_3()
+                                    .py_2()
                                     .child(
                                         div()
                                             .flex_1()
                                             .flex()
                                             .flex_col()
-                                            .gap_1()
+                                            .gap_1p5()
                                             .child(
                                                 div()
                                                     .font_weight(FontWeight::SEMIBOLD)
@@ -223,20 +255,27 @@ impl RenderOnce for SettingsModal {
                                             .gap_2()
                                             .child(
                                                 div()
-                                                    .w(px(130.0))
+                                                    .w(px(140.0))
                                                     .child(Self::text_input_field(
-                                                        "input-speed",
-                                                        &speed_str,
-                                                        "MB/s",
-                                                        focused.as_deref() == Some("speed"),
+                                                        TextInputFieldParams {
+                                                            id_str: "input-speed",
+                                                            value: &speed_str,
+                                                            placeholder: "0",
+                                                            is_focused: focused.as_deref() == Some("speed"),
+                                                            field_key: "speed",
+                                                        },
                                                         form_state.clone(),
-                                                        "speed",
                                                         palette,
+                                                        config_manager.clone(),
                                                     )),
                                             )
-                                            .child(Self::speed_preset_button("Ilimitado", 0, form_state.clone(), palette))
-                                            .child(Self::speed_preset_button("10 MB/s", 10, form_state.clone(), palette))
-                                            .child(Self::speed_preset_button("50 MB/s", 50, form_state.clone(), palette)),
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_color(palette.text_muted)
+                                                    .child("MB/s"),
+                                            ),
                                     ),
                             )
                             .child(
@@ -245,13 +284,13 @@ impl RenderOnce for SettingsModal {
                                     .items_center()
                                     .justify_between()
                                     .gap_6()
-                                    .p_3()
+                                    .py_2()
                                     .child(
                                         div()
                                             .flex_1()
                                             .flex()
                                             .flex_col()
-                                            .gap_1()
+                                            .gap_1p5()
                                             .child(
                                                 div()
                                                     .font_weight(FontWeight::SEMIBOLD)
@@ -268,26 +307,19 @@ impl RenderOnce for SettingsModal {
                                     )
                                     .child(
                                         div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .w(px(80.0))
-                                                    .child(Self::text_input_field(
-                                                        "input-connections",
-                                                        &connections_str,
-                                                        "8",
-                                                        focused.as_deref() == Some("connections"),
-                                                        form_state.clone(),
-                                                        "connections",
-                                                        palette,
-                                                    )),
-                                            )
-                                            .child(Self::connection_preset_button(4, form_state.clone(), palette))
-                                            .child(Self::connection_preset_button(8, form_state.clone(), palette))
-                                            .child(Self::connection_preset_button(16, form_state.clone(), palette))
-                                            .child(Self::connection_preset_button(32, form_state.clone(), palette)),
+                                            .w(px(100.0))
+                                            .child(Self::text_input_field(
+                                                TextInputFieldParams {
+                                                    id_str: "input-connections",
+                                                    value: &connections_str,
+                                                    placeholder: "8",
+                                                    is_focused: focused.as_deref() == Some("connections"),
+                                                    field_key: "connections",
+                                                },
+                                                form_state.clone(),
+                                                palette,
+                                                config_manager.clone(),
+                                            )),
                                     ),
                             )
                             .child(
@@ -296,13 +328,13 @@ impl RenderOnce for SettingsModal {
                                     .items_center()
                                     .justify_between()
                                     .gap_6()
-                                    .p_3()
+                                    .py_2()
                                     .child(
                                         div()
                                             .flex_1()
                                             .flex()
                                             .flex_col()
-                                            .gap_1()
+                                            .gap_1p5()
                                             .child(
                                                 div()
                                                     .font_weight(FontWeight::SEMIBOLD)
@@ -324,27 +356,27 @@ impl RenderOnce for SettingsModal {
                                             .gap_2()
                                             .child(
                                                 div()
-                                                    .w(px(260.0))
-                                                    .h_9()
-                                                    .px_3()
-                                                    .rounded(px(24.0))
-                                                    .bg(palette.surface_hover)
-                                                    .border_1()
-                                                    .border_color(palette.border)
-                                                    .flex()
-                                                    .items_center()
-                                                    .truncate()
-                                                    .text_xs()
-                                                    .text_color(palette.text_color)
-                                                    .child(download_dir_str),
+                                                    .w(px(280.0))
+                                                    .child(Self::text_input_field(
+                                                        TextInputFieldParams {
+                                                            id_str: "input-download-dir",
+                                                            value: &download_dir_str,
+                                                            placeholder: "C:\\Downloads",
+                                                            is_focused: focused.as_deref() == Some("download_dir"),
+                                                            field_key: "download_dir",
+                                                        },
+                                                        form_state.clone(),
+                                                        palette,
+                                                        config_manager.clone(),
+                                                    )),
                                             )
                                             .child({
                                                 let form_dir = form_state.clone();
+                                                let cfg_dir = config_manager.clone();
                                                 div()
                                                     .id("btn-browse-download-dir")
-                                                    .h_9()
-                                                    .px_4()
-                                                    .rounded(px(24.0))
+                                                    .size_9()
+                                                    .rounded_full()
                                                     .bg(palette.surface_hover)
                                                     .border_1()
                                                     .border_color(palette.border)
@@ -361,13 +393,18 @@ impl RenderOnce for SettingsModal {
                                                             prompt: Some("Selecciona la carpeta de descargas".into()),
                                                         });
                                                         let form_target = form_dir.clone();
+                                                        let cfg_target = cfg_dir.clone();
                                                         window.spawn(cx, async move |cx| {
                                                             if let Ok(Ok(Some(paths))) = prompt.await
                                                                 && let Some(first) = paths.into_iter().next()
                                                             {
                                                                 let path_str = first.to_string_lossy().to_string();
+                                                                let path_buf = first.clone();
                                                                 form_target.update(cx, |f, _| {
                                                                     f.download_dir_str = path_str;
+                                                                });
+                                                                let _ = cfg_target.update_config(|c| {
+                                                                    c.download_dir = path_buf;
                                                                 });
                                                                 let _ = cx.update(|window, _| {
                                                                     window.refresh();
@@ -376,9 +413,10 @@ impl RenderOnce for SettingsModal {
                                                         }).detach();
                                                     })
                                                     .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .child("Cambiar..."),
+                                                        svg()
+                                                            .path("icons/folder-open.svg")
+                                                            .size_4()
+                                                            .text_color(palette.text_muted),
                                                     )
                                             }),
                                     ),
@@ -389,13 +427,13 @@ impl RenderOnce for SettingsModal {
                                     .items_center()
                                     .justify_between()
                                     .gap_6()
-                                    .p_3()
+                                    .py_2()
                                     .child(
                                         div()
                                             .w(px(260.0))
                                             .flex()
                                             .flex_col()
-                                            .gap_1()
+                                            .gap_1p5()
                                             .child(
                                                 div()
                                                     .font_weight(FontWeight::SEMIBOLD)
@@ -405,6 +443,7 @@ impl RenderOnce for SettingsModal {
                                             )
                                             .child({
                                                 let form_reset = form_state.clone();
+                                                let cfg_reset = config_manager.clone();
                                                 div()
                                                     .id("btn-reset-user-agent")
                                                     .cursor_pointer()
@@ -412,8 +451,12 @@ impl RenderOnce for SettingsModal {
                                                     .text_color(palette.accent)
                                                     .hover(move |s| s.underline())
                                                     .on_click(move |_event, window, cx| {
+                                                        let default_ua = rdm_config::get_user_agent();
                                                         form_reset.update(cx, |f, _| {
-                                                            f.user_agent_str = rdm_config::get_user_agent();
+                                                            f.user_agent_str = default_ua.clone();
+                                                        });
+                                                        let _ = cfg_reset.update_config(|c| {
+                                                            c.user_agent = default_ua;
                                                         });
                                                         window.refresh();
                                                     })
@@ -424,164 +467,49 @@ impl RenderOnce for SettingsModal {
                                         div()
                                             .flex_1()
                                             .child(Self::text_input_field(
-                                                "input-user-agent",
-                                                &user_agent_str,
-                                                "Escribe o pega User-Agent...",
-                                                focused.as_deref() == Some("user_agent"),
+                                                TextInputFieldParams {
+                                                    id_str: "input-user-agent",
+                                                    value: &user_agent_str,
+                                                    placeholder: "Escribe o pega User-Agent...",
+                                                    is_focused: focused.as_deref() == Some("user_agent"),
+                                                    field_key: "user_agent",
+                                                },
                                                 form_state.clone(),
-                                                "user_agent",
                                                 palette,
+                                                config_manager.clone(),
                                             )),
                                     ),
                             ),
-                    )
-                    .footer(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap_3()
-                            .pt_3()
-                            .border_t_1()
-                            .border_color(palette.border)
-                            .child(
-                                div()
-                                    .id("btn-cancel-settings")
-                                    .h_9()
-                                    .px_4()
-                                    .rounded(px(24.0))
-                                    .bg(palette.surface_hover)
-                                    .cursor_pointer()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .text_xs()
-                                    .text_color(palette.text_color)
-                                    .hover(move |s| s.border_1().border_color(palette.border))
-                                    .on_click(move |_event, window, cx| {
-                                        cx.set_global(SettingsModalState {
-                                            open: false,
-                                            subview: None,
-                                        });
-                                        window.refresh();
-                                    })
-                                    .child("Cancelar"),
-                            )
-                            .child(
-                                div()
-                                    .id("btn-save-settings")
-                                    .h_9()
-                                    .px_6()
-                                    .rounded(px(24.0))
-                                    .bg(palette.accent)
-                                    .cursor_pointer()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .text_xs()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(rgb(0xffffff))
-                                    .on_click(move |_event, window, cx| {
-                                        let speed_mb: f64 = form_save.max_speed_mb_str.parse().unwrap_or(0.0);
-                                        let speed_bytes = (speed_mb * 1024.0 * 1024.0) as u64;
-                                        let connections_val: usize = form_save.default_connections_str.parse().unwrap_or(8);
-                                        let connections = connections_val.clamp(1, 32);
-                                        let download_dir = PathBuf::from(&form_save.download_dir_str);
-                                        let user_agent = form_save.user_agent_str.clone();
-
-                                        let theme_choice = form_save.theme.clone();
-                                        let sidebar_choice = form_save.sidebar_style.clone();
-                                        let accent_choice = form_save.accent_color.clone();
-
-                                        let _ = config_save.update_config(|cfg| {
-                                            cfg.default_connections = connections;
-                                            cfg.max_speed_bytes_per_sec = speed_bytes;
-                                            if !download_dir.as_os_str().is_empty() {
-                                                cfg.download_dir = download_dir;
-                                            }
-                                            if !user_agent.trim().is_empty() {
-                                                cfg.user_agent = user_agent;
-                                            }
-                                        });
-
-                                        let _ = config_save.update_ui_config(|ui| {
-                                            ui.theme = theme_choice.clone();
-                                            ui.sidebar_style = sidebar_choice;
-                                            ui.accent_color = accent_choice;
-                                        });
-
-                                        if theme_choice == "light" {
-                                            let mut tm = ThemeManager::new();
-                                            tm.set_theme(Box::new(LightTheme));
-                                            cx.set_global(tm);
-                                        } else {
-                                            let mut tm = ThemeManager::new();
-                                            tm.set_theme(Box::new(DarkTheme));
-                                            cx.set_global(tm);
-                                        }
-
-                                        cx.set_global(SettingsModalState {
-                                            open: false,
-                                            subview: None,
-                                        });
-                                        window.refresh();
-                                    })
-                                    .child("Guardar cambios"),
-                            ),
                     ),
-            )
-            .child(
-                ModalSubView::new("settings-subview-appearance")
-                    .open(is_subview_open)
-                    .width(px(520.0))
-                    .max_height(px(490.0))
-                    .title("Apariencia")
-                    .icon("icons/palette.svg")
-                    .on_back(move |window, cx| {
-                        cx.set_global(SettingsModalState {
-                            open: true,
-                            subview: None,
-                        });
-                        window.refresh();
-                    })
-                    .child(Self::render_appearance_subview(
-                        &current_theme,
-                        &current_sidebar,
-                        &current_accent,
-                        form_state.clone(),
-                        palette,
-                    )),
             )
     }
 }
 
 impl SettingsModal {
     fn text_input_field(
-        id_str: &'static str,
-        value: &str,
-        placeholder: &'static str,
-        is_focused: bool,
+        params: TextInputFieldParams<'_>,
         state: Entity<SettingsFormState>,
-        field_key: &'static str,
         palette: ModalPalette,
+        config: Arc<rdm_config::ConfigManager>,
     ) -> impl IntoElement {
+        let field_key = params.field_key;
         let state_key = state.clone();
         let state_click = state.clone();
-        let val_disp = if value.is_empty() {
-            placeholder.to_string()
+        let val_disp = if params.value.is_empty() {
+            params.placeholder.to_string()
         } else {
-            value.to_string()
+            params.value.to_string()
         };
 
         div()
-            .id(ElementId::Name(id_str.into()))
+            .id(ElementId::Name(params.id_str.into()))
             .flex_1()
             .h_9()
             .px_3()
             .rounded(px(24.0))
             .bg(palette.surface_hover)
             .border_1()
-            .border_color(if is_focused {
+            .border_color(if params.is_focused {
                 palette.accent
             } else {
                 palette.border
@@ -609,11 +537,15 @@ impl SettingsModal {
                         "connections" => {
                             f.default_connections_str.pop();
                         }
+                        "download_dir" => {
+                            f.download_dir_str.pop();
+                        }
                         "user_agent" => {
                             f.user_agent_str.pop();
                         }
                         _ => {}
                     });
+                    Self::save_current_form(&state_key, &config, cx);
                     window.refresh();
                 } else if event.keystroke.modifiers.control
                     && event.keystroke.key.eq_ignore_ascii_case("v")
@@ -627,11 +559,15 @@ impl SettingsModal {
                         "connections" => {
                             f.default_connections_str.push_str(text.trim());
                         }
+                        "download_dir" => {
+                            f.download_dir_str.push_str(text.trim());
+                        }
                         "user_agent" => {
                             f.user_agent_str.push_str(text.trim());
                         }
                         _ => {}
                     });
+                    Self::save_current_form(&state_key, &config, cx);
                     window.refresh();
                 } else if !event.keystroke.modifiers.control
                     && !event.keystroke.modifiers.alt
@@ -649,11 +585,15 @@ impl SettingsModal {
                                 f.default_connections_str.push_str(ch);
                             }
                         }
+                        "download_dir" => {
+                            f.download_dir_str.push_str(ch);
+                        }
                         "user_agent" => {
                             f.user_agent_str.push_str(ch);
                         }
                         _ => {}
                     });
+                    Self::save_current_form(&state_key, &config, cx);
                     window.refresh();
                 }
             })
@@ -661,7 +601,7 @@ impl SettingsModal {
                 div()
                     .truncate()
                     .text_xs()
-                    .text_color(if value.is_empty() {
+                    .text_color(if params.value.is_empty() {
                         palette.text_muted
                     } else {
                         palette.text_color
@@ -670,39 +610,87 @@ impl SettingsModal {
             )
     }
 
+    fn save_current_form(
+        state: &Entity<SettingsFormState>,
+        config: &Arc<rdm_config::ConfigManager>,
+        cx: &mut App,
+    ) {
+        let f = state.read(cx);
+        let speed_mb: f64 = f.max_speed_mb_str.parse().unwrap_or(0.0);
+        let speed_bytes = (speed_mb * 1024.0 * 1024.0) as u64;
+        let connections_val: usize = f.default_connections_str.parse().unwrap_or(8);
+        let connections = connections_val.clamp(1, 32);
+        let download_dir = PathBuf::from(&f.download_dir_str);
+        let user_agent = f.user_agent_str.clone();
+
+        let _ = config.update_config(|cfg| {
+            cfg.default_connections = connections;
+            cfg.max_speed_bytes_per_sec = speed_bytes;
+            if !download_dir.as_os_str().is_empty() {
+                cfg.download_dir = download_dir;
+            }
+            if !user_agent.trim().is_empty() {
+                cfg.user_agent = user_agent;
+            }
+        });
+    }
+
     fn render_appearance_subview(
         current_theme: &str,
         current_sidebar: &str,
         current_accent: &str,
         state: Entity<SettingsFormState>,
         palette: ModalPalette,
+        config: Arc<rdm_config::ConfigManager>,
     ) -> impl IntoElement {
-        let colors = [
-            "#0088ff", "#ff0000", "#ff0099", "#9900ff", "#ff6600", "#00e659", "#4422ff", "#9e9e9e",
-            "#e07070", "#f2aa00",
-        ];
+        let row1 = ["#9e9e9e", "#1e1e1e", "#ef4444", "#f97316", "#10b981"];
+        let row2 = ["#0088ff", "#4422ff", "#9900ff", "#ff0099", "#e07070"];
 
         div()
             .flex()
             .flex_col()
-            .gap_6()
+            .gap_3p5()
             .child(
                 div()
-                    .grid()
                     .flex()
-                    .flex_wrap()
-                    .gap_4()
-                    .justify_between()
-                    .children(colors.iter().map(|&hex| {
-                        Self::figma_color_squircle(hex, current_accent, state.clone())
-                    })),
+                    .flex_col()
+                    .gap_2p5()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2p5()
+                            .children(row1.iter().map(|&hex| {
+                                Self::figma_color_squircle(
+                                    hex,
+                                    current_accent,
+                                    state.clone(),
+                                    config.clone(),
+                                )
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2p5()
+                            .children(row2.iter().map(|&hex| {
+                                Self::figma_color_squircle(
+                                    hex,
+                                    current_accent,
+                                    state.clone(),
+                                    config.clone(),
+                                )
+                            })),
+                    ),
             )
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .pt_3()
+                    .pt_1()
                     .child(
                         div()
                             .text_sm()
@@ -714,20 +702,22 @@ impl SettingsModal {
                         div()
                             .flex()
                             .items_center()
-                            .gap_2p5()
+                            .gap_2()
                             .child(Self::pill_button(
                                 "classic",
                                 "Normal",
                                 current_sidebar,
                                 state.clone(),
                                 palette,
+                                config.clone(),
                             ))
                             .child(Self::pill_button(
-                                "minimal",
+                                "modern",
                                 "Moderna",
                                 current_sidebar,
                                 state.clone(),
                                 palette,
+                                config.clone(),
                             )),
                     ),
             )
@@ -747,13 +737,14 @@ impl SettingsModal {
                         div()
                             .flex()
                             .items_center()
-                            .gap_2p5()
+                            .gap_2()
                             .child(Self::theme_icon_button(
                                 "dark",
                                 "icons/moon.svg",
                                 current_theme,
                                 state.clone(),
                                 palette,
+                                config.clone(),
                             ))
                             .child(Self::theme_icon_button(
                                 "light",
@@ -761,6 +752,7 @@ impl SettingsModal {
                                 current_theme,
                                 state.clone(),
                                 palette,
+                                config,
                             )),
                     ),
             )
@@ -770,40 +762,64 @@ impl SettingsModal {
         hex: &'static str,
         current: &str,
         state: Entity<SettingsFormState>,
+        config: Arc<rdm_config::ConfigManager>,
     ) -> impl IntoElement {
         let is_selected = current.eq_ignore_ascii_case(hex);
-        let parsed_color = match hex {
-            "#0088ff" => rgb(0x0088ff),
-            "#ff0000" => rgb(0xff0000),
-            "#ff0099" => rgb(0xff0099),
-            "#9900ff" => rgb(0x9900ff),
-            "#ff6600" => rgb(0xff6600),
-            "#00e659" => rgb(0x00e659),
-            "#4422ff" => rgb(0x4422ff),
-            "#9e9e9e" => rgb(0x9e9e9e),
-            "#e07070" => rgb(0xe07070),
-            "#f2aa00" => rgb(0xf2aa00),
-            _ => rgb(0x0088ff),
+        let (base_color, darker_border) = match hex {
+            "#9e9e9e" => (rgb(0x9e9e9e), rgb(0x737373)),
+            "#1e1e1e" => (rgb(0x1e1e1e), rgb(0x0a0a0a)),
+            "#ef4444" => (rgb(0xef4444), rgb(0xb91c1c)),
+            "#f97316" => (rgb(0xf97316), rgb(0xc2410c)),
+            "#10b981" => (rgb(0x10b981), rgb(0x047857)),
+            "#0088ff" => (rgb(0x0088ff), rgb(0x0055cc)),
+            "#4422ff" => (rgb(0x4422ff), rgb(0x280dbb)),
+            "#9900ff" => (rgb(0x9900ff), rgb(0x6b00b3)),
+            "#ff0099" => (rgb(0xff0099), rgb(0xb8006e)),
+            "#e07070" => (rgb(0xe07070), rgb(0xb84848)),
+            _ => (rgb(0x0088ff), rgb(0x0055cc)),
         };
         let state_click = state.clone();
 
         div()
             .id(ElementId::Name(format!("color-{hex}").into()))
-            .size(px(52.0))
-            .rounded(px(16.0))
-            .bg(parsed_color)
+            .size(px(46.0))
+            .relative()
+            .overflow_hidden()
+            .rounded(if is_selected { px(16.0) } else { px(99.0) })
+            .bg(base_color)
+            .border_2()
+            .border_color(darker_border)
             .cursor_pointer()
-            .flex()
-            .items_center()
-            .justify_center()
-            .hover(move |s| s.opacity(0.85))
-            .when(is_selected, |s| s.border_2().border_color(rgb(0xffffff)))
+            .hover(move |s| s.opacity(0.9))
             .on_click(move |_event, window, cx| {
                 state_click.update(cx, |f, _| {
                     f.accent_color = hex.to_string();
                 });
+                let _ = config.update_ui_config(|ui| {
+                    ui.accent_color = hex.to_string();
+                });
                 window.refresh();
             })
+            .child(
+                div()
+                    .absolute()
+                    .top(px(2.0))
+                    .left(px(5.0))
+                    .right(px(5.0))
+                    .h(px(16.0))
+                    .rounded_full()
+                    .bg(rgba(0xffffff45)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(12.0))
+                    .rounded_b(if is_selected { px(14.0) } else { px(99.0) })
+                    .bg(rgba(0x00000028)),
+            )
     }
 
     fn pill_button(
@@ -812,6 +828,7 @@ impl SettingsModal {
         current: &str,
         state: Entity<SettingsFormState>,
         palette: ModalPalette,
+        config: Arc<rdm_config::ConfigManager>,
     ) -> impl IntoElement {
         let is_selected = current == style_key;
         let state_click = state.clone();
@@ -849,6 +866,9 @@ impl SettingsModal {
                 state_click.update(cx, |f, _| {
                     f.sidebar_style = style_key.to_string();
                 });
+                let _ = config.update_ui_config(|ui| {
+                    ui.sidebar_style = style_key.to_string();
+                });
                 window.refresh();
             })
             .child(div().text_xs().child(label))
@@ -860,6 +880,7 @@ impl SettingsModal {
         current: &str,
         state: Entity<SettingsFormState>,
         palette: ModalPalette,
+        config: Arc<rdm_config::ConfigManager>,
     ) -> impl IntoElement {
         let is_selected = current == mode;
         let state_click = state.clone();
@@ -887,6 +908,18 @@ impl SettingsModal {
                 state_click.update(cx, |f, _| {
                     f.theme = mode.to_string();
                 });
+                let _ = config.update_ui_config(|ui| {
+                    ui.theme = mode.to_string();
+                });
+                if mode == "light" {
+                    let mut tm = ThemeManager::new();
+                    tm.set_theme(Box::new(LightTheme));
+                    cx.set_global(tm);
+                } else {
+                    let mut tm = ThemeManager::new();
+                    tm.set_theme(Box::new(DarkTheme));
+                    cx.set_global(tm);
+                }
                 window.refresh();
             })
             .child(svg().path(icon_path).size_4().text_color(if is_selected {
@@ -894,62 +927,5 @@ impl SettingsModal {
             } else {
                 palette.text_muted
             }))
-    }
-
-    fn speed_preset_button(
-        label: &'static str,
-        mb: u64,
-        state: Entity<SettingsFormState>,
-        palette: ModalPalette,
-    ) -> impl IntoElement {
-        let state_click = state.clone();
-        div()
-            .id(ElementId::Name(format!("btn-speed-{}", mb).into()))
-            .h_9()
-            .px_3()
-            .rounded(px(24.0))
-            .bg(palette.surface_hover)
-            .border_1()
-            .border_color(palette.border)
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .hover(move |s| s.border_color(palette.text_color))
-            .on_click(move |_event, window, cx| {
-                state_click.update(cx, |f, _| {
-                    f.max_speed_mb_str = mb.to_string();
-                });
-                window.refresh();
-            })
-            .child(div().text_xs().child(label))
-    }
-
-    fn connection_preset_button(
-        count: usize,
-        state: Entity<SettingsFormState>,
-        palette: ModalPalette,
-    ) -> impl IntoElement {
-        let state_click = state.clone();
-        div()
-            .id(ElementId::Name(format!("btn-conn-{}", count).into()))
-            .h_9()
-            .px_3()
-            .rounded(px(24.0))
-            .bg(palette.surface_hover)
-            .border_1()
-            .border_color(palette.border)
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .hover(move |s| s.border_color(palette.text_color))
-            .on_click(move |_event, window, cx| {
-                state_click.update(cx, |f, _| {
-                    f.default_connections_str = count.to_string();
-                });
-                window.refresh();
-            })
-            .child(div().text_xs().child(format!("{count}")))
     }
 }
