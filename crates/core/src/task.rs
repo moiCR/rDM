@@ -90,8 +90,13 @@ impl DownloadSegment {
     }
 
     pub fn from_persisted(persisted: PersistedSegment) -> Self {
+        let is_incomplete = persisted.end_byte > 0
+            && persisted.end_byte >= persisted.start_byte
+            && persisted.downloaded_bytes < (persisted.end_byte - persisted.start_byte) + 1;
+
         let status = match persisted.status {
             SegmentStatus::Downloading => SegmentStatus::Pending,
+            SegmentStatus::Completed if is_incomplete => SegmentStatus::Pending,
             other => other,
         };
         Self {
@@ -236,8 +241,11 @@ impl Task {
     }
 
     pub fn from_persisted(persisted: PersistedTask) -> Self {
+        let is_incomplete =
+            persisted.total_size > 0 && persisted.downloaded_bytes < persisted.total_size;
         let status = match persisted.status {
             TaskStatus::Downloading | TaskStatus::Connecting => TaskStatus::Paused,
+            TaskStatus::Completed if is_incomplete => TaskStatus::Paused,
             other => other,
         };
         let segments: Vec<Arc<DownloadSegment>> = persisted

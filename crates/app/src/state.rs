@@ -1,7 +1,7 @@
 use std::{
     path::PathBuf,
     sync::{Arc, atomic::Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use gpui::{App, AsyncApp, Context, Entity, Global, WeakEntity};
@@ -36,6 +36,7 @@ pub struct TasksModel {
     runtime: Arc<tokio::runtime::Runtime>,
     tasks: Vec<TaskSnapshot>,
     previous_bytes: Vec<(Uuid, u64)>,
+    last_sample_at: Instant,
 }
 
 impl TasksModel {
@@ -49,6 +50,7 @@ impl TasksModel {
             runtime: Arc::clone(&runtime),
             tasks: Vec::new(),
             previous_bytes: Vec::new(),
+            last_sample_at: Instant::now(),
         };
 
         cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -59,24 +61,37 @@ impl TasksModel {
                 .unwrap_or_default();
 
             let _ = entity.update(cx, |this, cx| {
-                this.refresh_snapshots(initial_tasks);
+                this.refresh_snapshots(initial_tasks, true);
                 cx.notify();
                 cx.refresh_windows();
             });
+
+            let mut tick_count: u64 = 0;
 
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(500))
                     .await;
 
+                tick_count = tick_count.wrapping_add(1);
+                let should_persist = tick_count.is_multiple_of(4);
+
                 let core_loop = Arc::clone(&core);
                 let tasks = runtime
-                    .spawn(async move { core_loop.engine().all_tasks().await })
+                    .spawn(async move {
+                        let all = core_loop.engine().all_tasks().await;
+                        if should_persist
+                            && all.iter().any(|t| t.status() == TaskStatus::Downloading)
+                        {
+                            let _ = core_loop.engine().save_state().await;
+                        }
+                        all
+                    })
                     .await
                     .unwrap_or_default();
 
                 let update_result = entity.update(cx, |this, cx| {
-                    this.refresh_snapshots(tasks);
+                    this.refresh_snapshots(tasks, true);
                     cx.notify();
                     cx.refresh_windows();
                 });
@@ -95,12 +110,20 @@ impl TasksModel {
         &self.tasks
     }
 
-    fn refresh_snapshots(&mut self, live_tasks: Vec<Arc<Task>>) {
+    fn refresh_snapshots(&mut self, live_tasks: Vec<Arc<Task>>, update_speed_sample: bool) {
+        let now = Instant::now();
+        let elapsed_secs = now
+            .duration_since(self.last_sample_at)
+            .as_secs_f64()
+            .max(0.1);
+
         let mut new_snapshots = Vec::with_capacity(live_tasks.len());
         let mut new_previous_bytes = Vec::with_capacity(live_tasks.len());
 
         for task in live_tasks {
             let downloaded = task.downloaded_bytes.load(Ordering::Relaxed);
+            let status = task.status();
+
             let prev = self
                 .previous_bytes
                 .iter()
@@ -108,8 +131,27 @@ impl TasksModel {
                 .map(|(_, b)| *b)
                 .unwrap_or(downloaded);
 
-            let speed = downloaded.saturating_sub(prev) * 2;
-            new_previous_bytes.push((task.id, downloaded));
+            let prev_speed = self
+                .tasks
+                .iter()
+                .find(|s| s.id == task.id)
+                .map(|s| s.speed_bytes_per_sec)
+                .unwrap_or(0);
+
+            let speed = if status == TaskStatus::Downloading {
+                if update_speed_sample {
+                    let delta = downloaded.saturating_sub(prev) as f64;
+                    (delta / elapsed_secs) as u64
+                } else {
+                    prev_speed
+                }
+            } else {
+                0
+            };
+
+            if update_speed_sample {
+                new_previous_bytes.push((task.id, downloaded));
+            }
 
             let file_name = task
                 .output_path
@@ -126,12 +168,15 @@ impl TasksModel {
                 total_size: task.total_size,
                 downloaded_bytes: downloaded,
                 speed_bytes_per_sec: speed,
-                status: task.status(),
+                status,
                 progress: task.progress_ratio(),
             });
         }
 
-        self.previous_bytes = new_previous_bytes;
+        if update_speed_sample {
+            self.previous_bytes = new_previous_bytes;
+            self.last_sample_at = now;
+        }
         self.tasks = new_snapshots;
     }
 
@@ -160,7 +205,7 @@ impl TasksModel {
                 .unwrap_or_default();
 
             let _ = entity.update(cx, |this, cx| {
-                this.refresh_snapshots(all);
+                this.refresh_snapshots(all, false);
                 cx.notify();
                 cx.refresh_windows();
             });
@@ -182,7 +227,7 @@ impl TasksModel {
                 .unwrap_or_default();
 
             let _ = entity.update(cx, |this, cx| {
-                this.refresh_snapshots(all);
+                this.refresh_snapshots(all, false);
                 cx.notify();
                 cx.refresh_windows();
             });
@@ -204,7 +249,7 @@ impl TasksModel {
                 .unwrap_or_default();
 
             let _ = entity.update(cx, |this, cx| {
-                this.refresh_snapshots(all);
+                this.refresh_snapshots(all, false);
                 cx.notify();
                 cx.refresh_windows();
             });
@@ -226,7 +271,7 @@ impl TasksModel {
                 .unwrap_or_default();
 
             let _ = entity.update(cx, |this, cx| {
-                this.refresh_snapshots(all);
+                this.refresh_snapshots(all, false);
                 cx.notify();
                 cx.refresh_windows();
             });

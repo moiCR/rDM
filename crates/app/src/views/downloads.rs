@@ -404,7 +404,7 @@ impl DownloadsView {
                                 .child("Pausar descarga"),
                         ),
                 ),
-                TaskStatus::Paused => Some(
+                TaskStatus::Paused | TaskStatus::Failed(_) | TaskStatus::Pending => Some(
                     div()
                         .id(ElementId::Name(format!("menu-resume-{}", task_id).into()))
                         .flex()

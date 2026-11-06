@@ -283,13 +283,37 @@ impl Engine {
             segments = new_segments;
         }
 
+        for segment in &segments {
+            if segment.end_byte > 0
+                && segment.downloaded_bytes.load(Ordering::Relaxed) < segment.total_bytes()
+                && segment.status() == SegmentStatus::Completed
+            {
+                segment.set_status(SegmentStatus::Pending);
+            }
+        }
+
+        if !segments.is_empty() {
+            let synced_downloaded: u64 = segments
+                .iter()
+                .map(|s| s.downloaded_bytes.load(Ordering::Relaxed))
+                .sum();
+            task.downloaded_bytes
+                .store(synced_downloaded, Ordering::Relaxed);
+        }
+
         task.set_status(TaskStatus::Downloading);
         let _ = self.save_state().await;
 
         let mut worker_handles = Vec::with_capacity(segments.len());
 
         for segment in segments {
-            if segment.status() == SegmentStatus::Completed {
+            let is_complete = if segment.end_byte > 0 {
+                segment.downloaded_bytes.load(Ordering::Relaxed) >= segment.total_bytes()
+                    && segment.status() == SegmentStatus::Completed
+            } else {
+                segment.status() == SegmentStatus::Completed
+            };
+            if is_complete {
                 continue;
             }
 
@@ -306,9 +330,12 @@ impl Engine {
         }
 
         if worker_handles.is_empty() {
-            task.set_status(TaskStatus::Completed);
-            let _ = self.save_state().await;
-            return Ok(());
+            let downloaded = task.downloaded_bytes.load(Ordering::Relaxed);
+            if task.total_size == 0 || downloaded >= task.total_size {
+                task.set_status(TaskStatus::Completed);
+                let _ = self.save_state().await;
+                return Ok(());
+            }
         }
 
         let monitor_task = Arc::clone(&task);
@@ -339,12 +366,24 @@ impl Engine {
                 return;
             }
 
-            if all_succeeded {
+            let downloaded = monitor_task.downloaded_bytes.load(Ordering::Relaxed);
+            let total = monitor_task.total_size;
+            let segments_complete = monitor_task.segments().iter().all(|s| {
+                if s.end_byte > 0 {
+                    s.downloaded_bytes.load(Ordering::Relaxed) >= s.total_bytes()
+                        && s.status() == SegmentStatus::Completed
+                } else {
+                    s.status() == SegmentStatus::Completed
+                }
+            });
+            let size_complete = total == 0 || downloaded >= total;
+
+            if all_succeeded && segments_complete && size_complete {
                 monitor_task.set_status(TaskStatus::Completed);
             } else {
                 let error_text = match failure_reason {
                     Some(reason) => reason,
-                    None => "Download worker failed".to_string(),
+                    None => "Download incomplete".to_string(),
                 };
                 monitor_task.set_status(TaskStatus::Failed(error_text));
             }
@@ -427,7 +466,7 @@ async fn download_worker(
     segment: Arc<DownloadSegment>,
     cancellation_token: CancellationToken,
 ) -> Result<(), EngineError> {
-    let max_retries = 5;
+    let max_retries = 8;
     let mut attempt = 0;
 
     loop {
@@ -435,6 +474,7 @@ async fn download_worker(
             return Ok(());
         }
 
+        let bytes_before = segment.downloaded_bytes.load(Ordering::Relaxed);
         let result =
             download_worker_stream(&client, &disk_manager, &task, &segment, &cancellation_token)
                 .await;
@@ -445,12 +485,20 @@ async fn download_worker(
                 if cancellation_token.is_cancelled() {
                     return Ok(());
                 }
-                attempt += 1;
-                if attempt > max_retries {
-                    segment.set_status(SegmentStatus::Failed);
-                    return Err(err);
+                let bytes_after = segment.downloaded_bytes.load(Ordering::Relaxed);
+                if bytes_after > bytes_before {
+                    attempt = 0;
+                    if matches!(err, EngineError::IncompleteSegment { .. }) {
+                        continue;
+                    }
+                } else {
+                    attempt += 1;
+                    if attempt > max_retries {
+                        segment.set_status(SegmentStatus::Failed);
+                        return Err(err);
+                    }
                 }
-                let backoff_ms = (200 * (1 << attempt)).min(5000);
+                let backoff_ms = (200 * (1 << attempt.min(5))).min(5000);
                 tokio::select! {
                     _ = cancellation_token.cancelled() => return Ok(()),
                     _ = tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)) => {}
@@ -504,6 +552,10 @@ async fn download_worker_stream(
         return Err(EngineError::HttpStatus(status));
     }
 
+    if current_offset > 0 && status != reqwest::StatusCode::PARTIAL_CONTENT {
+        return Err(EngineError::HttpStatus(status));
+    }
+
     let mut stream = response.bytes_stream();
 
     while let Some(chunk_result) = stream.next().await {
@@ -511,21 +563,50 @@ async fn download_worker_stream(
             return Ok(());
         }
 
+        if segment.end_byte > 0 && current_offset > segment.end_byte {
+            break;
+        }
+
         let chunk = chunk_result?;
+        let write_slice = if segment.end_byte > 0 {
+            let remaining = (segment.end_byte + 1).saturating_sub(current_offset) as usize;
+            let take_len = chunk.len().min(remaining);
+            &chunk[..take_len]
+        } else {
+            &chunk[..]
+        };
+
+        if write_slice.is_empty() {
+            break;
+        }
+
         disk_manager
-            .write_at(&mut file, current_offset, &chunk)
+            .write_at(&mut file, current_offset, write_slice)
             .await?;
 
-        let bytes_written = chunk.len() as u64;
+        let bytes_written = write_slice.len() as u64;
         current_offset += bytes_written;
         segment
             .downloaded_bytes
             .fetch_add(bytes_written, Ordering::Relaxed);
         task.downloaded_bytes
             .fetch_add(bytes_written, Ordering::Relaxed);
+
+        if segment.end_byte > 0 && current_offset > segment.end_byte {
+            break;
+        }
     }
 
     disk_manager.flush(&mut file).await?;
+
+    if segment.end_byte > 0 {
+        let actual = segment.downloaded_bytes.load(Ordering::Relaxed);
+        let expected = segment.total_bytes();
+        if actual < expected {
+            return Err(EngineError::IncompleteSegment { expected, actual });
+        }
+    }
+
     segment.set_status(SegmentStatus::Completed);
     Ok(())
 }

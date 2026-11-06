@@ -18,6 +18,9 @@ pub enum EngineError {
     #[error("HTTP request returned error status: {0}")]
     HttpStatus(reqwest::StatusCode),
 
+    #[error("Incomplete segment download: expected {expected} bytes, received {actual} bytes")]
+    IncompleteSegment { expected: u64, actual: u64 },
+
     #[error("Invalid URL: {0}")]
     InvalidUrl(String),
 
