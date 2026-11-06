@@ -208,15 +208,6 @@ impl DownloadsView {
             .text_xs()
             .overflow_hidden()
             .hover(move |s| s.bg(palette.surface_hover))
-            .with_spring(
-                ElementId::Name(format!("task-row-appear-{}", task.id).into()),
-                appear_spring,
-                |this, phase| {
-                    let height = phase.interpolate_clamped(px(0.0), px(48.0));
-                    let alpha = phase.interpolate_clamped(0.0, 1.0);
-                    this.h(height).opacity(alpha)
-                },
-            )
             .child(
                 div()
                     .flex()
@@ -335,6 +326,15 @@ impl DownloadsView {
                     } else {
                         None
                     }),
+            )
+            .with_spring(
+                ElementId::Name(format!("task-row-appear-{}", task.id).into()),
+                appear_spring,
+                |this, phase| {
+                    let height = phase.interpolate_clamped(px(0.0), px(48.0));
+                    let alpha = phase.interpolate_clamped(0.0, 1.0);
+                    this.h(height).opacity(alpha)
+                },
             )
             .into_any_element()
     }
