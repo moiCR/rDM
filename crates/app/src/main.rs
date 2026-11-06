@@ -10,9 +10,17 @@ use std::sync::Arc;
 use gpui::*;
 use rdm_core::Core;
 
-use crate::{assets::Assets, router::RootRouter, state::AppState, theme::ThemeManager};
+use crate::{
+    assets::Assets,
+    router::RootRouter,
+    state::{AppState, TasksModel},
+    theme::ThemeManager,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = Arc::new(tokio::runtime::Runtime::new()?);
+    let _guard = runtime.enter();
+
     let core = Arc::new(Core::new()?);
 
     let app = gpui_kit::application().with_assets(Assets::new());
@@ -21,7 +29,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Assets::new().load_fonts(cx);
         gpui_router::init(cx);
         cx.set_global(ThemeManager::new());
-        cx.set_global(AppState::new(core));
+
+        let tasks_model = cx.new(|cx| TasksModel::new(Arc::clone(&core), Arc::clone(&runtime), cx));
+        cx.set_global(AppState::new(core, tasks_model));
 
         let bounds = Bounds::centered(None, size(px(1024.0), px(680.0)), cx);
 
