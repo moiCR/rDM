@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering},
+    time::Instant,
 };
 
 use futures_util::StreamExt;
@@ -82,8 +83,8 @@ impl Engine {
     }
 
     pub async fn save_state(&self) -> Result<(), EngineError> {
-        let state_dir = &self.config.config().state_dir;
-        persist_tasks_to_disk(state_dir, &self.tasks).await;
+        let state_dir = self.config.config().state_dir;
+        persist_tasks_to_disk(&state_dir, &self.tasks).await;
         Ok(())
     }
 
@@ -191,6 +192,7 @@ impl Engine {
         referer: Option<String>,
     ) -> Result<Arc<Task>, EngineError> {
         let probe = self.probe(url, referer.as_deref()).await?;
+        let current_cfg = self.config.config();
 
         let destination_path = match output_path {
             Some(path) => {
@@ -201,14 +203,14 @@ impl Engine {
                 }
             }
             None => {
-                let target = self.config.config().download_dir.join(&probe.file_name);
+                let target = current_cfg.download_dir.join(&probe.file_name);
                 resolve_unique_path(&target)
             }
         };
 
         let active_connections = if probe.supports_ranges && probe.total_size > 0 {
             connections
-                .unwrap_or(self.config.config().default_connections)
+                .unwrap_or(current_cfg.default_connections)
                 .max(1)
         } else {
             1
@@ -304,6 +306,19 @@ impl Engine {
         task.set_status(TaskStatus::Downloading);
         let _ = self.save_state().await;
 
+        let active_segment_count = segments
+            .iter()
+            .filter(|s| {
+                if s.end_byte > 0 {
+                    s.downloaded_bytes.load(Ordering::Relaxed) < s.total_bytes()
+                        || s.status() != SegmentStatus::Completed
+                } else {
+                    s.status() != SegmentStatus::Completed
+                }
+            })
+            .count()
+            .max(1);
+
         let mut worker_handles = Vec::with_capacity(segments.len());
 
         for segment in segments {
@@ -319,11 +334,21 @@ impl Engine {
 
             let client = self.client.clone();
             let disk_manager = Arc::clone(&self.disk_manager);
+            let config_mgr = Arc::clone(&self.config);
             let task_ref = Arc::clone(&task);
             let token = cancellation_token.clone();
 
             let handle = tokio::spawn(async move {
-                download_worker(client, disk_manager, task_ref, segment, token).await
+                download_worker(
+                    client,
+                    disk_manager,
+                    config_mgr,
+                    task_ref,
+                    segment,
+                    token,
+                    active_segment_count,
+                )
+                .await
             });
 
             worker_handles.push(handle);
@@ -339,7 +364,7 @@ impl Engine {
         }
 
         let monitor_task = Arc::clone(&task);
-        let monitor_state_dir = self.config.config().state_dir.clone();
+        let monitor_state_dir = self.config.config().state_dir;
         let monitor_tasks = Arc::clone(&self.tasks);
 
         tokio::spawn(async move {
@@ -462,11 +487,13 @@ async fn persist_tasks_to_disk(state_dir: &Path, tasks_map: &RwLock<HashMap<Uuid
 async fn download_worker(
     client: reqwest::Client,
     disk_manager: Arc<DiskManager>,
+    config: Arc<ConfigManager>,
     task: Arc<Task>,
     segment: Arc<DownloadSegment>,
     cancellation_token: CancellationToken,
+    active_segment_count: usize,
 ) -> Result<(), EngineError> {
-    let max_retries = 8;
+    let max_retries = config.config().max_retries.max(1);
     let mut attempt = 0;
 
     loop {
@@ -475,9 +502,16 @@ async fn download_worker(
         }
 
         let bytes_before = segment.downloaded_bytes.load(Ordering::Relaxed);
-        let result =
-            download_worker_stream(&client, &disk_manager, &task, &segment, &cancellation_token)
-                .await;
+        let result = download_worker_stream(
+            &client,
+            &disk_manager,
+            &config,
+            &task,
+            &segment,
+            &cancellation_token,
+            active_segment_count,
+        )
+        .await;
 
         match result {
             Ok(()) => return Ok(()),
@@ -511,9 +545,11 @@ async fn download_worker(
 async fn download_worker_stream(
     client: &reqwest::Client,
     disk_manager: &Arc<DiskManager>,
+    config: &Arc<ConfigManager>,
     task: &Arc<Task>,
     segment: &Arc<DownloadSegment>,
     cancellation_token: &CancellationToken,
+    active_segment_count: usize,
 ) -> Result<(), EngineError> {
     segment.set_status(SegmentStatus::Downloading);
 
@@ -557,6 +593,8 @@ async fn download_worker_stream(
     }
 
     let mut stream = response.bytes_stream();
+    let mut rate_window_start = Instant::now();
+    let mut rate_window_bytes: u64 = 0;
 
     while let Some(chunk_result) = stream.next().await {
         if cancellation_token.is_cancelled() {
@@ -591,6 +629,31 @@ async fn download_worker_stream(
             .fetch_add(bytes_written, Ordering::Relaxed);
         task.downloaded_bytes
             .fetch_add(bytes_written, Ordering::Relaxed);
+
+        let max_speed_global = config.config().max_speed_bytes_per_sec;
+        if max_speed_global > 0 {
+            rate_window_bytes += bytes_written;
+            let per_worker_speed =
+                (max_speed_global / active_segment_count.max(1) as u64).max(1024);
+            let elapsed = rate_window_start.elapsed();
+            let expected_duration = std::time::Duration::from_secs_f64(
+                rate_window_bytes as f64 / per_worker_speed as f64,
+            );
+            if expected_duration > elapsed {
+                let sleep_time = expected_duration - elapsed;
+                if sleep_time > std::time::Duration::from_millis(5) {
+                    tokio::select! {
+                        _ = cancellation_token.cancelled() => return Ok(()),
+                        _ = tokio::time::sleep(sleep_time) => {}
+                    }
+                    rate_window_start = Instant::now();
+                    rate_window_bytes = 0;
+                }
+            } else if elapsed >= std::time::Duration::from_millis(500) {
+                rate_window_start = Instant::now();
+                rate_window_bytes = 0;
+            }
+        }
 
         if segment.end_byte > 0 && current_offset > segment.end_byte {
             break;

@@ -2,12 +2,15 @@ use gpui::{prelude::FluentBuilder, *};
 
 use crate::theme::ActiveTheme;
 
+pub type SidebarItemAction = Box<dyn Fn(&mut Window, &mut App) + 'static>;
+
 #[derive(IntoElement)]
 pub struct SidebarItem {
     label: &'static str,
     icon_path: &'static str,
     path: Option<&'static str>,
     active: bool,
+    action: Option<SidebarItemAction>,
 }
 
 pub fn sidebar_item(
@@ -15,12 +18,14 @@ pub fn sidebar_item(
     icon_path: &'static str,
     path: Option<&'static str>,
     active: bool,
+    action: Option<SidebarItemAction>,
 ) -> SidebarItem {
     SidebarItem {
         label,
         icon_path,
         path,
         active,
+        action,
     }
 }
 
@@ -38,6 +43,7 @@ impl RenderOnce for SidebarItem {
         let label = self.label;
         let icon_path = self.icon_path;
         let path = self.path;
+        let action = self.action;
 
         let spring_config = SpringConfig::new(180.0, 26.0, 1.0);
         let color_spring = SpringAnimation::new(spring_config).to(highlighted);
@@ -63,6 +69,11 @@ impl RenderOnce for SidebarItem {
             .when_some(path, |this, target_path| {
                 this.on_click(move |_event, window, cx| {
                     gpui_router::use_navigate(window, cx).push(target_path);
+                })
+            })
+            .when_some(action, |this, on_click_action| {
+                this.on_click(move |_event, window, cx| {
+                    (on_click_action)(window, cx);
                 })
             })
             .with_spring(

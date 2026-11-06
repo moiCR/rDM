@@ -1,6 +1,6 @@
 use gpui::*;
 
-use crate::{layout::sidebar_item::sidebar_item, theme::ActiveTheme};
+use crate::{layout::sidebar_item::sidebar_item, theme::ActiveTheme, views::SettingsModalState};
 
 #[derive(IntoElement)]
 pub struct Sidebar;
@@ -45,12 +45,14 @@ impl RenderOnce for Sidebar {
                         "icons/dashboard.svg",
                         Some("/"),
                         path == "/",
+                        None,
                     ))
                     .child(sidebar_item(
                         "Downloads",
                         "icons/download.svg",
                         Some("/downloads"),
                         path == "/downloads",
+                        None,
                     )),
             )
             .child(
@@ -59,7 +61,16 @@ impl RenderOnce for Sidebar {
                     .flex_col()
                     .items_start()
                     .pt_2()
-                    .child(sidebar_item("Ajustes", "icons/settings.svg", None, false)),
+                    .child(sidebar_item(
+                        "Ajustes",
+                        "icons/settings.svg",
+                        None,
+                        false,
+                        Some(Box::new(|window, cx| {
+                            cx.set_global(SettingsModalState { open: true });
+                            window.refresh();
+                        })),
+                    )),
             )
     }
 }

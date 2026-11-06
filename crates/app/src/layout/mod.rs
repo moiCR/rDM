@@ -9,6 +9,7 @@ use crate::{
     layout::{sidebar::Sidebar, titlebar::Titlebar},
     state::QuickDownloadState,
     theme::ActiveTheme,
+    views::SettingsModal,
 };
 
 #[derive(Default, Clone, Copy)]
@@ -52,6 +53,7 @@ impl Layout for AppLayout {
         let collapse_spring = SpringAnimation::new(spring_config).to(!collapsed);
 
         div()
+            .relative()
             .track_focus(&focus_handle)
             .key_context("AppLayout")
             .on_key_down(move |event, window, cx| {
@@ -114,6 +116,7 @@ impl Layout for AppLayout {
                             .children(self.outlet),
                     ),
             )
+            .child(SettingsModal::new())
             .into_any_element()
     }
 }

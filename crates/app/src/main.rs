@@ -14,7 +14,7 @@ use crate::{
     assets::Assets,
     router::RootRouter,
     state::{AppState, TasksModel},
-    theme::ThemeManager,
+    theme::{ThemeManager, dark::DarkTheme, light::LightTheme},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,13 +22,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = runtime.enter();
 
     let core = Arc::new(Core::new()?);
+    let initial_theme_str = core.config().config().theme.clone();
 
     let app = gpui_kit::application().with_assets(Assets::new());
 
     app.run(move |cx: &mut App| {
         Assets::new().load_fonts(cx);
         gpui_router::init(cx);
-        cx.set_global(ThemeManager::new());
+
+        let mut theme_mgr = ThemeManager::new();
+        if initial_theme_str == "light" {
+            theme_mgr.set_theme(Box::new(LightTheme));
+        } else {
+            theme_mgr.set_theme(Box::new(DarkTheme));
+        }
+        cx.set_global(theme_mgr);
 
         let tasks_model = cx.new(|cx| TasksModel::new(Arc::clone(&core), Arc::clone(&runtime), cx));
         cx.set_global(AppState::new(core, tasks_model));
