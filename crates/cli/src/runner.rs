@@ -4,7 +4,10 @@ use std::{
 };
 
 use rdm_core::Core;
-use rdm_core::task::{Task, TaskStatus};
+use rdm_core::{
+    EngineError,
+    task::{Task, TaskStatus},
+};
 
 use crate::{
     args::{CliArgs, CliCommand},
@@ -127,10 +130,13 @@ impl CliRunner {
                         TaskStatus::Pending => "Pending".to_string(),
                         TaskStatus::Connecting => "Connecting".to_string(),
                         TaskStatus::Downloading => "Downloading".to_string(),
+                        TaskStatus::ConversionQueued => "Queued (conversion)".to_string(),
+                        TaskStatus::Processing { .. } => "Processing".to_string(),
                         TaskStatus::Paused => "Paused".to_string(),
                         TaskStatus::Completed => "Completed".to_string(),
                         TaskStatus::Cancelled => "Cancelled".to_string(),
                         TaskStatus::Failed(_) => "Failed".to_string(),
+                        TaskStatus::ConversionFailed(_) => "Conversion failed".to_string(),
                     };
                     let pct = format!("{:.1}%", task.progress_ratio() * 100.0);
                     let size_str = format_bytes(task.total_size);
@@ -172,9 +178,18 @@ impl CliRunner {
         let mut last_instant = Instant::now();
         let mut last_bytes = task.downloaded_bytes.load(Ordering::Relaxed);
 
+        let mut processing_reported = false;
         loop {
             tokio::select! {
                 _ = interval.tick() => {
+                    let status = task.status();
+                    if matches!(status, TaskStatus::Processing { .. }) {
+                        if !processing_reported {
+                            self.reporter.info("Processing with FFmpeg...");
+                            processing_reported = true;
+                        }
+                        continue;
+                    }
                     let now = Instant::now();
                     let current_bytes = task.downloaded_bytes.load(Ordering::Relaxed);
                     let delta_bytes = current_bytes.saturating_sub(last_bytes);
@@ -198,7 +213,7 @@ impl CliRunner {
                     last_instant = now;
                     last_bytes = current_bytes;
 
-                    match task.status() {
+                    match status {
                         TaskStatus::Completed => {
                             self.reporter.finish();
                             let total_elapsed = start_time.elapsed();
@@ -220,6 +235,10 @@ impl CliRunner {
                             self.reporter.error(&format!("Download failed: {reason}"));
                             return Err(CliError::InvalidArgument(reason));
                         }
+                        TaskStatus::ConversionFailed(reason) => {
+                            self.reporter.finish();
+                            return Err(CliError::ConversionFailed(reason));
+                        }
                         TaskStatus::Cancelled => {
                             self.reporter.finish();
                             self.reporter.info("Download was cancelled");
@@ -238,8 +257,14 @@ impl CliRunner {
                 }
                 _ = tokio::signal::ctrl_c() => {
                     self.reporter.finish();
-                    self.reporter.info("Interruption received (Ctrl+C). Pausing task...");
-                    let _ = self.core.engine().pause_task(task.id).await;
+                    match self.core.engine().pause_task(task.id).await {
+                        Ok(()) => {}
+                        Err(EngineError::ConversionInProgress(_)) => {
+                            self.reporter.info("Waiting for FFmpeg to finish...");
+                            continue;
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
                     self.reporter.info(&format!(
                         "Download paused. Resume anytime with: rdm-cli resume {}",
                         task.id

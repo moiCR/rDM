@@ -30,6 +30,12 @@ pub enum EngineError {
     #[error("Task already exists: {0}")]
     TaskAlreadyExists(Uuid),
 
+    #[error("Task {0} has no failed conversion to retry")]
+    ConversionNotRetryable(Uuid),
+
+    #[error("Task {0} is processing")]
+    ConversionInProgress(Uuid),
+
     #[error("Download was cancelled")]
     Cancelled,
 

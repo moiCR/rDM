@@ -172,6 +172,10 @@ impl Engine {
         self.start_task(task_id).await
     }
 
+    pub async fn retry_conversion(&self, task_id: Uuid) -> Result<(), EngineError> {
+        self.download.retry_conversion(task_id).await
+    }
+
     pub async fn pause_task(&self, task_id: Uuid) -> Result<(), EngineError> {
         self.download.pause_task(task_id).await
     }

@@ -8,6 +8,9 @@ pub enum CliError {
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),
 
+    #[error("Conversion failed: {0}")]
+    ConversionFailed(String),
+
     #[error("Core engine error: {0}")]
     Engine(#[from] rdm_core::error::EngineError),
 

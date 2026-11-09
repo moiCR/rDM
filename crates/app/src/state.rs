@@ -289,13 +289,26 @@ impl TasksModel {
     }
 
     pub fn resume_task(&self, task_id: Uuid, cx: &mut Context<Self>) {
+        self.restart_task(task_id, false, cx);
+    }
+
+    pub fn retry_conversion(&self, task_id: Uuid, cx: &mut Context<Self>) {
+        self.restart_task(task_id, true, cx);
+    }
+
+    fn restart_task(&self, task_id: Uuid, conversion_only: bool, cx: &mut Context<Self>) {
         let core = Arc::clone(&self.core);
         let runtime = Arc::clone(&self.runtime);
         cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
             let core_task = Arc::clone(&core);
             let all = runtime
                 .spawn(async move {
-                    let _ = core_task.engine().resume_task(task_id).await;
+                    let engine = core_task.engine();
+                    let _ = if conversion_only {
+                        engine.retry_conversion(task_id).await
+                    } else {
+                        engine.resume_task(task_id).await
+                    };
                     core_task.engine().all_tasks().await
                 })
                 .await

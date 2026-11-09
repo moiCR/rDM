@@ -1,23 +1,26 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering},
 };
 
 use rdm_config::ConfigManager;
-use tokio::sync::RwLock;
+use tokio::{
+    io::AsyncWriteExt,
+    sync::{Mutex, RwLock},
+};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
     disk::DiskManager,
     error::EngineError,
-    task::{DownloadSegment, PostProcessAction, SegmentStatus, Task, TaskStatus},
+    task::{DownloadSegment, PersistedTask, PostProcessAction, SegmentStatus, Task, TaskStatus},
 };
 
 use super::{
     EngineModule, ResourceProbe,
-    multimedia::{MultimediaModule, normalize_post_process, stream_user_agent},
+    multimedia::{MultimediaModule, normalize_post_process, stream_user_agent, track_paths},
     transfer::{
         decode_and_sanitize_filename, download_to_path, extract_file_name_from_url,
         resolve_referer, stream_request,
@@ -30,6 +33,8 @@ pub(super) struct DownloadModule {
     client: reqwest::Client,
     tasks: RwLock<HashMap<Uuid, Arc<Task>>>,
     queue: RwLock<VecDeque<Uuid>>,
+    dispatch: Mutex<()>,
+    state_write: Mutex<()>,
     multimedia: Arc<MultimediaModule>,
 }
 
@@ -126,10 +131,10 @@ impl DownloadModule {
         let mut initial_queue = VecDeque::new();
         let state_file = engine_config.state_dir.join("tasks.json");
         if let Ok(content) = std::fs::read_to_string(&state_file)
-            && let Ok(persisted_tasks) =
-                serde_json::from_str::<Vec<crate::task::PersistedTask>>(&content)
+            && let Ok(persisted_tasks) = serde_json::from_str::<Vec<PersistedTask>>(&content)
         {
-            for persisted in persisted_tasks {
+            for mut persisted in persisted_tasks {
+                MultimediaModule::recover_conversion(&mut persisted);
                 let id = persisted.id;
                 let task = Arc::new(Task::from_persisted(persisted));
                 if task.status() == TaskStatus::Pending {
@@ -145,6 +150,8 @@ impl DownloadModule {
             client,
             tasks: RwLock::new(initial_tasks),
             queue: RwLock::new(initial_queue),
+            dispatch: Mutex::new(()),
+            state_write: Mutex::new(()),
             multimedia,
         }
     }
@@ -158,19 +165,41 @@ impl DownloadModule {
     }
 
     pub(super) async fn save_state(&self) -> Result<(), EngineError> {
+        let _write = self.state_write.lock().await;
         let state_dir = self.config.config().state_dir;
-        persist_tasks_to_disk(&state_dir, &self.tasks).await;
-        Ok(())
+        let tasks: Vec<_> = self
+            .tasks
+            .read()
+            .await
+            .values()
+            .map(|task| task.to_persisted())
+            .collect();
+        persist_tasks_to_disk(&state_dir, &tasks).await
     }
 
     pub(super) async fn load_state(&self) -> Result<(), EngineError> {
+        let _dispatch = self.dispatch.lock().await;
         let state_file = self.config.config().state_dir.join("tasks.json");
         if !tokio::fs::try_exists(&state_file).await.unwrap_or(false) {
             return Ok(());
         }
 
         let content = tokio::fs::read_to_string(&state_file).await?;
-        let persisted_tasks: Vec<crate::task::PersistedTask> = serde_json::from_str(&content)?;
+        let mut persisted_tasks: Vec<PersistedTask> = serde_json::from_str(&content)?;
+        let tasks = self.tasks.read().await;
+        persisted_tasks.retain(|task| {
+            !tasks
+                .get(&task.id)
+                .is_some_and(|live| is_active(&live.status()))
+        });
+        drop(tasks);
+        let persisted_tasks = tokio::task::spawn_blocking(move || {
+            for task in &mut persisted_tasks {
+                MultimediaModule::recover_conversion(task);
+            }
+            persisted_tasks
+        })
+        .await?;
 
         let mut tasks_guard = self.tasks.write().await;
         let mut queue_guard = self.queue.write().await;
@@ -195,18 +224,18 @@ impl DownloadModule {
     ) -> Result<Arc<Task>, EngineError> {
         let current_cfg = self.config.config();
 
-        let destination_path = match output_path {
+        let requested_path = match output_path {
             Some(path) => {
-                if path.is_dir() {
-                    resolve_unique_path(&path.join(&probe.file_name))
+                if tokio::fs::metadata(&path)
+                    .await
+                    .is_ok_and(|metadata| metadata.is_dir())
+                {
+                    path.join(&probe.file_name)
                 } else {
-                    resolve_unique_path(&path)
+                    path
                 }
             }
-            None => {
-                let target = current_cfg.download_dir.join(&probe.file_name);
-                resolve_unique_path(&target)
-            }
+            None => current_cfg.download_dir.join(&probe.file_name),
         };
 
         let (total_size, final_post_process) = normalize_post_process(
@@ -223,6 +252,26 @@ impl DownloadModule {
         };
 
         let task_id = Uuid::new_v4();
+        let _dispatch = self.dispatch.lock().await;
+        let reserved = self
+            .tasks
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        let destination_path = tokio::task::spawn_blocking({
+            let post_process = final_post_process.clone();
+            move || {
+                resolve_unique_path(
+                    &requested_path,
+                    total_size,
+                    post_process.as_ref(),
+                    &reserved,
+                )
+            }
+        })
+        .await??;
         let task = Arc::new(Task::new_with_post_process(
             task_id,
             probe.url,
@@ -243,14 +292,11 @@ impl DownloadModule {
         Ok(task)
     }
 
-    async fn active_downloads_count(&self, exclude_id: Option<Uuid>) -> usize {
+    async fn active_downloads_count(&self) -> usize {
         let tasks_guard = self.tasks.read().await;
         tasks_guard
             .values()
-            .filter(|t| {
-                Some(t.id) != exclude_id
-                    && matches!(t.status(), TaskStatus::Downloading | TaskStatus::Connecting)
-            })
+            .filter(|task| is_active(&task.status()))
             .count()
     }
 
@@ -260,21 +306,47 @@ impl DownloadModule {
     }
 
     pub(super) async fn start_task(self: &Arc<Self>, task_id: Uuid) -> Result<(), EngineError> {
+        self.request_start(task_id, false).await
+    }
+
+    pub(super) async fn retry_conversion(
+        self: &Arc<Self>,
+        task_id: Uuid,
+    ) -> Result<(), EngineError> {
+        self.request_start(task_id, true).await
+    }
+
+    async fn request_start(
+        self: &Arc<Self>,
+        task_id: Uuid,
+        conversion_only: bool,
+    ) -> Result<(), EngineError> {
+        let dispatch = self.dispatch.lock().await;
         let task = self.get_task(task_id).await?;
 
         let current_status = task.status();
-        if matches!(
+        let is_conversion = matches!(
             current_status,
-            TaskStatus::Downloading | TaskStatus::Connecting
-        ) {
+            TaskStatus::ConversionFailed(_)
+                | TaskStatus::ConversionQueued
+                | TaskStatus::Processing { .. }
+        );
+        if conversion_only && (!is_conversion || task.post_process.is_none()) {
+            return Err(EngineError::ConversionNotRetryable(task_id));
+        }
+        if is_active(&current_status) || current_status == TaskStatus::Completed {
             return Ok(());
         }
 
         let max_concurrent = self.config.config().max_concurrent_downloads.max(1);
-        let active_count = self.active_downloads_count(Some(task_id)).await;
+        let active_count = self.active_downloads_count().await;
 
         if active_count >= max_concurrent {
-            task.set_status(TaskStatus::Pending);
+            task.set_status(if is_conversion {
+                TaskStatus::ConversionQueued
+            } else {
+                TaskStatus::Pending
+            });
             {
                 let mut queue_guard = self.queue.write().await;
                 if !queue_guard.contains(&task_id) {
@@ -286,7 +358,16 @@ impl DownloadModule {
         }
 
         self.remove_from_queue(task_id).await;
-        self.launch_task(task).await
+        if is_conversion {
+            self.spawn_conversion(task);
+            return Ok(());
+        }
+        let result = self.launch_download(task).await;
+        drop(dispatch);
+        if result.is_err() {
+            self.process_queue().await;
+        }
+        result
     }
 
     pub(super) fn process_queue(
@@ -294,8 +375,9 @@ impl DownloadModule {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         Box::pin(async move {
             loop {
+                let _dispatch = self.dispatch.lock().await;
                 let max_concurrent = self.config.config().max_concurrent_downloads.max(1);
-                let active_count = self.active_downloads_count(None).await;
+                let active_count = self.active_downloads_count().await;
                 if active_count >= max_concurrent {
                     break;
                 }
@@ -309,13 +391,26 @@ impl DownloadModule {
                     break;
                 };
 
-                if let Ok(task) = self.get_task(task_id).await
-                    && task.status() == TaskStatus::Pending
-                {
-                    let _ = self.launch_task(task).await;
+                if let Ok(task) = self.get_task(task_id).await {
+                    match task.status() {
+                        TaskStatus::Pending => {
+                            let _ = self.launch_download(task).await;
+                        }
+                        TaskStatus::ConversionQueued => self.spawn_conversion(task),
+                        _ => {}
+                    }
                 }
             }
         })
+    }
+
+    async fn launch_download(self: &Arc<Self>, task: Arc<Task>) -> Result<(), EngineError> {
+        let result = self.launch_task(Arc::clone(&task)).await;
+        if let Err(error) = &result {
+            task.set_status(TaskStatus::Failed(error.to_string()));
+            let _ = self.save_state().await;
+        }
+        result
     }
 
     async fn launch_task(self: &Arc<Self>, task: Arc<Task>) -> Result<(), EngineError> {
@@ -442,7 +537,7 @@ impl DownloadModule {
             worker_handles.push(handle);
         }
 
-        if worker_handles.is_empty() {
+        if task.post_process.is_none() && worker_handles.is_empty() {
             let downloaded = task.downloaded_bytes.load(Ordering::Relaxed);
             if task.total_size == 0 || downloaded >= task.total_size {
                 task.set_status(TaskStatus::Completed);
@@ -456,7 +551,6 @@ impl DownloadModule {
         }
 
         let monitor_task = Arc::clone(&task);
-        let monitor_state_dir = self.config.config().state_dir;
         let download = Arc::clone(self);
 
         tokio::spawn(async move {
@@ -477,10 +571,9 @@ impl DownloadModule {
                 }
             }
 
-            let final_status = monitor_task.status();
-            if final_status == TaskStatus::Paused || final_status == TaskStatus::Cancelled {
-                persist_tasks_to_disk(&monitor_state_dir, &download.tasks).await;
-                download.process_queue().await;
+            let dispatch = download.dispatch.lock().await;
+            if cancellation_token.is_cancelled() || monitor_task.status() != TaskStatus::Downloading
+            {
                 return;
             }
 
@@ -497,14 +590,11 @@ impl DownloadModule {
             let size_complete = total == 0 || downloaded >= total;
 
             if all_succeeded && segments_complete && size_complete {
-                match download
-                    .multimedia
-                    .finish(&monitor_state_dir, &monitor_task)
-                    .await
-                {
-                    Ok(()) => monitor_task.set_status(TaskStatus::Completed),
-                    Err(err_msg) => monitor_task.set_status(TaskStatus::Failed(err_msg)),
+                if monitor_task.post_process.is_some() {
+                    download.spawn_conversion(monitor_task);
+                    return;
                 }
+                monitor_task.set_status(TaskStatus::Completed);
             } else {
                 let error_text = match failure_reason {
                     Some(reason) => reason,
@@ -513,27 +603,78 @@ impl DownloadModule {
                 monitor_task.set_status(TaskStatus::Failed(error_text));
             }
 
-            persist_tasks_to_disk(&monitor_state_dir, &download.tasks).await;
+            let _ = download.save_state().await;
+            drop(dispatch);
             download.process_queue().await;
         });
 
         Ok(())
     }
 
+    fn spawn_conversion(self: &Arc<Self>, task: Arc<Task>) {
+        task.set_status(TaskStatus::Processing { staged_size: None });
+        let download = Arc::clone(self);
+        tokio::spawn(async move {
+            let result = download.convert(&task).await;
+            {
+                let _dispatch = download.dispatch.lock().await;
+                match result {
+                    Ok(()) => {
+                        download.multimedia.remove_parts(&task).await;
+                        task.set_status(TaskStatus::Completed);
+                        let _ = download.save_state().await;
+                    }
+                    Err(error) => {
+                        let was_staged = matches!(
+                            task.status(),
+                            TaskStatus::Processing {
+                                staged_size: Some(_)
+                            }
+                        );
+                        if !was_staged {
+                            download.multimedia.discard_staging(&task).await;
+                        }
+                        task.set_status(TaskStatus::ConversionFailed(error));
+                        if download.save_state().await.is_ok() && was_staged {
+                            download.multimedia.discard_staging(&task).await;
+                        }
+                    }
+                }
+            }
+            download.process_queue().await;
+        });
+    }
+
+    async fn convert(&self, task: &Task) -> Result<(), String> {
+        self.save_state().await.map_err(|error| error.to_string())?;
+        let size = self.multimedia.prepare_conversion(task).await?;
+        task.set_status(TaskStatus::Processing {
+            staged_size: Some(size),
+        });
+        self.save_state().await.map_err(|error| error.to_string())?;
+        self.multimedia.publish_conversion(task).await
+    }
+
     pub(super) async fn pause_task(self: &Arc<Self>, task_id: Uuid) -> Result<(), EngineError> {
-        self.remove_from_queue(task_id).await;
+        let dispatch = self.dispatch.lock().await;
         let task = self.get_task(task_id).await?;
+        ensure_download_control(&task)?;
+        self.remove_from_queue(task_id).await;
         task.pause();
         let _ = self.save_state().await;
+        drop(dispatch);
         self.process_queue().await;
         Ok(())
     }
 
     pub(super) async fn cancel_task(self: &Arc<Self>, task_id: Uuid) -> Result<(), EngineError> {
-        self.remove_from_queue(task_id).await;
+        let dispatch = self.dispatch.lock().await;
         let task = self.get_task(task_id).await?;
+        ensure_download_control(&task)?;
+        self.remove_from_queue(task_id).await;
         task.cancel();
         let _ = self.save_state().await;
+        drop(dispatch);
         self.process_queue().await;
         Ok(())
     }
@@ -543,17 +684,19 @@ impl DownloadModule {
         task_id: Uuid,
         delete_file: bool,
     ) -> Result<(), EngineError> {
+        let dispatch = self.dispatch.lock().await;
+        let task = self.get_task(task_id).await?;
+        if matches!(task.status(), TaskStatus::Processing { .. }) {
+            return Err(EngineError::ConversionInProgress(task_id));
+        }
         self.remove_from_queue(task_id).await;
-        let task = {
-            let mut tasks_guard = self.tasks.write().await;
-            tasks_guard
-                .remove(&task_id)
-                .ok_or(EngineError::TaskNotFound(task_id))?
-        };
-
+        self.tasks.write().await.remove(&task_id);
         task.cancel();
 
-        self.multimedia.remove_parts(&task.output_path).await;
+        if task.post_process.is_some() {
+            self.multimedia.discard_staging(&task).await;
+            self.multimedia.remove_parts(&task).await;
+        }
 
         if delete_file
             && tokio::fs::try_exists(&task.output_path)
@@ -564,6 +707,7 @@ impl DownloadModule {
         }
 
         let _ = self.save_state().await;
+        drop(dispatch);
         self.process_queue().await;
         Ok(())
     }
@@ -582,15 +726,47 @@ impl DownloadModule {
     }
 }
 
-async fn persist_tasks_to_disk(state_dir: &Path, tasks_map: &RwLock<HashMap<Uuid, Arc<Task>>>) {
-    if let Ok(()) = tokio::fs::create_dir_all(state_dir).await {
-        let tasks_guard = tasks_map.read().await;
-        let persisted_tasks: Vec<crate::task::PersistedTask> =
-            tasks_guard.values().map(|t| t.to_persisted()).collect();
-        if let Ok(json) = serde_json::to_string_pretty(&persisted_tasks) {
-            let _ = tokio::fs::write(state_dir.join("tasks.json"), json).await;
+fn is_active(status: &TaskStatus) -> bool {
+    matches!(
+        status,
+        TaskStatus::Connecting | TaskStatus::Downloading | TaskStatus::Processing { .. }
+    )
+}
+
+fn ensure_download_control(task: &Task) -> Result<(), EngineError> {
+    match task.status() {
+        TaskStatus::Processing { .. } | TaskStatus::ConversionQueued => {
+            Err(EngineError::ConversionInProgress(task.id))
         }
+        TaskStatus::ConversionFailed(_) => Err(EngineError::ConversionNotRetryable(task.id)),
+        _ => Ok(()),
     }
+}
+
+async fn persist_tasks_to_disk(
+    state_dir: &Path,
+    tasks: &[PersistedTask],
+) -> Result<(), EngineError> {
+    let json = serde_json::to_vec_pretty(tasks)?;
+    tokio::fs::create_dir_all(state_dir).await?;
+    let temp = state_dir.join(format!(".tasks-{}.tmp", Uuid::new_v4()));
+    let result = async {
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .await?;
+        file.write_all(&json).await?;
+        file.sync_all().await?;
+        drop(file);
+        tokio::fs::rename(&temp, state_dir.join("tasks.json")).await
+    }
+    .await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&temp).await;
+    }
+    result?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -660,11 +836,26 @@ async fn download_worker(
     }
 }
 
-fn resolve_unique_path(target_path: &Path) -> PathBuf {
-    if !target_path.exists() {
-        return target_path.to_path_buf();
-    }
-
+fn resolve_unique_path(
+    target_path: &Path,
+    total_size: u64,
+    post_process: Option<&PostProcessAction>,
+    tasks: &[Arc<Task>],
+) -> std::io::Result<PathBuf> {
+    let reserved: HashSet<_> = tasks
+        .iter()
+        .flat_map(|task| {
+            std::iter::once(task.output_path.clone()).chain(
+                track_paths(
+                    &task.output_path,
+                    task.total_size,
+                    task.post_process.as_ref(),
+                )
+                .map(|(path, _)| path),
+            )
+        })
+        .map(|path| reservation_key(&path))
+        .collect();
     let parent = match target_path.parent() {
         Some(p) => p,
         None => Path::new("."),
@@ -680,18 +871,60 @@ fn resolve_unique_path(target_path: &Path) -> PathBuf {
         None => None,
     };
 
-    let mut counter = 1usize;
+    let mut counter = 0usize;
     loop {
-        let candidate_name = match extension {
-            Some(ext) => format!("{stem} ({counter}).{ext}"),
-            None => format!("{stem} ({counter})"),
+        let candidate = if counter == 0 {
+            target_path.to_path_buf()
+        } else {
+            let name = match extension {
+                Some(ext) => format!("{stem} ({counter}).{ext}"),
+                None => format!("{stem} ({counter})"),
+            };
+            parent.join(name)
         };
-        let candidate_path = parent.join(candidate_name);
-        if !candidate_path.exists() {
-            return candidate_path;
+        let mut available = true;
+        let candidates = std::iter::once(candidate.clone())
+            .chain(track_paths(&candidate, total_size, post_process).map(|(path, _)| path));
+        for path in candidates {
+            if reserved.contains(&reservation_key(&path)) {
+                available = false;
+                break;
+            }
+            match std::fs::symlink_metadata(path) {
+                Ok(_) => {
+                    available = false;
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        if available {
+            return Ok(candidate);
         }
         counter += 1;
     }
+}
+
+fn reservation_key(path: &Path) -> PathBuf {
+    let normalized = path
+        .parent()
+        .zip(path.file_name())
+        .and_then(|(parent, filename)| {
+            let parent = if parent.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                parent
+            };
+            std::fs::canonicalize(parent)
+                .ok()
+                .map(|directory| directory.join(filename))
+        })
+        .or_else(|| std::path::absolute(path).ok())
+        .unwrap_or_else(|| path.to_path_buf());
+    #[cfg(windows)]
+    let normalized = PathBuf::from(normalized.to_string_lossy().to_lowercase());
+    normalized
 }
 
 fn extract_file_name_from_disposition(disposition: &str) -> Option<String> {
@@ -766,22 +999,23 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_unique_path() {
+    fn test_resolve_unique_path() -> std::io::Result<()> {
         let temp_dir = std::env::temp_dir().join(format!("rdm_unique_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let base_file = temp_dir.join("sample.zip");
 
-        assert_eq!(resolve_unique_path(&base_file), base_file);
+        assert_eq!(resolve_unique_path(&base_file, 0, None, &[])?, base_file);
 
         let _ = std::fs::write(&base_file, b"test");
-        let first_duplicate = resolve_unique_path(&base_file);
+        let first_duplicate = resolve_unique_path(&base_file, 0, None, &[])?;
         assert_eq!(first_duplicate, temp_dir.join("sample (1).zip"));
 
         let _ = std::fs::write(&first_duplicate, b"test");
-        let second_duplicate = resolve_unique_path(&base_file);
+        let second_duplicate = resolve_unique_path(&base_file, 0, None, &[])?;
         assert_eq!(second_duplicate, temp_dir.join("sample (2).zip"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
     }
 
     #[test]

@@ -14,10 +14,13 @@ pub enum TaskStatus {
     Pending,
     Connecting,
     Downloading,
+    ConversionQueued,
+    Processing { staged_size: Option<u64> },
     Paused,
     Completed,
     Cancelled,
     Failed(String),
+    ConversionFailed(String),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -274,6 +277,9 @@ impl Task {
             persisted.total_size > 0 && persisted.downloaded_bytes < persisted.total_size;
         let status = match persisted.status {
             TaskStatus::Downloading | TaskStatus::Connecting => TaskStatus::Paused,
+            TaskStatus::Processing { .. } | TaskStatus::ConversionQueued => {
+                TaskStatus::ConversionFailed("La conversión se interrumpió.".into())
+            }
             TaskStatus::Completed if is_incomplete => TaskStatus::Paused,
             other => other,
         };

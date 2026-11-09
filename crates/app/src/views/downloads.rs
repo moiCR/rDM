@@ -58,8 +58,10 @@ impl ViewPalette {
             TaskStatus::Paused => ("Pausado", self.paused),
             TaskStatus::Completed => ("Completado", self.completed),
             TaskStatus::Failed(_) => ("Error", self.error),
+            TaskStatus::ConversionFailed(_) => ("Error de conversión", self.error),
+            TaskStatus::Processing { .. } => ("Procesando", self.downloading),
             TaskStatus::Connecting => ("Conectando", self.downloading),
-            TaskStatus::Pending => ("En cola", self.text_muted),
+            TaskStatus::Pending | TaskStatus::ConversionQueued => ("En cola", self.text_muted),
             TaskStatus::Cancelled => ("Cancelado", self.text_muted),
         }
     }
@@ -95,7 +97,13 @@ fn truncate_file_name(name: &str, max_chars: usize) -> String {
 
 fn task_progress_percent(task: &TaskSnapshot) -> f32 {
     match (task.total_size, &task.status) {
-        (_, TaskStatus::Completed) => 100.0,
+        (
+            _,
+            TaskStatus::Completed
+            | TaskStatus::Processing { .. }
+            | TaskStatus::ConversionFailed(_)
+            | TaskStatus::ConversionQueued,
+        ) => 100.0,
         (0, _) => 0.0,
         _ => (task.progress.clamp(0.0, 1.0) * 100.0) as f32,
     }
@@ -226,6 +234,21 @@ impl DownloadsView {
         let url_str = task.url.clone();
         let url_for_copy = task.url.clone();
         let file_name_for_modal = task.file_name.clone();
+        let conversion_error = match &task.status {
+            TaskStatus::ConversionFailed(reason) => Some(SharedString::from(reason.clone())),
+            _ => None,
+        };
+        let can_delete = !matches!(task.status, TaskStatus::Processing { .. });
+        let retry_conversion = conversion_error.as_ref().map(|_| {
+            let model = tasks_model.clone();
+            PillButton::new(
+                ("download-card-retry-conversion", task_key),
+                "Reintentar conversión",
+            )
+            .on_click(move |_event, _window, cx| {
+                model.update(cx, |m, cx| m.retry_conversion(task_id, cx));
+            })
+        });
 
         let toggle_action = match task.status {
             TaskStatus::Downloading | TaskStatus::Connecting => {
@@ -324,17 +347,25 @@ impl DownloadsView {
                     .gap_2()
                     .child(
                         div()
+                            .id(("download-card-status", task_key))
                             .text_xs()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(bottom_left_color)
                             .truncate()
+                            .when_some(conversion_error, |status, reason| {
+                                status.tooltip(move |_, cx| {
+                                    cx.new(|_| ActionTooltip::new(reason.clone())).into()
+                                })
+                            })
                             .child(bottom_left_text),
                     )
                     .child(
                         div()
                             .flex()
+                            .flex_shrink_0()
                             .items_center()
                             .gap_1()
+                            .children(retry_conversion)
                             .children(toggle_action.map(|(is_pause, icon_path, tooltip_text)| {
                                 let model = tasks_model.clone();
                                 IconButton::new(("download-card-toggle", task_key), icon_path)
@@ -354,7 +385,7 @@ impl DownloadsView {
                                         });
                                     })
                             }))
-                            .child(
+                            .children(can_delete.then(|| {
                                 IconButton::new(
                                     ("download-card-delete", task_key),
                                     "icons/trash.svg",
@@ -375,8 +406,8 @@ impl DownloadsView {
                                         });
                                         window.refresh();
                                     },
-                                ),
-                            ),
+                                )
+                            })),
                     ),
             )
     }

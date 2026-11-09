@@ -6,11 +6,12 @@ use std::{
 use rdm_config::ConfigManager;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::{
     disk::DiskManager,
     error::EngineError,
-    task::{DownloadSegment, PostProcessAction, Task},
+    task::{DownloadSegment, PersistedTask, PostProcessAction, Task, TaskStatus},
 };
 
 use super::{
@@ -487,31 +488,130 @@ impl MultimediaModule {
         }))
     }
 
-    pub(super) async fn finish(&self, state_dir: &Path, task: &Task) -> Result<(), String> {
+    pub(super) async fn prepare_conversion(&self, task: &Task) -> Result<u64, String> {
+        self.discard_staging(task).await;
+        let state_dir = self.config.config().state_dir;
+        let staged_path = staging_path(&task.output_path, task.id);
+        for (path, expected_size) in track_paths(
+            &task.output_path,
+            task.total_size,
+            task.post_process.as_ref(),
+        ) {
+            let metadata = tokio::fs::metadata(&path).await.map_err(|error| {
+                format!("No se puede leer la pista {}: {error}", path.display())
+            })?;
+            if !metadata.is_file()
+                || metadata.len() == 0
+                || (expected_size > 0 && metadata.len() != expected_size)
+            {
+                return Err(format!("La pista {} está incompleta.", path.display()));
+            }
+        }
+
         match &task.post_process {
             Some(PostProcessAction::MuxVideoAudio { .. }) => {
-                let v_part = temp_part_path(&task.output_path, "video.part");
-                let a_part = temp_part_path(&task.output_path, "audio.part");
-                let res = run_ffmpeg_mux(state_dir, &v_part, &a_part, &task.output_path).await;
-                let _ = tokio::fs::remove_file(&v_part).await;
-                let _ = tokio::fs::remove_file(&a_part).await;
-                res
+                let video = temp_part_path(&task.output_path, "video.part");
+                let audio = temp_part_path(&task.output_path, "audio.part");
+                run_ffmpeg_mux(&state_dir, &video, &audio, &staged_path).await?;
             }
             Some(PostProcessAction::ConvertMp3 { bitrate_kbps }) => {
-                let a_part = temp_part_path(&task.output_path, "audio.part");
-                let res =
-                    run_ffmpeg_mp3(state_dir, &a_part, &task.output_path, *bitrate_kbps).await;
-                let _ = tokio::fs::remove_file(&a_part).await;
-                res
+                let audio = temp_part_path(&task.output_path, "audio.part");
+                run_ffmpeg_mp3(&state_dir, &audio, &staged_path, *bitrate_kbps).await?;
             }
-            None => Ok(()),
+            None => return Err("La descarga no tiene una conversión pendiente.".into()),
+        }
+
+        let output = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&staged_path)
+            .await
+            .map_err(|error| format!("No se puede abrir la salida de FFmpeg: {error}"))?;
+        let metadata = output.metadata().await.map_err(|error| error.to_string())?;
+        if !metadata.is_file() || metadata.len() == 0 {
+            return Err("FFmpeg produjo un archivo vacío.".into());
+        }
+        output.sync_all().await.map_err(|error| error.to_string())?;
+        Ok(metadata.len())
+    }
+
+    pub(super) async fn publish_conversion(&self, task: &Task) -> Result<(), String> {
+        match tokio::fs::symlink_metadata(&task.output_path).await {
+            Ok(_) => {
+                return Err(format!(
+                    "El destino {} ya existe.",
+                    task.output_path.display()
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("No se puede comprobar el destino: {error}")),
+        }
+        tokio::fs::rename(staging_path(&task.output_path, task.id), &task.output_path)
+            .await
+            .map_err(|error| format!("No se puede publicar la conversión: {error}"))
+    }
+
+    pub(super) async fn discard_staging(&self, task: &Task) {
+        let _ = tokio::fs::remove_file(staging_path(&task.output_path, task.id)).await;
+    }
+
+    pub(super) async fn remove_parts(&self, task: &Task) {
+        for (path, _) in track_paths(
+            &task.output_path,
+            task.total_size,
+            task.post_process.as_ref(),
+        ) {
+            let _ = tokio::fs::remove_file(path).await;
         }
     }
 
-    pub(super) async fn remove_parts(&self, output_path: &Path) {
-        let _ = tokio::fs::remove_file(temp_part_path(output_path, "video.part")).await;
-        let _ = tokio::fs::remove_file(temp_part_path(output_path, "audio.part")).await;
+    pub(super) fn recover_conversion(persisted: &mut PersistedTask) {
+        let TaskStatus::Processing { staged_size } = persisted.status else {
+            return;
+        };
+        let staged_path = staging_path(&persisted.output_path, persisted.id);
+        let was_published = persisted.post_process.is_some()
+            && staged_size.is_some_and(|size| {
+                size > 0
+                    && std::fs::symlink_metadata(&staged_path)
+                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+                    && std::fs::symlink_metadata(&persisted.output_path)
+                        .is_ok_and(|metadata| metadata.is_file() && metadata.len() == size)
+            });
+        if was_published {
+            for (path, _) in track_paths(
+                &persisted.output_path,
+                persisted.total_size,
+                persisted.post_process.as_ref(),
+            ) {
+                let _ = std::fs::remove_file(path);
+            }
+            persisted.status = TaskStatus::Completed;
+        }
     }
+}
+
+pub(super) fn track_paths(
+    path: &Path,
+    total_size: u64,
+    action: Option<&PostProcessAction>,
+) -> impl Iterator<Item = (PathBuf, u64)> {
+    let (video, audio) = match action {
+        Some(PostProcessAction::MuxVideoAudio {
+            video_size,
+            audio_size,
+            ..
+        }) => (Some(*video_size), Some(*audio_size)),
+        Some(PostProcessAction::ConvertMp3 { .. }) => (None, Some(total_size)),
+        None => (None, None),
+    };
+    video
+        .map(|size| (temp_part_path(path, "video.part"), size))
+        .into_iter()
+        .chain(audio.map(|size| (temp_part_path(path, "audio.part"), size)))
+}
+
+fn staging_path(output_path: &Path, task_id: Uuid) -> PathBuf {
+    output_path.with_file_name(format!(".rdm-{task_id}.conversion.part"))
 }
 
 pub(super) fn stream_user_agent(url: &str) -> Option<&'static str> {
@@ -574,7 +674,8 @@ async fn run_ffmpeg_mux(
 ) -> Result<(), String> {
     let ffmpeg = resolve_ffmpeg_binary(state_dir);
     let mut cmd = tokio::process::Command::new(ffmpeg);
-    cmd.arg("-y")
+    cmd.kill_on_drop(true)
+        .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
         .arg("-i")
         .arg(video_path)
         .arg("-i")
@@ -583,6 +684,7 @@ async fn run_ffmpeg_mux(
         .arg("copy")
         .arg("-movflags")
         .arg("+faststart")
+        .args(["-f", "mp4"])
         .arg(output_path);
 
     #[cfg(target_os = "windows")]
@@ -607,7 +709,8 @@ async fn run_ffmpeg_mp3(
 ) -> Result<(), String> {
     let ffmpeg = resolve_ffmpeg_binary(state_dir);
     let mut cmd = tokio::process::Command::new(ffmpeg);
-    cmd.arg("-y")
+    cmd.kill_on_drop(true)
+        .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
         .arg("-i")
         .arg(audio_path)
         .arg("-vn")
@@ -615,6 +718,7 @@ async fn run_ffmpeg_mp3(
         .arg("libmp3lame")
         .arg("-b:a")
         .arg(format!("{bitrate_kbps}k"))
+        .args(["-f", "mp3"])
         .arg(output_path);
 
     #[cfg(target_os = "windows")]
