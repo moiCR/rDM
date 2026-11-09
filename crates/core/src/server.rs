@@ -5,7 +5,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use crate::{Core, error::EngineError};
+use crate::{Core, engine::normalize_post_process, error::EngineError, task::PostProcessAction};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterceptedDownload {
@@ -18,6 +18,7 @@ pub struct InterceptedDownload {
     pub referer: Option<String>,
     pub connections: usize,
     pub download_dir: PathBuf,
+    pub post_process: Option<PostProcessAction>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -26,6 +27,10 @@ pub struct ExtensionDownloadRequest {
     pub filename: Option<String>,
     pub referer: Option<String>,
     pub connections: Option<usize>,
+    pub video_size: Option<u64>,
+    pub audio_url: Option<String>,
+    pub audio_size: Option<u64>,
+    pub mp3_bitrate: Option<u32>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -182,7 +187,32 @@ async fn handle_connection(mut stream: TcpStream, core: Arc<Core>) -> Result<(),
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| s.to_string());
 
-            let (final_url, file_name, total_size, content_type, supports_ranges) =
+            let mut explicit_post_process = if let Some(ref audio_url) = download_req.audio_url
+                && !audio_url.trim().is_empty()
+            {
+                Some(PostProcessAction::MuxVideoAudio {
+                    video_size: download_req.video_size.unwrap_or(0),
+                    audio_url: audio_url.trim().to_string(),
+                    audio_size: download_req.audio_size.unwrap_or(0),
+                })
+            } else {
+                download_req
+                    .mp3_bitrate
+                    .map(|bitrate_kbps| PostProcessAction::ConvertMp3 { bitrate_kbps })
+            };
+
+            if explicit_post_process.is_none() {
+                explicit_post_process = core
+                    .engine()
+                    .infer_post_process(
+                        &trimmed_url,
+                        requested_name.as_deref(),
+                        download_req.referer.as_deref(),
+                    )
+                    .await;
+            }
+
+            let (final_url, file_name, probed_size, content_type, supports_ranges, probed_post) =
                 match probe_result {
                     Ok(probe) => {
                         let resolved_name = requested_name.unwrap_or(probe.file_name);
@@ -192,14 +222,18 @@ async fn handle_connection(mut stream: TcpStream, core: Arc<Core>) -> Result<(),
                             probe.total_size,
                             probe.content_type,
                             probe.supports_ranges,
+                            probe.post_process,
                         )
                     }
                     Err(_) => {
                         let fallback_name = requested_name
                             .unwrap_or_else(|| fallback_filename_from_url(&trimmed_url));
-                        (trimmed_url, fallback_name, 0, None, true)
+                        (trimmed_url, fallback_name, 0, None, true, None)
                     }
                 };
+
+            let (total_size, final_post_process) =
+                normalize_post_process(probed_size, explicit_post_process.or(probed_post));
 
             let cfg = core.config().config();
             let connections = if supports_ranges {
@@ -222,6 +256,7 @@ async fn handle_connection(mut stream: TcpStream, core: Arc<Core>) -> Result<(),
                 referer: download_req.referer,
                 connections,
                 download_dir: cfg.download_dir,
+                post_process: final_post_process,
             };
 
             core.notify_intercepted(intercepted);

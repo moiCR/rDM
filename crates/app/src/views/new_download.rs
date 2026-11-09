@@ -97,6 +97,7 @@ impl RenderOnce for NewDownloadModal {
                 referer: None,
                 connections: 8,
                 download_dir: PathBuf::from("."),
+                post_process: None,
             });
 
         let item_for_inputs = item.clone();
@@ -135,6 +136,7 @@ impl RenderOnce for NewDownloadModal {
         let confirm_default_name = item.file_name.clone();
         let confirm_default_dir = item.download_dir.clone();
         let confirm_default_conn = item.connections;
+        let confirm_post_process = item.post_process.clone();
         let confirm_fn_entity = inputs.file_name.clone();
 
         div()
@@ -193,6 +195,7 @@ impl RenderOnce for NewDownloadModal {
                                                 Some(output_path),
                                                 Some(confirm_default_conn),
                                                 confirm_referer.clone(),
+                                                confirm_post_process.clone(),
                                                 cx,
                                             );
                                         });

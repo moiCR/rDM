@@ -221,7 +221,7 @@ impl TasksModel {
         output_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
-        self.start_configured_download(url, output_path, None, None, cx);
+        self.start_configured_download(url, output_path, None, None, None, cx);
     }
 
     pub fn start_configured_download(
@@ -230,6 +230,7 @@ impl TasksModel {
         output_path: Option<PathBuf>,
         connections: Option<usize>,
         referer: Option<String>,
+        post_process: Option<rdm_core::task::PostProcessAction>,
         cx: &mut Context<Self>,
     ) {
         let core = Arc::clone(&self.core);
@@ -240,7 +241,13 @@ impl TasksModel {
                 .spawn(async move {
                     if let Ok(task) = core_task
                         .engine()
-                        .create_task(&url, output_path, connections, referer)
+                        .create_task_with_options(
+                            &url,
+                            output_path,
+                            connections,
+                            referer,
+                            post_process,
+                        )
                         .await
                     {
                         let _ = core_task.engine().start_task(task.id).await;

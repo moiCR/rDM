@@ -1,69 +1,13 @@
 <!DOCTYPE html>
 <html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>rDM</title>
-  <link rel="stylesheet" href="popup.css">
-</head>
-<body>
-  <div class="container">
-    <div id="media-section" class="media-section hidden">
-      <div id="media-list" class="media-list"></div>
-    </div>
-    <div id="media-divider" class="divider hidden"></div>
-
-    <div class="row">
-      <div class="row-info">
-        <span class="row-title">Interceptar descargas</span>
-        <span class="row-desc">Captura automática del navegador</span>
-      </div>
-      <label class="switch">
-        <input type="checkbox" id="intercept-toggle">
-        <span class="slider"></span>
-      </label>
-    </div>
-
-    <div class="divider"></div>
-
-    <div class="row">
-      <div class="row-info">
-        <span class="row-title">Notificaciones</span>
-        <span class="row-desc">Avisar al iniciar descarga</span>
-      </div>
-      <label class="switch">
-        <input type="checkbox" id="notifications-toggle">
-        <span class="slider"></span>
-      </label>
-    </div>
-
-    <div class="divider"></div>
-
-    <div class="row">
-      <div class="row-info">
-        <span class="row-title">Puerto de enlace</span>
-        <span class="row-desc">Servidor local Tokio en rDM</span>
-      </div>
-      <div class="port-input-wrapper">
-        <span class="port-prefix">:</span>
-        <input type="number" id="server-port" value="9654" min="1024" max="65535">
-      </div>
-    </div>
-
-    <div class="divider"></div>
-
-    <div class="footer-row">
-      <div class="status-pill" id="status-indicator">
-        <span class="status-dot"></span>
-        <span class="status-label" id="status-text">Conectado</span>
-      </div>
-      <button id="save-btn" class="save-btn">
-        <span class="btn-text">Guardar</span>
-      </button>
-    </div>
-
-    <div class="ambient-glow"></div>
-  </div>
-
-  <script src="popup.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>rDM</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="popup.js"></script>
+  </body>
 </html>

@@ -2,10 +2,8 @@ use std::{
     collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering},
-    time::Instant,
 };
 
-use futures_util::StreamExt;
 use rdm_config::ConfigManager;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -14,241 +12,33 @@ use uuid::Uuid;
 use crate::{
     disk::DiskManager,
     error::EngineError,
-    task::{DownloadSegment, SegmentStatus, Task, TaskStatus},
+    task::{DownloadSegment, PostProcessAction, SegmentStatus, Task, TaskStatus},
 };
 
-#[derive(Debug, Clone)]
-pub struct ResourceProbe {
-    pub url: String,
-    pub file_name: String,
-    pub total_size: u64,
-    pub supports_ranges: bool,
-    pub content_type: Option<String>,
-}
+use super::{
+    EngineModule, ResourceProbe,
+    multimedia::{MultimediaModule, normalize_post_process, stream_user_agent},
+    transfer::{
+        decode_and_sanitize_filename, download_to_path, extract_file_name_from_url,
+        resolve_referer, stream_request,
+    },
+};
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct YouTubeFormat {
-    pub url: String,
-    pub filename: String,
-    pub quality: String,
-    pub ext: String,
-    pub size_bytes: u64,
-}
-
-#[derive(Clone)]
-pub struct Engine {
+pub(super) struct DownloadModule {
     config: Arc<ConfigManager>,
     disk_manager: Arc<DiskManager>,
     client: reqwest::Client,
-    tasks: Arc<RwLock<HashMap<Uuid, Arc<Task>>>>,
-    queue: Arc<RwLock<VecDeque<Uuid>>>,
+    tasks: RwLock<HashMap<Uuid, Arc<Task>>>,
+    queue: RwLock<VecDeque<Uuid>>,
+    multimedia: Arc<MultimediaModule>,
 }
 
-impl Engine {
-    pub fn new(
-        config: Arc<ConfigManager>,
-        disk_manager: Arc<DiskManager>,
-    ) -> Result<Self, EngineError> {
-        let engine_config = config.config();
-
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Ok(user_agent_value) =
-            reqwest::header::HeaderValue::from_str(&engine_config.user_agent)
-        {
-            headers.insert(reqwest::header::USER_AGENT, user_agent_value);
-        }
-
-        let client = reqwest::Client::builder()
-            .tcp_nodelay(true)
-            .pool_max_idle_per_host(32)
-            .default_headers(headers)
-            .user_agent(&engine_config.user_agent)
-            .build()?;
-
-        let mut initial_tasks = HashMap::new();
-        let mut initial_queue = VecDeque::new();
-        let state_file = engine_config.state_dir.join("tasks.json");
-        if let Ok(content) = std::fs::read_to_string(&state_file)
-            && let Ok(persisted_tasks) =
-                serde_json::from_str::<Vec<crate::task::PersistedTask>>(&content)
-        {
-            for persisted in persisted_tasks {
-                let id = persisted.id;
-                let task = Arc::new(Task::from_persisted(persisted));
-                if task.status() == TaskStatus::Pending {
-                    initial_queue.push_back(id);
-                }
-                initial_tasks.insert(id, task);
-            }
-        }
-
-        Ok(Self {
-            config,
-            disk_manager,
-            client,
-            tasks: Arc::new(RwLock::new(initial_tasks)),
-            queue: Arc::new(RwLock::new(initial_queue)),
-        })
-    }
-
-    pub fn config(&self) -> &Arc<ConfigManager> {
-        &self.config
-    }
-
-    pub fn disk_manager(&self) -> &Arc<DiskManager> {
-        &self.disk_manager
-    }
-
-    pub async fn save_state(&self) -> Result<(), EngineError> {
-        let state_dir = self.config.config().state_dir;
-        persist_tasks_to_disk(&state_dir, &self.tasks).await;
-        Ok(())
-    }
-
-    pub async fn load_state(&self) -> Result<(), EngineError> {
-        let state_file = self.config.config().state_dir.join("tasks.json");
-        if !tokio::fs::try_exists(&state_file).await.unwrap_or(false) {
-            return Ok(());
-        }
-
-        let content = tokio::fs::read_to_string(&state_file).await?;
-        let persisted_tasks: Vec<crate::task::PersistedTask> = serde_json::from_str(&content)?;
-
-        let mut tasks_guard = self.tasks.write().await;
-        let mut queue_guard = self.queue.write().await;
-        for persisted in persisted_tasks {
-            let task_id = persisted.id;
-            let task = Arc::new(Task::from_persisted(persisted));
-            if task.status() == TaskStatus::Pending && !queue_guard.contains(&task_id) {
-                queue_guard.push_back(task_id);
-            }
-            tasks_guard.insert(task_id, task);
-        }
-        Ok(())
-    }
-
-    pub async fn resolve_youtube_formats(
-        &self,
-        video_id: &str,
-    ) -> Result<Vec<YouTubeFormat>, EngineError> {
-        let android_ua = "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip";
-        let payload = serde_json::json!({
-            "videoId": video_id,
-            "context": {
-                "client": {
-                    "clientName": "ANDROID",
-                    "clientVersion": "20.10.38",
-                    "androidSdkVersion": 34,
-                    "osName": "Android",
-                    "osVersion": "14",
-                    "userAgent": android_ua
-                }
-            }
-        });
-
-        let response = self
-            .client
-            .post("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
-            .header(reqwest::header::USER_AGENT, android_ua)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(payload.to_string())
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            return Err(EngineError::HttpStatus(response.status()));
-        }
-
-        let body_bytes = response.bytes().await?;
-        let json: serde_json::Value = serde_json::from_slice(&body_bytes)?;
-        let raw_title = json
-            .get("videoDetails")
-            .and_then(|v| v.get("title"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("youtube_video");
-        let clean_title = decode_and_sanitize_filename(raw_title);
-
-        let mut results = Vec::new();
-
-        if let Some(formats) = json
-            .get("streamingData")
-            .and_then(|s| s.get("formats"))
-            .and_then(|f| f.as_array())
-        {
-            for fmt in formats {
-                let Some(url) = fmt.get("url").and_then(|u| u.as_str()) else {
-                    continue;
-                };
-                let quality = fmt
-                    .get("qualityLabel")
-                    .and_then(|q| q.as_str())
-                    .unwrap_or("360p");
-                let size_bytes = fmt
-                    .get("contentLength")
-                    .and_then(|c| c.as_str())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(0);
-
-                results.push(YouTubeFormat {
-                    url: url.to_string(),
-                    filename: format!("{clean_title}.mp4"),
-                    quality: quality.to_string(),
-                    ext: format!("MP4 {quality}"),
-                    size_bytes,
-                });
-            }
-        }
-
-        if let Some(adaptive) = json
-            .get("streamingData")
-            .and_then(|s| s.get("adaptiveFormats"))
-            .and_then(|f| f.as_array())
-        {
-            for fmt in adaptive {
-                let itag = fmt.get("itag").and_then(|i| i.as_u64()).unwrap_or(0);
-                if itag != 140 {
-                    continue;
-                }
-                let Some(url) = fmt.get("url").and_then(|u| u.as_str()) else {
-                    continue;
-                };
-                let size_bytes = fmt
-                    .get("contentLength")
-                    .and_then(|c| c.as_str())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(0);
-
-                results.push(YouTubeFormat {
-                    url: url.to_string(),
-                    filename: format!("{clean_title}.m4a"),
-                    quality: "Audio".to_string(),
-                    ext: "AUDIO M4A".to_string(),
-                    size_bytes,
-                });
-            }
-        }
-
-        Ok(results)
-    }
-
-    pub async fn probe(
+impl EngineModule for DownloadModule {
+    async fn probe(
         &self,
         url: &str,
         referer: Option<&str>,
-    ) -> Result<ResourceProbe, EngineError> {
-        if let Some(video_id) = extract_youtube_video_id(url)
-            && let Ok(formats) = self.resolve_youtube_formats(&video_id).await
-            && let Some(first) = formats.into_iter().next()
-        {
-            return Ok(ResourceProbe {
-                url: first.url,
-                file_name: first.filename,
-                total_size: first.size_bytes,
-                supports_ranges: true,
-                content_type: Some("video/mp4".to_string()),
-            });
-        }
-
+    ) -> Result<Option<ResourceProbe>, EngineError> {
         let resolved_referer = resolve_referer(url, referer);
 
         let mut head_builder = self.client.head(url);
@@ -313,23 +103,96 @@ impl Engine {
             .and_then(extract_file_name_from_disposition)
             .unwrap_or_else(|| extract_file_name_from_url(url));
 
-        Ok(ResourceProbe {
+        Ok(Some(ResourceProbe {
             url: url.to_string(),
             file_name,
             total_size,
             supports_ranges,
             content_type,
-        })
+            post_process: None,
+        }))
+    }
+}
+
+impl DownloadModule {
+    pub(super) fn new(
+        config: Arc<ConfigManager>,
+        disk_manager: Arc<DiskManager>,
+        client: reqwest::Client,
+        multimedia: Arc<MultimediaModule>,
+    ) -> Self {
+        let engine_config = config.config();
+        let mut initial_tasks = HashMap::new();
+        let mut initial_queue = VecDeque::new();
+        let state_file = engine_config.state_dir.join("tasks.json");
+        if let Ok(content) = std::fs::read_to_string(&state_file)
+            && let Ok(persisted_tasks) =
+                serde_json::from_str::<Vec<crate::task::PersistedTask>>(&content)
+        {
+            for persisted in persisted_tasks {
+                let id = persisted.id;
+                let task = Arc::new(Task::from_persisted(persisted));
+                if task.status() == TaskStatus::Pending {
+                    initial_queue.push_back(id);
+                }
+                initial_tasks.insert(id, task);
+            }
+        }
+
+        Self {
+            config,
+            disk_manager,
+            client,
+            tasks: RwLock::new(initial_tasks),
+            queue: RwLock::new(initial_queue),
+            multimedia,
+        }
     }
 
-    pub async fn create_task(
+    pub(super) fn config(&self) -> &Arc<ConfigManager> {
+        &self.config
+    }
+
+    pub(super) fn disk_manager(&self) -> &Arc<DiskManager> {
+        &self.disk_manager
+    }
+
+    pub(super) async fn save_state(&self) -> Result<(), EngineError> {
+        let state_dir = self.config.config().state_dir;
+        persist_tasks_to_disk(&state_dir, &self.tasks).await;
+        Ok(())
+    }
+
+    pub(super) async fn load_state(&self) -> Result<(), EngineError> {
+        let state_file = self.config.config().state_dir.join("tasks.json");
+        if !tokio::fs::try_exists(&state_file).await.unwrap_or(false) {
+            return Ok(());
+        }
+
+        let content = tokio::fs::read_to_string(&state_file).await?;
+        let persisted_tasks: Vec<crate::task::PersistedTask> = serde_json::from_str(&content)?;
+
+        let mut tasks_guard = self.tasks.write().await;
+        let mut queue_guard = self.queue.write().await;
+        for persisted in persisted_tasks {
+            let task_id = persisted.id;
+            let task = Arc::new(Task::from_persisted(persisted));
+            if task.status() == TaskStatus::Pending && !queue_guard.contains(&task_id) {
+                queue_guard.push_back(task_id);
+            }
+            tasks_guard.insert(task_id, task);
+        }
+        Ok(())
+    }
+
+    pub(super) async fn create_task(
         &self,
-        url: &str,
+        probe: ResourceProbe,
         output_path: Option<PathBuf>,
         connections: Option<usize>,
         referer: Option<String>,
+        explicit_post_process: Option<PostProcessAction>,
     ) -> Result<Arc<Task>, EngineError> {
-        let probe = self.probe(url, referer.as_deref()).await?;
         let current_cfg = self.config.config();
 
         let destination_path = match output_path {
@@ -346,7 +209,12 @@ impl Engine {
             }
         };
 
-        let active_connections = if probe.supports_ranges && probe.total_size > 0 {
+        let (total_size, final_post_process) = normalize_post_process(
+            probe.total_size,
+            explicit_post_process.or(probe.post_process),
+        );
+
+        let active_connections = if probe.supports_ranges && total_size > 0 {
             connections
                 .unwrap_or(current_cfg.default_connections)
                 .max(1)
@@ -355,13 +223,14 @@ impl Engine {
         };
 
         let task_id = Uuid::new_v4();
-        let task = Arc::new(Task::new(
+        let task = Arc::new(Task::new_with_post_process(
             task_id,
             probe.url,
             destination_path,
-            probe.total_size,
+            total_size,
             active_connections,
             referer,
+            final_post_process,
         ));
 
         {
@@ -390,7 +259,7 @@ impl Engine {
         queue_guard.retain(|&id| id != task_id);
     }
 
-    pub async fn start_task(&self, task_id: Uuid) -> Result<(), EngineError> {
+    pub(super) async fn start_task(self: &Arc<Self>, task_id: Uuid) -> Result<(), EngineError> {
         let task = self.get_task(task_id).await?;
 
         let current_status = task.status();
@@ -420,8 +289,8 @@ impl Engine {
         self.launch_task(task).await
     }
 
-    pub fn process_queue(
-        &self,
+    pub(super) fn process_queue(
+        self: &Arc<Self>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         Box::pin(async move {
             loop {
@@ -449,16 +318,21 @@ impl Engine {
         })
     }
 
-    async fn launch_task(&self, task: Arc<Task>) -> Result<(), EngineError> {
+    async fn launch_task(self: &Arc<Self>, task: Arc<Task>) -> Result<(), EngineError> {
         let cancellation_token = task.renew_cancellation_token();
         task.set_status(TaskStatus::Connecting);
 
-        if task.total_size > 0 {
+        let (primary_target_path, primary_total_size) = self.multimedia.primary_target(&task);
+
+        if primary_total_size > 0 {
             self.disk_manager
-                .allocate_file(&task.output_path, task.total_size)
+                .allocate_file(&primary_target_path, primary_total_size)
                 .await?;
         } else {
-            let mut file = self.disk_manager.open_for_write(&task.output_path).await?;
+            let mut file = self
+                .disk_manager
+                .open_for_write(&primary_target_path)
+                .await?;
             self.disk_manager.flush(&mut file).await?;
         }
 
@@ -467,19 +341,19 @@ impl Engine {
             let segment_count = task.connections.max(1);
             let mut new_segments = Vec::with_capacity(segment_count);
 
-            if segment_count <= 1 || task.total_size == 0 {
-                let end_byte = if task.total_size > 0 {
-                    task.total_size - 1
+            if segment_count <= 1 || primary_total_size == 0 {
+                let end_byte = if primary_total_size > 0 {
+                    primary_total_size - 1
                 } else {
                     0
                 };
                 new_segments.push(Arc::new(DownloadSegment::new(0, 0, end_byte)));
             } else {
-                let chunk_size = task.total_size / segment_count as u64;
+                let chunk_size = primary_total_size / segment_count as u64;
                 for index in 0..segment_count {
                     let start_byte = index as u64 * chunk_size;
                     let end_byte = if index == segment_count - 1 {
-                        task.total_size - 1
+                        primary_total_size - 1
                     } else {
                         (index as u64 + 1) * chunk_size - 1
                     };
@@ -525,7 +399,7 @@ impl Engine {
             .count()
             .max(1);
 
-        let mut worker_handles = Vec::with_capacity(segments.len());
+        let mut worker_handles = Vec::with_capacity(segments.len() + 1);
 
         for segment in segments {
             let is_complete = if segment.end_byte > 0 {
@@ -542,6 +416,7 @@ impl Engine {
             let disk_manager = Arc::clone(&self.disk_manager);
             let config_mgr = Arc::clone(&self.config);
             let task_ref = Arc::clone(&task);
+            let target_file = primary_target_path.clone();
             let token = cancellation_token.clone();
 
             let handle = tokio::spawn(async move {
@@ -550,6 +425,7 @@ impl Engine {
                     disk_manager,
                     config_mgr,
                     task_ref,
+                    target_file,
                     segment,
                     token,
                     active_segment_count,
@@ -559,15 +435,21 @@ impl Engine {
 
             worker_handles.push(handle);
         }
+        if let Some(handle) = self
+            .multimedia
+            .spawn_companion_stream(&task, &cancellation_token)
+        {
+            worker_handles.push(handle);
+        }
 
         if worker_handles.is_empty() {
             let downloaded = task.downloaded_bytes.load(Ordering::Relaxed);
             if task.total_size == 0 || downloaded >= task.total_size {
                 task.set_status(TaskStatus::Completed);
                 let _ = self.save_state().await;
-                let engine_clone = self.clone();
+                let download = Arc::clone(self);
                 tokio::spawn(async move {
-                    engine_clone.process_queue().await;
+                    download.process_queue().await;
                 });
                 return Ok(());
             }
@@ -575,8 +457,7 @@ impl Engine {
 
         let monitor_task = Arc::clone(&task);
         let monitor_state_dir = self.config.config().state_dir;
-        let monitor_tasks = Arc::clone(&self.tasks);
-        let monitor_engine = self.clone();
+        let download = Arc::clone(self);
 
         tokio::spawn(async move {
             let mut all_succeeded = true;
@@ -598,8 +479,8 @@ impl Engine {
 
             let final_status = monitor_task.status();
             if final_status == TaskStatus::Paused || final_status == TaskStatus::Cancelled {
-                persist_tasks_to_disk(&monitor_state_dir, &monitor_tasks).await;
-                monitor_engine.process_queue().await;
+                persist_tasks_to_disk(&monitor_state_dir, &download.tasks).await;
+                download.process_queue().await;
                 return;
             }
 
@@ -616,7 +497,14 @@ impl Engine {
             let size_complete = total == 0 || downloaded >= total;
 
             if all_succeeded && segments_complete && size_complete {
-                monitor_task.set_status(TaskStatus::Completed);
+                match download
+                    .multimedia
+                    .finish(&monitor_state_dir, &monitor_task)
+                    .await
+                {
+                    Ok(()) => monitor_task.set_status(TaskStatus::Completed),
+                    Err(err_msg) => monitor_task.set_status(TaskStatus::Failed(err_msg)),
+                }
             } else {
                 let error_text = match failure_reason {
                     Some(reason) => reason,
@@ -625,18 +513,14 @@ impl Engine {
                 monitor_task.set_status(TaskStatus::Failed(error_text));
             }
 
-            persist_tasks_to_disk(&monitor_state_dir, &monitor_tasks).await;
-            monitor_engine.process_queue().await;
+            persist_tasks_to_disk(&monitor_state_dir, &download.tasks).await;
+            download.process_queue().await;
         });
 
         Ok(())
     }
 
-    pub async fn resume_task(&self, task_id: Uuid) -> Result<(), EngineError> {
-        self.start_task(task_id).await
-    }
-
-    pub async fn pause_task(&self, task_id: Uuid) -> Result<(), EngineError> {
+    pub(super) async fn pause_task(self: &Arc<Self>, task_id: Uuid) -> Result<(), EngineError> {
         self.remove_from_queue(task_id).await;
         let task = self.get_task(task_id).await?;
         task.pause();
@@ -645,7 +529,7 @@ impl Engine {
         Ok(())
     }
 
-    pub async fn cancel_task(&self, task_id: Uuid) -> Result<(), EngineError> {
+    pub(super) async fn cancel_task(self: &Arc<Self>, task_id: Uuid) -> Result<(), EngineError> {
         self.remove_from_queue(task_id).await;
         let task = self.get_task(task_id).await?;
         task.cancel();
@@ -654,7 +538,11 @@ impl Engine {
         Ok(())
     }
 
-    pub async fn delete_task(&self, task_id: Uuid, delete_file: bool) -> Result<(), EngineError> {
+    pub(super) async fn delete_task(
+        self: &Arc<Self>,
+        task_id: Uuid,
+        delete_file: bool,
+    ) -> Result<(), EngineError> {
         self.remove_from_queue(task_id).await;
         let task = {
             let mut tasks_guard = self.tasks.write().await;
@@ -664,6 +552,8 @@ impl Engine {
         };
 
         task.cancel();
+
+        self.multimedia.remove_parts(&task.output_path).await;
 
         if delete_file
             && tokio::fs::try_exists(&task.output_path)
@@ -678,7 +568,7 @@ impl Engine {
         Ok(())
     }
 
-    pub async fn get_task(&self, task_id: Uuid) -> Result<Arc<Task>, EngineError> {
+    pub(super) async fn get_task(&self, task_id: Uuid) -> Result<Arc<Task>, EngineError> {
         let tasks_guard = self.tasks.read().await;
         tasks_guard
             .get(&task_id)
@@ -686,7 +576,7 @@ impl Engine {
             .ok_or(EngineError::TaskNotFound(task_id))
     }
 
-    pub async fn all_tasks(&self) -> Vec<Arc<Task>> {
+    pub(super) async fn all_tasks(&self) -> Vec<Arc<Task>> {
         let tasks_guard = self.tasks.read().await;
         tasks_guard.values().cloned().collect()
     }
@@ -703,11 +593,13 @@ async fn persist_tasks_to_disk(state_dir: &Path, tasks_map: &RwLock<HashMap<Uuid
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn download_worker(
     client: reqwest::Client,
     disk_manager: Arc<DiskManager>,
     config: Arc<ConfigManager>,
     task: Arc<Task>,
+    target_path: PathBuf,
     segment: Arc<DownloadSegment>,
     cancellation_token: CancellationToken,
     active_segment_count: usize,
@@ -721,11 +613,18 @@ async fn download_worker(
         }
 
         let bytes_before = segment.downloaded_bytes.load(Ordering::Relaxed);
-        let result = download_worker_stream(
+        let request = stream_request(
             &client,
+            &task.url,
+            task.referer.as_deref(),
+            stream_user_agent(&task.url),
+        );
+        let result = download_to_path(
+            request,
             &disk_manager,
             &config,
             &task,
+            &target_path,
             &segment,
             &cancellation_token,
             active_segment_count,
@@ -759,187 +658,6 @@ async fn download_worker(
             }
         }
     }
-}
-
-async fn download_worker_stream(
-    client: &reqwest::Client,
-    disk_manager: &Arc<DiskManager>,
-    config: &Arc<ConfigManager>,
-    task: &Arc<Task>,
-    segment: &Arc<DownloadSegment>,
-    cancellation_token: &CancellationToken,
-    active_segment_count: usize,
-) -> Result<(), EngineError> {
-    segment.set_status(SegmentStatus::Downloading);
-
-    let mut file = disk_manager.open_for_write(&task.output_path).await?;
-    let downloaded = segment.downloaded_bytes.load(Ordering::Relaxed);
-    let mut current_offset = segment.start_byte + downloaded;
-
-    if segment.end_byte > 0 && current_offset > segment.end_byte {
-        segment.set_status(SegmentStatus::Completed);
-        return Ok(());
-    }
-
-    let mut request_builder = client.get(&task.url);
-
-    let resolved_ref = resolve_referer(&task.url, task.referer.as_deref());
-    if let Some(ref r) = resolved_ref
-        && let Ok(val) = reqwest::header::HeaderValue::from_str(r)
-    {
-        request_builder = request_builder.header(reqwest::header::REFERER, val);
-    }
-
-    if segment.end_byte > 0 {
-        request_builder = request_builder.header(
-            reqwest::header::RANGE,
-            format!("bytes={current_offset}-{}", segment.end_byte),
-        );
-    } else if current_offset > 0 {
-        request_builder =
-            request_builder.header(reqwest::header::RANGE, format!("bytes={current_offset}-"));
-    }
-
-    let response = request_builder.send().await?;
-    let status = response.status();
-
-    if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
-        return Err(EngineError::HttpStatus(status));
-    }
-
-    if current_offset > 0 && status != reqwest::StatusCode::PARTIAL_CONTENT {
-        return Err(EngineError::HttpStatus(status));
-    }
-
-    let mut stream = response.bytes_stream();
-    let mut rate_window_start = Instant::now();
-    let mut rate_window_bytes: u64 = 0;
-
-    while let Some(chunk_result) = stream.next().await {
-        if cancellation_token.is_cancelled() {
-            return Ok(());
-        }
-
-        if segment.end_byte > 0 && current_offset > segment.end_byte {
-            break;
-        }
-
-        let chunk = chunk_result?;
-        let write_slice = if segment.end_byte > 0 {
-            let remaining = (segment.end_byte + 1).saturating_sub(current_offset) as usize;
-            let take_len = chunk.len().min(remaining);
-            &chunk[..take_len]
-        } else {
-            &chunk[..]
-        };
-
-        if write_slice.is_empty() {
-            break;
-        }
-
-        disk_manager
-            .write_at(&mut file, current_offset, write_slice)
-            .await?;
-
-        let bytes_written = write_slice.len() as u64;
-        current_offset += bytes_written;
-        segment
-            .downloaded_bytes
-            .fetch_add(bytes_written, Ordering::Relaxed);
-        task.downloaded_bytes
-            .fetch_add(bytes_written, Ordering::Relaxed);
-
-        let max_speed_global = config.config().max_speed_bytes_per_sec;
-        if max_speed_global > 0 {
-            rate_window_bytes += bytes_written;
-            let per_worker_speed =
-                (max_speed_global / active_segment_count.max(1) as u64).max(1024);
-            let elapsed = rate_window_start.elapsed();
-            let expected_duration = std::time::Duration::from_secs_f64(
-                rate_window_bytes as f64 / per_worker_speed as f64,
-            );
-            if expected_duration > elapsed {
-                let sleep_time = expected_duration - elapsed;
-                if sleep_time > std::time::Duration::from_millis(5) {
-                    tokio::select! {
-                        _ = cancellation_token.cancelled() => return Ok(()),
-                        _ = tokio::time::sleep(sleep_time) => {}
-                    }
-                    rate_window_start = Instant::now();
-                    rate_window_bytes = 0;
-                }
-            } else if elapsed >= std::time::Duration::from_millis(500) {
-                rate_window_start = Instant::now();
-                rate_window_bytes = 0;
-            }
-        }
-
-        if segment.end_byte > 0 && current_offset > segment.end_byte {
-            break;
-        }
-    }
-
-    disk_manager.flush(&mut file).await?;
-
-    if segment.end_byte > 0 {
-        let actual = segment.downloaded_bytes.load(Ordering::Relaxed);
-        let expected = segment.total_bytes();
-        if actual < expected {
-            return Err(EngineError::IncompleteSegment { expected, actual });
-        }
-    }
-
-    segment.set_status(SegmentStatus::Completed);
-    Ok(())
-}
-
-fn resolve_referer(url_str: &str, custom_referer: Option<&str>) -> Option<String> {
-    if let Some(r) = custom_referer {
-        return Some(r.to_string());
-    }
-
-    if let Ok(parsed_url) = reqwest::Url::parse(url_str)
-        && let Some(host) = parsed_url.host_str()
-    {
-        let scheme = parsed_url.scheme();
-        return Some(format!("{scheme}://{host}/"));
-    }
-
-    None
-}
-
-pub fn extract_youtube_video_id(url_str: &str) -> Option<String> {
-    let parsed = reqwest::Url::parse(url_str).ok()?;
-    let host = parsed.host_str()?.to_lowercase();
-
-    if host == "youtu.be" {
-        let mut segs = parsed.path_segments()?;
-        let id = segs.next()?.trim();
-        if !id.is_empty() {
-            return Some(id.to_string());
-        }
-        return None;
-    }
-
-    if host == "youtube.com" || host == "www.youtube.com" || host == "m.youtube.com" {
-        let path = parsed.path();
-        if path == "/watch" {
-            for (k, v) in parsed.query_pairs() {
-                if k == "v" && !v.trim().is_empty() {
-                    return Some(v.trim().to_string());
-                }
-            }
-        } else if let Some(rest) = path
-            .strip_prefix("/shorts/")
-            .or_else(|| path.strip_prefix("/embed/"))
-            && let Some(id) = rest.split('/').next()
-            && !id.trim().is_empty()
-        {
-            return Some(id.trim().to_string());
-        }
-    }
-
-    None
 }
 
 fn resolve_unique_path(target_path: &Path) -> PathBuf {
@@ -976,31 +694,6 @@ fn resolve_unique_path(target_path: &Path) -> PathBuf {
     }
 }
 
-fn decode_and_sanitize_filename(raw_name: &str) -> String {
-    let replaced_plus = raw_name.replace('+', " ");
-    let decoded = percent_encoding::percent_decode_str(&replaced_plus)
-        .decode_utf8_lossy()
-        .into_owned();
-
-    let sanitized: String = decoded
-        .chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            c if c.is_control() => '_',
-            c => c,
-        })
-        .collect();
-
-    let normalized: String = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
-
-    let trimmed = normalized.trim();
-    if trimmed.is_empty() {
-        "download.bin".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
 fn extract_file_name_from_disposition(disposition: &str) -> Option<String> {
     let mut fallback_filename = None;
     let mut star_filename = None;
@@ -1026,19 +719,10 @@ fn extract_file_name_from_disposition(disposition: &str) -> Option<String> {
     star_filename.or(fallback_filename)
 }
 
-fn extract_file_name_from_url(url_str: &str) -> String {
-    if let Ok(parsed_url) = reqwest::Url::parse(url_str)
-        && let Some(mut segments) = parsed_url.path_segments()
-        && let Some(file_name) = segments.rfind(|s| !s.is_empty())
-    {
-        return decode_and_sanitize_filename(file_name);
-    }
-    "download.bin".to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::Engine;
     use rdm_config::EngineConfig;
 
     #[test]
@@ -1142,7 +826,7 @@ mod tests {
         ));
 
         {
-            let mut tasks = engine.tasks.write().await;
+            let mut tasks = engine.download.tasks.write().await;
             tasks.insert(task_id, task);
         }
 
@@ -1198,7 +882,7 @@ mod tests {
         queued_task.set_status(TaskStatus::Paused);
 
         {
-            let mut tasks = engine.tasks.write().await;
+            let mut tasks = engine.download.tasks.write().await;
             tasks.insert(active_id, Arc::clone(&active_task));
             tasks.insert(queued_id, Arc::clone(&queued_task));
         }

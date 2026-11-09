@@ -29,6 +29,18 @@ pub enum SegmentStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PostProcessAction {
+    MuxVideoAudio {
+        video_size: u64,
+        audio_url: String,
+        audio_size: u64,
+    },
+    ConvertMp3 {
+        bitrate_kbps: u32,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PersistedSegment {
     pub index: usize,
     pub start_byte: u64,
@@ -120,6 +132,8 @@ pub struct PersistedTask {
     pub referer: Option<String>,
     pub status: TaskStatus,
     pub segments: Vec<PersistedSegment>,
+    #[serde(default)]
+    pub post_process: Option<PostProcessAction>,
 }
 
 #[derive(Debug)]
@@ -131,6 +145,7 @@ pub struct Task {
     pub downloaded_bytes: AtomicU64,
     pub connections: usize,
     pub referer: Option<String>,
+    pub post_process: Option<PostProcessAction>,
     status: RwLock<TaskStatus>,
     segments: RwLock<Vec<Arc<DownloadSegment>>>,
     cancellation_token: RwLock<CancellationToken>,
@@ -145,6 +160,18 @@ impl Task {
         connections: usize,
         referer: Option<String>,
     ) -> Self {
+        Self::new_with_post_process(id, url, output_path, total_size, connections, referer, None)
+    }
+
+    pub fn new_with_post_process(
+        id: Uuid,
+        url: String,
+        output_path: PathBuf,
+        total_size: u64,
+        connections: usize,
+        referer: Option<String>,
+        post_process: Option<PostProcessAction>,
+    ) -> Self {
         Self {
             id,
             url,
@@ -153,6 +180,7 @@ impl Task {
             downloaded_bytes: AtomicU64::new(0),
             connections,
             referer,
+            post_process,
             status: RwLock::new(TaskStatus::Pending),
             segments: RwLock::new(Vec::new()),
             cancellation_token: RwLock::new(CancellationToken::new()),
@@ -237,6 +265,7 @@ impl Task {
             referer: self.referer.clone(),
             status: self.status(),
             segments,
+            post_process: self.post_process.clone(),
         }
     }
 
@@ -262,6 +291,7 @@ impl Task {
             downloaded_bytes: AtomicU64::new(persisted.downloaded_bytes),
             connections: persisted.connections,
             referer: persisted.referer,
+            post_process: persisted.post_process,
             status: RwLock::new(status),
             segments: RwLock::new(segments),
             cancellation_token: RwLock::new(CancellationToken::new()),
