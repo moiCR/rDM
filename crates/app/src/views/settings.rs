@@ -36,6 +36,7 @@ struct ModalPalette {
 pub struct SettingsInputs {
     pub speed: Entity<InputState>,
     pub connections: Entity<InputState>,
+    pub max_concurrent: Entity<InputState>,
     pub download_dir: Entity<InputState>,
     pub user_agent: Entity<InputState>,
     _subs: Vec<Subscription>,
@@ -90,6 +91,7 @@ impl RenderOnce for SettingsModal {
         let form = form_state.read(cx).clone();
 
         let cfg_for_inputs = config_manager.clone();
+        let core_for_inputs = core.clone();
         let inputs_state = window.use_keyed_state("settings-inputs-state", cx, |window, cx| {
             let speed = cx.new(|cx| {
                 let mb = if current_cfg.max_speed_bytes_per_sec > 0 {
@@ -121,6 +123,18 @@ impl RenderOnce for SettingsModal {
                                 && text.parse::<usize>().map(|v| v <= 32).unwrap_or(false))
                     });
                 s.set_value(current_cfg.default_connections.to_string(), window, cx);
+                s
+            });
+
+            let max_concurrent = cx.new(|cx| {
+                let mut s = InputState::new(window, cx)
+                    .placeholder("3")
+                    .validate(|text, _| {
+                        text.is_empty()
+                            || (text.chars().all(|c| c.is_ascii_digit())
+                                && text.parse::<usize>().map(|v| v <= 16).unwrap_or(false))
+                    });
+                s.set_value(current_cfg.max_concurrent_downloads.to_string(), window, cx);
                 s
             });
 
@@ -159,6 +173,20 @@ impl RenderOnce for SettingsModal {
                 }
             }));
 
+            let c_concurrent = cfg_for_inputs.clone();
+            let core_queue = core_for_inputs.clone();
+            subs.push(window.observe(&max_concurrent, cx, move |entity, _, cx| {
+                let text = entity.read(cx).text().to_string();
+                if let Ok(val) = text.trim().parse::<usize>() {
+                    let _ = c_concurrent
+                        .update_config(|c| c.max_concurrent_downloads = val.clamp(1, 16));
+                    let engine = core_queue.engine().clone();
+                    cx.tasks_model().read(cx).tokio_handle().spawn(async move {
+                        engine.process_queue().await;
+                    });
+                }
+            }));
+
             let c3 = cfg_for_inputs.clone();
             subs.push(window.observe(&download_dir, cx, move |entity, _, cx| {
                 let text = entity.read(cx).text().to_string();
@@ -179,6 +207,7 @@ impl RenderOnce for SettingsModal {
             SettingsInputs {
                 speed,
                 connections,
+                max_concurrent,
                 download_dir,
                 user_agent,
                 _subs: subs,
@@ -490,6 +519,109 @@ impl RenderOnce for SettingsModal {
                                                             window.refresh();
                                                         }
                                                     }),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_6()
+                                    .py_2()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1p5()
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_size(px(14.0))
+                                                    .text_color(palette.text_color)
+                                                    .child("Descargas simultáneas"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(palette.text_muted)
+                                                    .child("Descargas activas al mismo tiempo (1 a 16)."),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(
+                                                IconButton::new(
+                                                    "btn-concurrent-dec",
+                                                    "icons/minus.svg",
+                                                )
+                                                .size(px(32.0))
+                                                .icon_size(px(14.0))
+                                                .color(palette.text_muted)
+                                                .hover_bg(palette.surface_hover)
+                                                .on_click({
+                                                    let conc = inputs.max_concurrent.clone();
+                                                    move |_, window, cx| {
+                                                        conc.update(cx, |state, cx| {
+                                                            let current = state
+                                                                .value()
+                                                                .trim()
+                                                                .parse::<usize>()
+                                                                .unwrap_or(3);
+                                                            let next = current
+                                                                .saturating_sub(1)
+                                                                .clamp(1, 16);
+                                                            state.set_value(
+                                                                next.to_string(),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                        window.refresh();
+                                                    }
+                                                }),
+                                            )
+                                            .child(
+                                                div().w(px(64.0)).child(
+                                                    Input::new(&inputs.max_concurrent)
+                                                        .id("input-max-concurrent")
+                                                        .text_align(TextAlign::Center)
+                                                        .h(px(36.0))
+                                                        .w_full(),
+                                                ),
+                                            )
+                                            .child(
+                                                IconButton::new(
+                                                    "btn-concurrent-inc",
+                                                    "icons/plus.svg",
+                                                )
+                                                .size(px(32.0))
+                                                .icon_size(px(14.0))
+                                                .color(palette.text_muted)
+                                                .hover_bg(palette.surface_hover)
+                                                .on_click({
+                                                    let conc = inputs.max_concurrent.clone();
+                                                    move |_, window, cx| {
+                                                        conc.update(cx, |state, cx| {
+                                                            let current = state
+                                                                .value()
+                                                                .trim()
+                                                                .parse::<usize>()
+                                                                .unwrap_or(3);
+                                                            let next = (current + 1).clamp(1, 16);
+                                                            state.set_value(
+                                                                next.to_string(),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                        window.refresh();
+                                                    }
+                                                }),
                                             ),
                                     ),
                             )

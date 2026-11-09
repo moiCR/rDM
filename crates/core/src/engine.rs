@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering},
     time::Instant,
@@ -26,11 +26,13 @@ pub struct ResourceProbe {
     pub content_type: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct Engine {
     config: Arc<ConfigManager>,
     disk_manager: Arc<DiskManager>,
     client: reqwest::Client,
     tasks: Arc<RwLock<HashMap<Uuid, Arc<Task>>>>,
+    queue: Arc<RwLock<VecDeque<Uuid>>>,
 }
 
 impl Engine {
@@ -55,6 +57,7 @@ impl Engine {
             .build()?;
 
         let mut initial_tasks = HashMap::new();
+        let mut initial_queue = VecDeque::new();
         let state_file = engine_config.state_dir.join("tasks.json");
         if let Ok(content) = std::fs::read_to_string(&state_file)
             && let Ok(persisted_tasks) =
@@ -62,7 +65,11 @@ impl Engine {
         {
             for persisted in persisted_tasks {
                 let id = persisted.id;
-                initial_tasks.insert(id, Arc::new(Task::from_persisted(persisted)));
+                let task = Arc::new(Task::from_persisted(persisted));
+                if task.status() == TaskStatus::Pending {
+                    initial_queue.push_back(id);
+                }
+                initial_tasks.insert(id, task);
             }
         }
 
@@ -71,6 +78,7 @@ impl Engine {
             disk_manager,
             client,
             tasks: Arc::new(RwLock::new(initial_tasks)),
+            queue: Arc::new(RwLock::new(initial_queue)),
         })
     }
 
@@ -98,9 +106,13 @@ impl Engine {
         let persisted_tasks: Vec<crate::task::PersistedTask> = serde_json::from_str(&content)?;
 
         let mut tasks_guard = self.tasks.write().await;
+        let mut queue_guard = self.queue.write().await;
         for persisted in persisted_tasks {
             let task_id = persisted.id;
             let task = Arc::new(Task::from_persisted(persisted));
+            if task.status() == TaskStatus::Pending && !queue_guard.contains(&task_id) {
+                queue_guard.push_back(task_id);
+            }
             tasks_guard.insert(task_id, task);
         }
         Ok(())
@@ -236,14 +248,82 @@ impl Engine {
         Ok(task)
     }
 
+    async fn active_downloads_count(&self, exclude_id: Option<Uuid>) -> usize {
+        let tasks_guard = self.tasks.read().await;
+        tasks_guard
+            .values()
+            .filter(|t| {
+                Some(t.id) != exclude_id
+                    && matches!(t.status(), TaskStatus::Downloading | TaskStatus::Connecting)
+            })
+            .count()
+    }
+
+    async fn remove_from_queue(&self, task_id: Uuid) {
+        let mut queue_guard = self.queue.write().await;
+        queue_guard.retain(|&id| id != task_id);
+    }
+
     pub async fn start_task(&self, task_id: Uuid) -> Result<(), EngineError> {
         let task = self.get_task(task_id).await?;
 
         let current_status = task.status();
-        if current_status == TaskStatus::Downloading {
+        if matches!(
+            current_status,
+            TaskStatus::Downloading | TaskStatus::Connecting
+        ) {
             return Ok(());
         }
 
+        let max_concurrent = self.config.config().max_concurrent_downloads.max(1);
+        let active_count = self.active_downloads_count(Some(task_id)).await;
+
+        if active_count >= max_concurrent {
+            task.set_status(TaskStatus::Pending);
+            {
+                let mut queue_guard = self.queue.write().await;
+                if !queue_guard.contains(&task_id) {
+                    queue_guard.push_back(task_id);
+                }
+            }
+            let _ = self.save_state().await;
+            return Ok(());
+        }
+
+        self.remove_from_queue(task_id).await;
+        self.launch_task(task).await
+    }
+
+    pub fn process_queue(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            loop {
+                let max_concurrent = self.config.config().max_concurrent_downloads.max(1);
+                let active_count = self.active_downloads_count(None).await;
+                if active_count >= max_concurrent {
+                    break;
+                }
+
+                let next_id = {
+                    let mut queue_guard = self.queue.write().await;
+                    queue_guard.pop_front()
+                };
+
+                let Some(task_id) = next_id else {
+                    break;
+                };
+
+                if let Ok(task) = self.get_task(task_id).await
+                    && task.status() == TaskStatus::Pending
+                {
+                    let _ = self.launch_task(task).await;
+                }
+            }
+        })
+    }
+
+    async fn launch_task(&self, task: Arc<Task>) -> Result<(), EngineError> {
         let cancellation_token = task.renew_cancellation_token();
         task.set_status(TaskStatus::Connecting);
 
@@ -359,6 +439,10 @@ impl Engine {
             if task.total_size == 0 || downloaded >= task.total_size {
                 task.set_status(TaskStatus::Completed);
                 let _ = self.save_state().await;
+                let engine_clone = self.clone();
+                tokio::spawn(async move {
+                    engine_clone.process_queue().await;
+                });
                 return Ok(());
             }
         }
@@ -366,6 +450,7 @@ impl Engine {
         let monitor_task = Arc::clone(&task);
         let monitor_state_dir = self.config.config().state_dir;
         let monitor_tasks = Arc::clone(&self.tasks);
+        let monitor_engine = self.clone();
 
         tokio::spawn(async move {
             let mut all_succeeded = true;
@@ -388,6 +473,7 @@ impl Engine {
             let final_status = monitor_task.status();
             if final_status == TaskStatus::Paused || final_status == TaskStatus::Cancelled {
                 persist_tasks_to_disk(&monitor_state_dir, &monitor_tasks).await;
+                monitor_engine.process_queue().await;
                 return;
             }
 
@@ -414,6 +500,7 @@ impl Engine {
             }
 
             persist_tasks_to_disk(&monitor_state_dir, &monitor_tasks).await;
+            monitor_engine.process_queue().await;
         });
 
         Ok(())
@@ -424,20 +511,25 @@ impl Engine {
     }
 
     pub async fn pause_task(&self, task_id: Uuid) -> Result<(), EngineError> {
+        self.remove_from_queue(task_id).await;
         let task = self.get_task(task_id).await?;
         task.pause();
         let _ = self.save_state().await;
+        self.process_queue().await;
         Ok(())
     }
 
     pub async fn cancel_task(&self, task_id: Uuid) -> Result<(), EngineError> {
+        self.remove_from_queue(task_id).await;
         let task = self.get_task(task_id).await?;
         task.cancel();
         let _ = self.save_state().await;
+        self.process_queue().await;
         Ok(())
     }
 
     pub async fn delete_task(&self, task_id: Uuid, delete_file: bool) -> Result<(), EngineError> {
+        self.remove_from_queue(task_id).await;
         let task = {
             let mut tasks_guard = self.tasks.write().await;
             tasks_guard
@@ -456,6 +548,7 @@ impl Engine {
         }
 
         let _ = self.save_state().await;
+        self.process_queue().await;
         Ok(())
     }
 
@@ -899,6 +992,63 @@ mod tests {
         let restored_task = engine2.get_task(task_id).await?;
         assert_eq!(restored_task.id, task_id);
         assert_eq!(restored_task.total_size, 1024);
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_queue_limit_and_advancement() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp_dir = std::env::temp_dir().join(format!("rdm_queue_test_{}", Uuid::new_v4()));
+        let config_obj = EngineConfig::default()
+            .with_state_dir(temp_dir.clone())
+            .with_download_dir(temp_dir.clone())
+            .with_max_concurrent_downloads(1);
+        let config = Arc::new(ConfigManager::from_config(config_obj));
+        let disk_manager = Arc::new(DiskManager::new());
+
+        let engine = Engine::new(Arc::clone(&config), Arc::clone(&disk_manager))?;
+
+        let active_id = Uuid::new_v4();
+        let active_task = Arc::new(Task::new(
+            active_id,
+            "https://example.com/active.bin".to_string(),
+            temp_dir.join("active.bin"),
+            1024,
+            1,
+            None,
+        ));
+        active_task.set_status(TaskStatus::Downloading);
+
+        let queued_id = Uuid::new_v4();
+        let queued_task = Arc::new(Task::new(
+            queued_id,
+            "https://example.com/queued.bin".to_string(),
+            temp_dir.join("queued.bin"),
+            100,
+            1,
+            None,
+        ));
+        let completed_seg = Arc::new(DownloadSegment::new(0, 0, 99));
+        completed_seg.downloaded_bytes.store(100, Ordering::Relaxed);
+        completed_seg.set_status(SegmentStatus::Completed);
+        queued_task.set_segments(vec![completed_seg]);
+        queued_task.downloaded_bytes.store(100, Ordering::Relaxed);
+        queued_task.set_status(TaskStatus::Paused);
+
+        {
+            let mut tasks = engine.tasks.write().await;
+            tasks.insert(active_id, Arc::clone(&active_task));
+            tasks.insert(queued_id, Arc::clone(&queued_task));
+        }
+
+        engine.start_task(queued_id).await?;
+        assert_eq!(queued_task.status(), TaskStatus::Pending);
+
+        engine.pause_task(active_id).await?;
+        assert_eq!(active_task.status(), TaskStatus::Paused);
+        assert_eq!(queued_task.status(), TaskStatus::Completed);
 
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
         Ok(())

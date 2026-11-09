@@ -54,6 +54,10 @@ body {
   padding: 10px;
 }
 
+.hidden {
+  display: none !important;
+}
+
 .container {
   position: relative;
   background-color: var(--rdm-surface);
@@ -78,6 +82,54 @@ body {
     transparent 65%
   );
   z-index: 0;
+}
+
+.media-section {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.media-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 148px;
+  overflow-y: auto;
+}
+
+.media-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.media-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.media-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--rdm-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.media-meta {
+  font-size: 11px;
+  color: var(--rdm-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .row {
@@ -253,6 +305,7 @@ input[type="number"]::-webkit-inner-spin-button {
   cursor: pointer;
   transition: all 0.15s ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  flex-shrink: 0;
 }
 
 .save-btn:hover {
@@ -261,6 +314,5 @@ input[type="number"]::-webkit-inner-spin-button {
 }
 
 .save-btn:active {
-  background-color: var(--rdm-surface-active);
   transform: translateY(0.5px);
 }

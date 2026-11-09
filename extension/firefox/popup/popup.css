@@ -1,0 +1,318 @@
+@font-face {
+  font-family: 'Geist';
+  src: url('../fonts/Geist-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Geist';
+  src: url('../fonts/Geist-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Geist';
+  src: url('../fonts/Geist-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+}
+
+:root {
+  --rdm-bg: #060c16;
+  --rdm-surface: #0b1424;
+  --rdm-surface-hover: #121f33;
+  --rdm-border: #1b2a40;
+  --rdm-border-subtle: rgba(27, 42, 64, 0.7);
+  --rdm-text: #eaf2ff;
+  --rdm-text-muted: #aabbd2;
+  --rdm-accent: #91add4;
+  --rdm-primary-fill: #223c61;
+  --rdm-primary-border: #536f94;
+  --rdm-primary-hover: #2b4b7a;
+  --rdm-primary-text: #f2f6fc;
+  --rdm-connected: #6ed9ad;
+  --rdm-disconnected: #ff9c9c;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  width: 310px;
+  background-color: var(--rdm-bg);
+  color: var(--rdm-text);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  padding: 10px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.container {
+  position: relative;
+  background-color: var(--rdm-surface);
+  border: 1px solid var(--rdm-border);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.ambient-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at 18% 95%,
+    rgba(78, 144, 156, 0.22) 0%,
+    rgba(34, 60, 97, 0.28) 32%,
+    transparent 65%
+  );
+  z-index: 0;
+}
+
+.media-section {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.media-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 148px;
+  overflow-y: auto;
+}
+
+.media-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.media-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.media-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--rdm-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.media-meta {
+  font-size: 11px;
+  color: var(--rdm-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.row-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--rdm-text);
+  letter-spacing: -0.15px;
+}
+
+.row-desc {
+  font-size: 11px;
+  color: var(--rdm-text-muted);
+}
+
+.divider {
+  position: relative;
+  z-index: 1;
+  height: 1px;
+  background-color: var(--rdm-border-subtle);
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: var(--rdm-surface-hover);
+  border: 1px solid var(--rdm-border);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 20px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background-color: var(--rdm-text-muted);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: var(--rdm-primary-fill);
+  border-color: var(--rdm-primary-border);
+}
+
+input:checked + .slider:before {
+  background-color: var(--rdm-primary-text);
+  transform: translateX(16px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.port-input-wrapper {
+  display: flex;
+  align-items: center;
+  background-color: var(--rdm-bg);
+  border: 1px solid var(--rdm-border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  transition: border-color 0.15s;
+}
+
+.port-input-wrapper:focus-within {
+  border-color: var(--rdm-accent);
+}
+
+.port-prefix {
+  font-size: 12px;
+  color: var(--rdm-text-muted);
+  margin-right: 2px;
+}
+
+input[type="number"] {
+  width: 54px;
+  background: transparent;
+  border: none;
+  color: var(--rdm-text);
+  font-family: 'Geist', monospace;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: right;
+  outline: none;
+  -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.footer-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 2px;
+}
+
+.status-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+.status-pill.connected .status-dot {
+  background-color: var(--rdm-connected);
+  box-shadow: 0 0 6px var(--rdm-connected);
+}
+
+.status-pill.connected .status-label {
+  color: var(--rdm-connected);
+}
+
+.status-pill.disconnected .status-dot {
+  background-color: var(--rdm-disconnected);
+}
+
+.status-pill.disconnected .status-label {
+  color: var(--rdm-disconnected);
+}
+
+.save-btn {
+  padding: 6px 14px;
+  background-color: var(--rdm-primary-fill);
+  border: 1px solid var(--rdm-primary-border);
+  color: var(--rdm-primary-text);
+  border-radius: 8px;
+  font-family: 'Geist', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  flex-shrink: 0;
+}
+
+.save-btn:hover {
+  background-color: var(--rdm-primary-hover);
+  border-color: var(--rdm-accent);
+}
+
+.save-btn:active {
+  transform: translateY(0.5px);
+}

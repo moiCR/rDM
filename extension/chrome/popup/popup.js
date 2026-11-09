@@ -4,6 +4,9 @@ const interceptToggle = document.getElementById("intercept-toggle");
 const notificationsToggle = document.getElementById("notifications-toggle");
 const serverPortInput = document.getElementById("server-port");
 const saveBtn = document.getElementById("save-btn");
+const mediaSection = document.getElementById("media-section");
+const mediaDivider = document.getElementById("media-divider");
+const mediaList = document.getElementById("media-list");
 
 function updateStatus(connected) {
   if (connected) {
@@ -12,6 +15,71 @@ function updateStatus(connected) {
   } else {
     statusIndicator.className = "status-pill disconnected";
     statusText.textContent = "Desconectado";
+  }
+}
+
+function renderMediaItems(items, fallbackReferer) {
+  mediaList.innerHTML = "";
+  if (!items || items.length === 0) {
+    mediaSection.classList.add("hidden");
+    mediaDivider.classList.add("hidden");
+    return;
+  }
+
+  mediaSection.classList.remove("hidden");
+  mediaDivider.classList.remove("hidden");
+
+  for (const item of items) {
+    const row = document.createElement("div");
+    row.className = "media-row";
+
+    const info = document.createElement("div");
+    info.className = "media-info";
+
+    const title = document.createElement("span");
+    title.className = "media-title";
+    title.textContent = item.filename || "video.mp4";
+    title.title = item.filename || item.url;
+
+    const meta = document.createElement("span");
+    meta.className = "media-meta";
+    const sizeLabel = item.sizeFormatted || "Video detectado";
+    meta.textContent = `${item.ext || "VIDEO"} • ${sizeLabel}`;
+
+    info.appendChild(title);
+    info.appendChild(meta);
+
+    const btn = document.createElement("button");
+    btn.className = "save-btn";
+    btn.textContent = "Descargar";
+
+    btn.addEventListener("click", () => {
+      btn.disabled = true;
+      btn.textContent = "Enviando...";
+      chrome.runtime.sendMessage(
+        {
+          type: "DOWNLOAD_MEDIA",
+          url: item.url,
+          filename: item.filename,
+          referer: item.referer || fallbackReferer || null,
+        },
+        (res) => {
+          if (!chrome.runtime.lastError && res && res.success) {
+            btn.textContent = "Enviado ✓";
+          } else {
+            btn.textContent = "Error";
+          }
+          setTimeout(() => {
+            btn.disabled = false;
+            btn.textContent = "Descargar";
+          }, 1200);
+        }
+      );
+    });
+
+    row.appendChild(info);
+    row.appendChild(btn);
+    mediaList.appendChild(row);
   }
 }
 
@@ -44,6 +112,12 @@ chrome.runtime.sendMessage({ type: "CHECK_STATUS" }, (response) => {
     interceptToggle.checked = Boolean(response.settings.interceptDownloads);
     notificationsToggle.checked = Boolean(response.settings.showNotifications);
     serverPortInput.value = response.settings.serverPort || 9654;
+  }
+});
+
+chrome.runtime.sendMessage({ type: "GET_TAB_MEDIA" }, (response) => {
+  if (!chrome.runtime.lastError && response && Array.isArray(response.media)) {
+    renderMediaItems(response.media, response.tabUrl);
   }
 });
 

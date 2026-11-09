@@ -6,6 +6,7 @@ const DEFAULT_SETTINGS = {
 };
 
 let cachedSettings = { ...DEFAULT_SETTINGS };
+const tabMediaMap = new Map();
 
 async function refreshSettingsCache() {
   const result = await chrome.storage.local.get(DEFAULT_SETTINGS);
@@ -81,6 +82,166 @@ async function sendDownloadToRdm(url, filename, referer) {
   }
 }
 
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return null;
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function extractMediaInfo(url, headers) {
+  let contentType = "";
+  let contentLength = 0;
+  let dispositionName = null;
+
+  for (const h of headers || []) {
+    const name = h.name.toLowerCase();
+    if (name === "content-type") {
+      contentType = (h.value || "").toLowerCase().split(";")[0].trim();
+    } else if (name === "content-length") {
+      contentLength = parseInt(h.value || "0", 10) || 0;
+    } else if (name === "content-disposition" && h.value) {
+      const match = h.value.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+      if (match && match[1]) {
+        try {
+          dispositionName = decodeURIComponent(match[1].trim());
+        } catch {
+          dispositionName = match[1].trim();
+        }
+      }
+    }
+  }
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return null;
+  }
+
+  const pathname = parsedUrl.pathname.toLowerCase();
+  if (pathname.endsWith(".ts") || pathname.endsWith(".m4s")) {
+    return null;
+  }
+
+  const mediaExtensions = [".mp4", ".webm", ".mkv", ".mov", ".m3u8", ".mp3", ".m4a", ".flac"];
+  const matchedExt = mediaExtensions.find((ext) => pathname.endsWith(ext));
+
+  const isManifest =
+    matchedExt === ".m3u8" ||
+    contentType === "application/vnd.apple.mpegurl" ||
+    contentType === "application/x-mpegurl";
+
+  const isVideoOrAudioMime =
+    contentType.startsWith("video/") ||
+    contentType.startsWith("audio/") ||
+    isManifest;
+
+  if (!isVideoOrAudioMime && !matchedExt) {
+    return null;
+  }
+
+  if (!isManifest && contentLength > 0 && contentLength < 102400) {
+    return null;
+  }
+
+  let extLabel = "VIDEO";
+  if (isManifest) {
+    extLabel = "HLS";
+  } else if (matchedExt) {
+    extLabel = matchedExt.slice(1).toUpperCase();
+  } else if (contentType.includes("/")) {
+    const sub = contentType.split("/")[1].replace("x-", "").toUpperCase();
+    extLabel = sub.length <= 5 ? sub : "VIDEO";
+  }
+
+  let rawName = dispositionName;
+  if (!rawName) {
+    const segments = parsedUrl.pathname.split("/").filter(Boolean);
+    const lastSeg = segments[segments.length - 1] || "video";
+    try {
+      rawName = decodeURIComponent(lastSeg);
+    } catch {
+      rawName = lastSeg;
+    }
+  }
+
+  if (!/\.[a-z0-9]{2,5}$/i.test(rawName)) {
+    const fallbackExt = isManifest ? ".m3u8" : matchedExt || ".mp4";
+    rawName = `${rawName}${fallbackExt}`;
+  }
+
+  return {
+    url,
+    filename: rawName,
+    sizeBytes: contentLength,
+    sizeFormatted: formatBytes(contentLength),
+    ext: extLabel,
+  };
+}
+
+function updateTabBadge(tabId) {
+  const list = tabMediaMap.get(tabId) || [];
+  const text = list.length > 0 ? String(list.length) : "";
+  chrome.action.setBadgeText({ tabId, text }, () => {
+    void chrome.runtime.lastError;
+  });
+  if (list.length > 0) {
+    chrome.action.setBadgeBackgroundColor({ tabId, color: "#223c61" }, () => {
+      void chrome.runtime.lastError;
+    });
+  }
+}
+
+chrome.webRequest.onHeadersReceived.addListener(
+  (details) => {
+    if (details.tabId < 0) return;
+    if (!details.url || !details.url.startsWith("http")) return;
+
+    const info = extractMediaInfo(details.url, details.responseHeaders);
+    if (!info) return;
+
+    const list = tabMediaMap.get(details.tabId) || [];
+    const existingIndex = list.findIndex((item) => item.url === info.url);
+    if (existingIndex !== -1) {
+      if (info.sizeBytes > list[existingIndex].sizeBytes) {
+        list[existingIndex] = { ...list[existingIndex], ...info };
+      }
+      return;
+    }
+
+    list.unshift({
+      ...info,
+      referer: details.initiator || details.documentUrl || null,
+    });
+
+    if (list.length > 8) {
+      list.length = 8;
+    }
+
+    tabMediaMap.set(details.tabId, list);
+    updateTabBadge(details.tabId);
+  },
+  { urls: ["<all_urls>"] },
+  ["responseHeaders"]
+);
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === "loading" && changeInfo.url) {
+    tabMediaMap.delete(tabId);
+    updateTabBadge(tabId);
+  }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  tabMediaMap.delete(tabId);
+});
+
 chrome.runtime.onInstalled.addListener(() => {
   refreshSettingsCache();
   chrome.contextMenus.create({
@@ -110,44 +271,75 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
 const ignoredDownloadIds = new Set();
 
-chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
-  if (ignoredDownloadIds.has(item.id)) {
-    return false;
-  }
+if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
+  chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+    if (ignoredDownloadIds.has(item.id)) {
+      return false;
+    }
 
-  if (!cachedSettings.interceptDownloads) {
-    return false;
-  }
+    if (!cachedSettings.interceptDownloads) {
+      return false;
+    }
 
-  const url = item.finalUrl || item.url;
-  if (!url || !url.startsWith("http")) {
-    return false;
-  }
+    const url = item.finalUrl || item.url;
+    if (!url || !url.startsWith("http")) {
+      return false;
+    }
 
-  ignoredDownloadIds.add(item.id);
-  chrome.downloads.pause(item.id, () => {
-    void chrome.runtime.lastError;
+    ignoredDownloadIds.add(item.id);
+    chrome.downloads.pause(item.id, () => {
+      void chrome.runtime.lastError;
+    });
+
+    (async () => {
+      const res = await sendDownloadToRdm(url, item.filename, item.referrer || null);
+      if (res.success) {
+        chrome.downloads.cancel(item.id, () => {
+          void chrome.runtime.lastError;
+          chrome.downloads.erase({ id: item.id }, () => {
+            void chrome.runtime.lastError;
+          });
+        });
+      } else {
+        chrome.downloads.resume(item.id, () => {
+          void chrome.runtime.lastError;
+          suggest();
+        });
+      }
+    })();
+
+    return true;
   });
-
-  (async () => {
-    const res = await sendDownloadToRdm(url, item.filename, item.referrer || null);
-    if (res.success) {
-      chrome.downloads.cancel(item.id, () => {
-        void chrome.runtime.lastError;
-        chrome.downloads.erase({ id: item.id }, () => {
+} else if (chrome.downloads && chrome.downloads.onCreated) {
+  chrome.downloads.onCreated.addListener((item) => {
+    if (ignoredDownloadIds.has(item.id) || !cachedSettings.interceptDownloads) {
+      return;
+    }
+    const url = item.finalUrl || item.url;
+    if (!url || !url.startsWith("http")) {
+      return;
+    }
+    ignoredDownloadIds.add(item.id);
+    chrome.downloads.pause(item.id, () => {
+      void chrome.runtime.lastError;
+    });
+    (async () => {
+      const res = await sendDownloadToRdm(url, item.filename, item.referrer || null);
+      if (res.success) {
+        chrome.downloads.cancel(item.id, () => {
+          void chrome.runtime.lastError;
+          chrome.downloads.erase({ id: item.id }, () => {
+            void chrome.runtime.lastError;
+          });
+        });
+      } else {
+        chrome.downloads.resume(item.id, () => {
           void chrome.runtime.lastError;
         });
-      });
-    } else {
-      chrome.downloads.resume(item.id, () => {
-        void chrome.runtime.lastError;
-        suggest();
-      });
-    }
-  })();
-
-  return true;
-});
+      }
+    })();
+  });
+}
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "CHECK_STATUS") {
@@ -164,6 +356,31 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       cachedSettings = { ...cachedSettings, ...message.settings };
       await chrome.storage.local.set(message.settings);
       sendResponse({ success: true });
+    })();
+    return true;
+  }
+
+  if (message.type === "GET_TAB_MEDIA") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs && tabs[0];
+      if (!activeTab || activeTab.id === undefined) {
+        sendResponse({ media: [], tabUrl: null });
+        return;
+      }
+      const media = tabMediaMap.get(activeTab.id) || [];
+      sendResponse({ media, tabUrl: activeTab.url || null });
+    });
+    return true;
+  }
+
+  if (message.type === "DOWNLOAD_MEDIA") {
+    (async () => {
+      const res = await sendDownloadToRdm(
+        message.url,
+        message.filename,
+        message.referer
+      );
+      sendResponse(res);
     })();
     return true;
   }

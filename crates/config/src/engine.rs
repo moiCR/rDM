@@ -5,6 +5,10 @@ fn default_connections() -> usize {
     8
 }
 
+fn default_max_concurrent_downloads() -> usize {
+    3
+}
+
 fn default_download_dir() -> PathBuf {
     dirs::download_dir().unwrap_or_else(|| PathBuf::from("."))
 }
@@ -36,6 +40,8 @@ fn default_server_port() -> u16 {
 pub struct EngineConfig {
     #[serde(default = "default_connections")]
     pub default_connections: usize,
+    #[serde(default = "default_max_concurrent_downloads")]
+    pub max_concurrent_downloads: usize,
     #[serde(default = "default_download_dir")]
     pub download_dir: PathBuf,
     #[serde(default = "default_state_dir")]
@@ -58,6 +64,7 @@ impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             default_connections: default_connections(),
+            max_concurrent_downloads: default_max_concurrent_downloads(),
             download_dir: default_download_dir(),
             state_dir: default_state_dir(),
             user_agent: get_user_agent(),
@@ -79,6 +86,7 @@ impl EngineConfig {
     ) -> Self {
         Self {
             default_connections: default_connections.clamp(1, 32),
+            max_concurrent_downloads: default_max_concurrent_downloads(),
             download_dir,
             state_dir,
             user_agent,
@@ -102,6 +110,11 @@ impl EngineConfig {
 
     pub fn with_default_connections(mut self, connections: usize) -> Self {
         self.default_connections = connections.clamp(1, 32);
+        self
+    }
+
+    pub fn with_max_concurrent_downloads(mut self, max_concurrent_downloads: usize) -> Self {
+        self.max_concurrent_downloads = max_concurrent_downloads.clamp(1, 16);
         self
     }
 
