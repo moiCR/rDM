@@ -1,53 +1,29 @@
-use std::{cell::Cell, f32::consts::TAU, rc::Rc, time::Duration};
+use std::{f32::consts::TAU, time::Duration};
 
 use gpui::{prelude::FluentBuilder as _, *};
-use gpui_kit::{
-    base::{
-        Button as BaseButton, ElementExt as _, Table, TableBody, TableCell, TableHead, TableHeader,
-        TableRow,
-    },
-    component::{
-        Icon, Sizable, Size as KitSize,
-        button::{Button, ButtonCustomVariant, ButtonVariants},
-        popover::{Popover, PopoverState},
-        scroll::ScrollableElement,
-    },
-};
+use gpui_kit::component::button::ButtonRounded;
 use rdm_core::task::TaskStatus;
+use uuid::Uuid;
 
 use crate::{
-    components::{ActionTooltip, ProgressBar},
+    components::{ActionTooltip, IconButton, Modal, PillButton, ProgressBar},
     state::{CoreContext, QuickDownloadState, TaskSnapshot, TasksModel},
     theme::ActiveTheme,
 };
 
-const HEADER_HEIGHT: Pixels = px(40.0);
-const ROW_HEIGHT: Pixels = px(48.0);
-const ACTIONS_WIDTH: Pixels = px(40.0);
-const COLUMN_COUNT: usize = DownloadColumn::ALL.len();
-
-#[derive(Clone, Default)]
-struct DownloadColumns {
-    widths: Option<[Pixels; COLUMN_COUNT]>,
-    measured: Rc<Cell<[Pixels; COLUMN_COUNT]>>,
-    horizontal_scroll: ScrollHandle,
+#[derive(Default, Clone)]
+pub struct DeleteDownloadModalState {
+    pub open: bool,
+    pub task_id: Option<Uuid>,
+    pub file_name: String,
+    pub delete_file: bool,
 }
 
-#[derive(Clone, Copy)]
-struct RowLayout {
-    widths: [Pixels; COLUMN_COUNT],
-    minimum_width: Pixels,
-    offset: Pixels,
-}
-
-struct ColumnResize {
-    table_id: EntityId,
-    index: usize,
-    start: Cell<Option<(Pixels, [Pixels; COLUMN_COUNT])>>,
-}
+impl Global for DeleteDownloadModalState {}
 
 #[derive(Clone, Copy)]
 struct ViewPalette {
+    background: Rgba,
     surface: Rgba,
     surface_hover: Rgba,
     border: Rgba,
@@ -63,6 +39,7 @@ impl ViewPalette {
     fn from_theme(cx: &App) -> Self {
         let theme = cx.theme();
         Self {
+            background: theme.background(),
             surface: theme.surface(),
             surface_hover: theme.surface_hover(),
             border: theme.border(),
@@ -78,10 +55,10 @@ impl ViewPalette {
     fn status(self, status: &TaskStatus) -> (&'static str, Rgba) {
         match status {
             TaskStatus::Downloading => ("Descargando", self.downloading),
-            TaskStatus::Connecting => ("Conectando", self.downloading),
-            TaskStatus::Paused => ("En pausa", self.paused),
-            TaskStatus::Completed => ("Completada", self.completed),
+            TaskStatus::Paused => ("Pausado", self.paused),
+            TaskStatus::Completed => ("Completado", self.completed),
             TaskStatus::Failed(_) => ("Error", self.error),
+            TaskStatus::Connecting => ("Conectando", self.downloading),
             TaskStatus::Pending => ("En cola", self.text_muted),
             TaskStatus::Cancelled => ("Cancelado", self.text_muted),
         }
@@ -101,23 +78,34 @@ fn format_bytes(bytes: u64) -> String {
     } else if b >= KB {
         format!("{:.0} KB", b / KB)
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     }
 }
 
-fn format_speed(bytes_per_sec: u64) -> SharedString {
-    if bytes_per_sec == 0 {
-        "—".into()
+fn truncate_file_name(name: &str, max_chars: usize) -> String {
+    let char_count = name.chars().count();
+    if char_count <= max_chars {
+        name.to_string()
     } else {
-        format!("{}/s", format_bytes(bytes_per_sec)).into()
+        let keep = max_chars.saturating_sub(3);
+        let prefix: String = name.chars().take(keep).collect();
+        format!("{prefix}...")
+    }
+}
+
+fn task_progress_percent(task: &TaskSnapshot) -> f32 {
+    match (task.total_size, &task.status) {
+        (_, TaskStatus::Completed) => 100.0,
+        (0, _) => 0.0,
+        _ => (task.progress.clamp(0.0, 1.0) * 100.0) as f32,
     }
 }
 
 fn format_remaining(task: &TaskSnapshot) -> SharedString {
     let remaining = task.total_size.saturating_sub(task.downloaded_bytes);
     let speed = task.speed_bytes_per_sec;
-    if task.status != TaskStatus::Downloading || remaining == 0 || speed == 0 {
-        return "—".into();
+    if remaining == 0 || speed == 0 {
+        return "Calculando...".into();
     }
 
     let seconds = remaining.div_ceil(speed);
@@ -146,23 +134,18 @@ impl Default for DownloadsView {
 }
 
 impl RenderOnce for DownloadsView {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let background = cx.theme().background();
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let palette = ViewPalette::from_theme(cx);
         let tasks_model = cx.tasks_model().clone();
-        let task_count = tasks_model.read(cx).tasks().len();
-        let is_empty = task_count == 0;
-        let columns = window.use_keyed_state("downloads-column-widths", cx, |_, _| {
-            DownloadColumns::default()
-        });
-        let layout = columns.read(cx).clone();
+        let tasks = tasks_model.read(cx).tasks().to_vec();
+        let is_empty = tasks.is_empty();
         let transition = SpringAnimation::new(SpringConfig::new(300.0, 34.0, 1.0)).to(!is_empty);
 
         div()
             .flex()
             .flex_col()
             .size_full()
-            .bg(background)
+            .bg(palette.background)
             .text_color(palette.text_color)
             .p_5()
             .child(
@@ -178,35 +161,37 @@ impl RenderOnce for DownloadsView {
                     .border_1()
                     .border_color(palette.border)
                     .overflow_hidden()
+                    .child(Self::render_glow(palette.surface))
                     .with_spring("downloads-panel-state", transition, move |panel, phase| {
-                        let table_opacity = phase.interpolate_clamped(0.0, 1.0);
+                        let grid_opacity = phase.interpolate_clamped(0.0, 1.0);
+
                         panel
                             .when(!is_empty, |panel| {
                                 panel.child(
                                     div()
+                                        .id("downloads-cards-scroll")
                                         .size_full()
-                                        .relative()
-                                        .opacity(table_opacity)
+                                        .overflow_y_scroll()
+                                        .p_5()
+                                        .opacity(grid_opacity)
                                         .child(
                                             div()
-                                                .absolute()
-                                                .top_0()
-                                                .left_0()
-                                                .right_0()
-                                                .h(HEADER_HEIGHT)
-                                                .rounded_t(px(15.0))
-                                                .bg(palette.surface_hover),
-                                        )
-                                        .child(
-                                            DownloadsTable { tasks_model }
-                                                .render(task_count, palette, columns, layout),
+                                                .w_full()
+                                                .flex()
+                                                .flex_wrap()
+                                                .content_start()
+                                                .items_start()
+                                                .gap_4()
+                                                .children(tasks.iter().map(|task| {
+                                                    Self::render_card(task, &tasks_model, palette)
+                                                })),
                                         ),
                                 )
                             })
-                            .when(is_empty || table_opacity < 0.99, |panel| {
+                            .when(is_empty || grid_opacity < 0.99, |panel| {
                                 panel.child(
                                     Self::render_empty(palette, is_empty)
-                                        .opacity(1.0 - table_opacity),
+                                        .opacity(1.0 - grid_opacity),
                                 )
                             })
                     }),
@@ -215,6 +200,187 @@ impl RenderOnce for DownloadsView {
 }
 
 impl DownloadsView {
+    fn render_card(
+        task: &TaskSnapshot,
+        tasks_model: &Entity<TasksModel>,
+        palette: ViewPalette,
+    ) -> impl IntoElement {
+        let task_id = task.id;
+        let task_key = task_id.as_u64_pair().0;
+        let display_name = truncate_file_name(&task.file_name, 32);
+        let size_text = if task.total_size > 0 {
+            format_bytes(task.total_size)
+        } else {
+            format_bytes(task.downloaded_bytes)
+        };
+        let header_line = format!("{display_name}  •  {size_text}");
+        let (status_label, status_color) = palette.status(&task.status);
+        let percent = task_progress_percent(task);
+        let percent_text = format!("{}%", percent as u32);
+        let (bottom_left_text, bottom_left_color): (SharedString, Rgba) =
+            if task.status == TaskStatus::Downloading {
+                (format_remaining(task), palette.text_muted)
+            } else {
+                (status_label.into(), status_color)
+            };
+        let url_str = task.url.clone();
+        let url_for_copy = task.url.clone();
+        let file_name_for_modal = task.file_name.clone();
+
+        let toggle_action = match task.status {
+            TaskStatus::Downloading | TaskStatus::Connecting => {
+                Some((true, "icons/pause.svg", "Pausar descarga"))
+            }
+            TaskStatus::Paused | TaskStatus::Pending | TaskStatus::Failed(_) => {
+                Some((false, "icons/resume.svg", "Reanudar descarga"))
+            }
+            _ => None,
+        };
+
+        div()
+            .id(("download-card", task_key))
+            .w(px(296.0))
+            .p_4()
+            .rounded(px(24.0))
+            .bg(linear_gradient(
+                180.0,
+                linear_color_stop(palette.surface_hover, 0.0),
+                linear_color_stop(palette.surface, 1.0),
+            ))
+            .border_1()
+            .border_color(palette.border)
+            .shadow_md()
+            .flex()
+            .flex_col()
+            .justify_between()
+            .gap_3p5()
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .w_full()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(palette.text_color)
+                            .truncate()
+                            .child(header_line),
+                    )
+                    .child(
+                        div()
+                            .id(("download-card-url", task_key))
+                            .w_full()
+                            .text_xs()
+                            .text_color(palette.text_muted)
+                            .truncate()
+                            .cursor_pointer()
+                            .hover(move |s| s.text_color(palette.text_color).underline())
+                            .tooltip(|_, cx| {
+                                cx.new(|_| ActionTooltip::new("Clic para copiar URL"))
+                                    .into()
+                            })
+                            .on_click(move |_event, _window, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    url_for_copy.clone(),
+                                ));
+                            })
+                            .child(url_str),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .pt_1()
+                            .flex()
+                            .items_center()
+                            .gap_2p5()
+                            .child(
+                                div().flex_1().child(
+                                    ProgressBar::new(("download-card-progress", task_key), percent)
+                                        .height(px(4.0))
+                                        .color(status_color)
+                                        .track_color(palette.background),
+                                ),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(palette.text_muted)
+                                    .child(percent_text),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(bottom_left_color)
+                            .truncate()
+                            .child(bottom_left_text),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .children(toggle_action.map(|(is_pause, icon_path, tooltip_text)| {
+                                let model = tasks_model.clone();
+                                IconButton::new(("download-card-toggle", task_key), icon_path)
+                                    .size(px(30.0))
+                                    .icon_size(px(14.0))
+                                    .rounded(ButtonRounded::Size(px(99.0)))
+                                    .color(palette.text_muted)
+                                    .hover_bg(palette.surface_hover)
+                                    .tooltip(tooltip_text)
+                                    .on_click(move |_event, _window, cx| {
+                                        model.update(cx, |m, cx| {
+                                            if is_pause {
+                                                m.pause_task(task_id, cx);
+                                            } else {
+                                                m.resume_task(task_id, cx);
+                                            }
+                                        });
+                                    })
+                            }))
+                            .child(
+                                IconButton::new(
+                                    ("download-card-delete", task_key),
+                                    "icons/trash.svg",
+                                )
+                                .size(px(30.0))
+                                .icon_size(px(14.0))
+                                .rounded(ButtonRounded::Size(px(99.0)))
+                                .color(palette.error)
+                                .hover_bg(palette.error.opacity(0.14))
+                                .tooltip("Eliminar descarga")
+                                .on_click(
+                                    move |_event, window, cx| {
+                                        cx.set_global(DeleteDownloadModalState {
+                                            open: true,
+                                            task_id: Some(task_id),
+                                            file_name: file_name_for_modal.clone(),
+                                            delete_file: false,
+                                        });
+                                        window.refresh();
+                                    },
+                                ),
+                            ),
+                    ),
+            )
+    }
+
     fn render_empty(palette: ViewPalette, interactive: bool) -> Div {
         div()
             .absolute()
@@ -223,7 +389,6 @@ impl DownloadsView {
             .flex_col()
             .justify_center()
             .items_center()
-            .child(Self::render_glow(palette.surface))
             .child(
                 div()
                     .text_base()
@@ -314,532 +479,165 @@ impl DownloadsView {
     }
 }
 
-#[derive(Clone, Copy)]
-enum DownloadColumn {
-    File,
-    Size,
-    Progress,
-    Remaining,
-    Network,
-    Written,
-    Status,
-}
+#[derive(IntoElement)]
+pub struct DeleteDownloadModal;
 
-impl DownloadColumn {
-    const ALL: [Self; 7] = [
-        Self::File,
-        Self::Size,
-        Self::Progress,
-        Self::Remaining,
-        Self::Network,
-        Self::Written,
-        Self::Status,
-    ];
-
-    fn layout(self) -> (&'static str, Pixels, f32) {
-        match self {
-            Self::File => ("Archivo", px(166.0), 4.0),
-            Self::Size => ("Tamaño", px(84.0), 1.0),
-            Self::Progress => ("Progreso", px(100.0), 2.0),
-            Self::Remaining => ("Restante", px(85.0), 1.0),
-            Self::Network => ("Red", px(100.0), 1.0),
-            Self::Written => ("Escrito", px(86.0), 1.0),
-            Self::Status => ("Estado", px(110.0), 1.0),
-        }
-    }
-
-    fn minimum_width(self) -> Pixels {
-        px(match self {
-            Self::File => 96.0,
-            Self::Size => 76.0,
-            Self::Progress => 80.0,
-            Self::Remaining => 82.0,
-            Self::Network => 96.0,
-            Self::Written => 82.0,
-            Self::Status => 106.0,
-        })
-    }
-
-    fn progress(task: &TaskSnapshot) -> Option<f32> {
-        match (task.total_size, &task.status) {
-            (_, TaskStatus::Completed) => Some(100.0),
-            (0, _) => None,
-            _ => Some((task.progress.clamp(0.0, 1.0) * 100.0) as f32),
-        }
-    }
-
-    fn label(self, task: &TaskSnapshot, palette: ViewPalette) -> SharedString {
-        match self {
-            Self::File => task.file_name.clone().into(),
-            Self::Size if task.total_size > 0 => format_bytes(task.total_size).into(),
-            Self::Size => "—".into(),
-            Self::Progress => Self::progress(task).map_or_else(
-                || "—".into(),
-                |percent| format!("{}%", percent as u32).into(),
-            ),
-            Self::Remaining => format_remaining(task),
-            Self::Network if task.status == TaskStatus::Downloading => {
-                format_speed(task.speed_bytes_per_sec)
-            }
-            Self::Network => "—".into(),
-            Self::Written => format_bytes(task.downloaded_bytes).into(),
-            Self::Status => palette.status(&task.status).0.into(),
-        }
-    }
-
-    fn numeric(self) -> bool {
-        matches!(
-            self,
-            Self::Size | Self::Remaining | Self::Network | Self::Written
-        )
+impl DeleteDownloadModal {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-struct DownloadsTable {
-    tasks_model: Entity<TasksModel>,
+impl Default for DeleteDownloadModal {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-impl DownloadsTable {
-    fn render(
-        self,
-        task_count: usize,
-        palette: ViewPalette,
-        columns: Entity<DownloadColumns>,
-        layout: DownloadColumns,
-    ) -> impl IntoElement {
-        let widths = layout
-            .widths
-            .unwrap_or_else(|| DownloadColumn::ALL.map(|column| column.layout().1));
-        let minimum_width: Pixels = DownloadColumn::ALL
-            .into_iter()
-            .map(DownloadColumn::minimum_width)
-            .sum();
+impl RenderOnce for DeleteDownloadModal {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let modal_state = cx
+            .try_global::<DeleteDownloadModalState>()
+            .cloned()
+            .unwrap_or_default();
 
-        let horizontal_scroll = layout.horizontal_scroll;
-        let header = Self::render_header(
-            palette,
-            columns,
-            widths,
-            minimum_width,
-            layout.measured,
-            &horizontal_scroll,
-        );
-        let row_scroll = horizontal_scroll.clone();
-        let rows = uniform_list("download-table-rows", task_count, move |range, _, cx| {
-            let tasks = self.tasks_model.read(cx).tasks();
-            let row_layout = RowLayout {
-                widths,
-                minimum_width,
-                offset: row_scroll.offset().x,
-            };
-            range
-                .filter_map(|index| {
-                    tasks
-                        .get(index)
-                        .map(|task| self.render_row(task, index, palette, row_layout, cx))
-                })
-                .collect()
-        })
-        .size_full()
-        .min_h_0()
-        .flex_1();
+        let is_open = modal_state.open && modal_state.task_id.is_some();
+        let task_id = modal_state.task_id;
+        let file_name = modal_state.file_name.clone();
+        let delete_file = modal_state.delete_file;
 
-        let body_scroll = horizontal_scroll.clone();
+        let palette = ViewPalette::from_theme(cx);
+        let toggle_file_name = modal_state.file_name.clone();
+
         div()
-            .relative()
+            .id("delete-download-modal-root")
+            .absolute()
+            .inset_0()
             .size_full()
             .child(
-                Table::new("download-table")
-                    .accessibility_label("Descargas")
-                    .row_count(task_count + 1)
-                    .column_count(COLUMN_COUNT + 1)
-                    .size_full()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(header)
+                Modal::new("delete-download-modal")
+                    .open(is_open)
+                    .width(px(520.0))
+                    .max_height(px(320.0))
+                    .title("Eliminar descarga")
+                    .on_close(move |window, cx| {
+                        cx.set_global(DeleteDownloadModalState {
+                            open: false,
+                            task_id: None,
+                            file_name: String::new(),
+                            delete_file: false,
+                        });
+                        window.refresh();
+                    })
+                    .footer(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap_2p5()
+                            .pt_2()
+                            .child(
+                                PillButton::new("btn-cancel-delete-download", "Cancelar")
+                                    .selected(false)
+                                    .on_click(move |_event, window, cx| {
+                                        cx.set_global(DeleteDownloadModalState {
+                                            open: false,
+                                            task_id: None,
+                                            file_name: String::new(),
+                                            delete_file: false,
+                                        });
+                                        window.refresh();
+                                    }),
+                            )
+                            .child(
+                                PillButton::new("btn-confirm-delete-download", "Eliminar")
+                                    .selected(true)
+                                    .on_click(move |_event, window, cx| {
+                                        if let Some(id) = task_id {
+                                            let model = cx.tasks_model().clone();
+                                            model.update(cx, |m, cx| {
+                                                m.delete_task(id, delete_file, cx);
+                                            });
+                                        }
+                                        cx.set_global(DeleteDownloadModalState {
+                                            open: false,
+                                            task_id: None,
+                                            file_name: String::new(),
+                                            delete_file: false,
+                                        });
+                                        window.refresh();
+                                    }),
+                            ),
+                    )
                     .child(
-                        TableBody::new("download-table-body")
-                            .w_full()
-                            .flex_1()
-                            .min_h_0()
-                            .pb_4()
-                            .on_scroll(move |event, window, cx| {
-                                let delta = event.delta.pixel_delta(ROW_HEIGHT).x;
-                                if delta == px(0.0) {
-                                    return;
-                                }
-                                let mut offset = body_scroll.offset();
-                                let next =
-                                    (offset.x + delta).clamp(-body_scroll.max_offset().x, px(0.0));
-                                if next != offset.x {
-                                    offset.x = next;
-                                    body_scroll.set_offset(offset);
-                                    cx.stop_propagation();
-                                    window.refresh();
-                                }
-                            })
-                            .child(rows),
-                    ),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .right(ACTIONS_WIDTH)
-                    .h_4()
-                    .horizontal_scrollbar(&horizontal_scroll),
-            )
-    }
-
-    fn render_header(
-        palette: ViewPalette,
-        columns: Entity<DownloadColumns>,
-        widths: [Pixels; COLUMN_COUNT],
-        minimum_width: Pixels,
-        measured: Rc<Cell<[Pixels; COLUMN_COUNT]>>,
-        horizontal_scroll: &ScrollHandle,
-    ) -> TableHeader {
-        let table_id = columns.entity_id();
-        let row = TableRow::new("download-table-heading-row", 1)
-            .flex()
-            .w_full()
-            .h(HEADER_HEIGHT)
-            .border_b_1()
-            .border_color(palette.border)
-            .on_drag_move(move |event: &DragMoveEvent<ColumnResize>, _, cx| {
-                let drag = event.drag(cx);
-                if drag.table_id != table_id {
-                    return;
-                }
-                let Some((start_x, mut widths)) = drag.start.get() else {
-                    return;
-                };
-                let index = drag.index;
-                let next = index + 1;
-                let total = widths[index] + widths[next];
-                let minimum = DownloadColumn::ALL[index].minimum_width();
-                let maximum = (total - DownloadColumn::ALL[next].minimum_width()).max(minimum);
-                widths[index] =
-                    (widths[index] + event.event.position.x - start_x).clamp(minimum, maximum);
-                widths[next] = total - widths[index];
-                columns.update(cx, |state, cx| {
-                    if state.widths != Some(widths) {
-                        state.widths = Some(widths);
-                        cx.notify();
-                    }
-                });
-            });
-        let data = DownloadColumn::ALL.into_iter().enumerate().fold(
-            div().flex().h_full().w_full().min_w(minimum_width),
-            |data, (index, column)| {
-                let (label, _, _) = column.layout();
-                let measured = measured.clone();
-                let measurements = measured.clone();
-                let cell = TableHead::new(("download-header", index), index + 1)
-                    .relative()
-                    .h_full()
-                    .px_3()
-                    .flex()
-                    .items_center()
-                    .when(column.numeric(), |cell| cell.justify_end())
-                    .text_xs()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(palette.text_muted)
-                    .aria_label(label)
-                    .when(matches!(column, DownloadColumn::Network), |cell| {
-                        cell.tooltip(|_, cx| {
-                            cx.new(|_| ActionTooltip::new("Velocidad efectiva de descarga"))
-                                .into()
-                        })
-                    })
-                    .on_prepaint(move |bounds, _, _| {
-                        let mut widths = measured.get();
-                        widths[index] = bounds.size.width;
-                        measured.set(widths);
-                    })
-                    .child(div().truncate().child(label))
-                    .when(index + 1 < COLUMN_COUNT, |cell| {
-                        cell.child(
+                        div().flex().flex_col().gap_5().child(
                             div()
-                                .id(("download-column-resize", index))
-                                .absolute()
-                                .right_0()
-                                .top_0()
-                                .h_full()
-                                .w_2()
+                                .id("checkbox-delete-file-from-disk")
                                 .flex()
                                 .items_center()
-                                .justify_end()
-                                .occlude()
-                                .cursor_col_resize()
-                                .on_drag(
-                                    ColumnResize {
-                                        table_id,
-                                        index,
-                                        start: Cell::new(None),
-                                    },
-                                    move |drag, _, window, cx| {
-                                        drag.start.set(Some((
-                                            window.mouse_position().x,
-                                            measurements.get(),
-                                        )));
-                                        cx.stop_propagation();
-                                        cx.new(|_| Empty)
-                                    },
+                                .justify_between()
+                                .gap_6()
+                                .py_2()
+                                .cursor_pointer()
+                                .on_click(move |_event, window, cx| {
+                                    cx.set_global(DeleteDownloadModalState {
+                                        open: true,
+                                        task_id,
+                                        file_name: toggle_file_name.clone(),
+                                        delete_file: !delete_file,
+                                    });
+                                    window.refresh();
+                                })
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1p5()
+                                        .child(
+                                            div()
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_size(px(14.0))
+                                                .text_color(palette.text_color)
+                                                .truncate()
+                                                .child(file_name),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(palette.text_muted)
+                                                .child("Eliminar también el archivo del disco."),
+                                        ),
                                 )
-                                .child(div().h_4().w_px().bg(palette.border)),
-                        )
-                    });
-                data.child(Self::style_column(cell, column, widths[index]))
-            },
-        );
-
-        TableHeader::new("download-table-header")
-            .flex_shrink_0()
-            .child(
-                row.child(
-                    div()
-                        .id("download-horizontal-scroll")
-                        .flex_1()
-                        .min_w_0()
-                        .h_full()
-                        .overflow_x_scroll()
-                        .track_scroll(horizontal_scroll)
-                        .child(data),
-                )
-                .child(
-                    TableHead::new("download-actions-header", COLUMN_COUNT + 1)
-                        .w(ACTIONS_WIDTH)
-                        .flex_shrink_0()
-                        .aria_label("Acciones"),
-                ),
+                                .child(
+                                    div()
+                                        .size(px(18.0))
+                                        .rounded(px(5.0))
+                                        .border_1()
+                                        .border_color(if delete_file {
+                                            palette.text_color
+                                        } else {
+                                            palette.border
+                                        })
+                                        .bg(if delete_file {
+                                            palette.surface_hover
+                                        } else {
+                                            palette.background
+                                        })
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .flex_shrink_0()
+                                        .children(delete_file.then(|| {
+                                            div()
+                                                .size(px(8.0))
+                                                .rounded(px(2.0))
+                                                .bg(palette.text_color)
+                                        })),
+                                ),
+                        ),
+                    ),
             )
-    }
-
-    fn style_column<T: Styled>(cell: T, column: DownloadColumn, width: Pixels) -> T {
-        cell.flex_basis(width)
-            .min_w(column.minimum_width())
-            .flex_shrink_1()
-            .flex_grow(column.layout().2)
-    }
-
-    fn render_row(
-        &self,
-        task: &TaskSnapshot,
-        index: usize,
-        palette: ViewPalette,
-        layout: RowLayout,
-        cx: &App,
-    ) -> TableRow {
-        let row = TableRow::new(task.id, index + 2)
-            .flex()
-            .w_full()
-            .h(ROW_HEIGHT)
-            .border_b_1()
-            .border_color(palette.border)
-            .hover(move |row| row.bg(palette.surface_hover));
-        let data = DownloadColumn::ALL.into_iter().enumerate().fold(
-            div()
-                .relative()
-                .left(layout.offset)
-                .flex()
-                .h_full()
-                .w_full()
-                .min_w(layout.minimum_width),
-            |data, (index, column)| {
-                let label = column.label(task, palette);
-                let cell = TableCell::new(("download-cell", index), index + 1)
-                    .h_full()
-                    .px_3()
-                    .flex()
-                    .flex_col()
-                    .justify_center()
-                    .aria_label(label.clone())
-                    .text_xs()
-                    .text_color(palette.text_muted)
-                    .when(column.numeric(), |cell| cell.text_right());
-                let cell = Self::style_column(cell, column, layout.widths[index]);
-                let text = div().truncate().child(label);
-                let cell = match column {
-                    DownloadColumn::File => cell
-                        .text_color(palette.text_color)
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(text),
-                    DownloadColumn::Progress => {
-                        cell.gap_1()
-                            .child(text)
-                            .children(DownloadColumn::progress(task).map(|percent| {
-                                ProgressBar::new(task.id, percent)
-                                    .height(px(4.0))
-                                    .color(palette.status(&task.status).1)
-                                    .track_color(palette.surface_hover)
-                            }))
-                    }
-                    DownloadColumn::Remaining => cell.text_color(palette.text_color).child(text),
-                    DownloadColumn::Status => {
-                        cell.text_color(palette.status(&task.status).1).child(text)
-                    }
-                    _ => cell.child(text),
-                };
-                data.child(cell)
-            },
-        );
-
-        row.child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .h_full()
-                .overflow_hidden()
-                .child(data),
-        )
-        .child(
-            TableCell::new("download-row-actions", COLUMN_COUNT + 1)
-                .w(ACTIONS_WIDTH)
-                .h_full()
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(self.render_actions(task.id, palette, cx)),
-        )
-    }
-    fn render_actions(&self, task_id: uuid::Uuid, palette: ViewPalette, cx: &App) -> Popover {
-        let tasks_model = self.tasks_model.clone();
-        let trigger_style = ButtonCustomVariant::new(cx)
-            .foreground(palette.text_color.into())
-            .hover(palette.surface_hover.into())
-            .active(palette.border.into());
-
-        Popover::new(task_id)
-            .anchor(Anchor::TopRight)
-            .bg(palette.surface)
-            .border_color(palette.border)
-            .text_color(palette.text_color)
-            .rounded(px(10.0))
-            .p_1p5()
-            .w(px(212.0))
-            .trigger(
-                Button::new("download-actions-trigger")
-                    .custom(trigger_style)
-                    .with_size(KitSize::Size(px(28.0)))
-                    .icon(Icon::default().path("icons/ellipsis.svg"))
-                    .accessibility_label("Acciones de descarga"),
-            )
-            .content(move |_, _, cx| {
-                let menu = div().flex().flex_col();
-                let Some(task) = tasks_model
-                    .read(cx)
-                    .tasks()
-                    .iter()
-                    .find(|task| task.id == task_id)
-                else {
-                    return menu;
-                };
-                let control = match task.status {
-                    TaskStatus::Downloading | TaskStatus::Connecting => Some(DownloadAction::Pause),
-                    TaskStatus::Paused | TaskStatus::Failed(_) | TaskStatus::Pending => {
-                        Some(DownloadAction::Resume)
-                    }
-                    _ => None,
-                };
-                let popover = cx.entity().downgrade();
-                let item = |action: DownloadAction| {
-                    let tasks_model = tasks_model.clone();
-                    let popover = popover.clone();
-                    let (label, icon) = action.presentation();
-                    BaseButton::new(label)
-                        .accessibility_label(label)
-                        .w_full()
-                        .h_8()
-                        .px_2p5()
-                        .gap_2()
-                        .justify_start()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .text_size(px(13.0))
-                        .line_height(px(18.0))
-                        .hover(move |row| row.bg(palette.surface_hover))
-                        .active(move |row| row.bg(palette.border))
-                        .child(
-                            svg()
-                                .path(icon)
-                                .size(px(14.0))
-                                .flex_shrink_0()
-                                .text_color(palette.text_muted),
-                        )
-                        .child(label)
-                        .on_click(move |_, window, cx| {
-                            let _ = popover.update(cx, |state: &mut PopoverState, cx| {
-                                state.dismiss(window, cx);
-                            });
-                            action.run(task_id, &tasks_model, cx);
-                        })
-                };
-
-                menu.children(control.map(item))
-                    .child(item(DownloadAction::OpenFolder))
-                    .child(item(DownloadAction::CopyLink))
-                    .child(div().h_px().mx_2p5().my_1().bg(palette.border))
-                    .child(item(DownloadAction::RemoveFromList))
-                    .child(item(DownloadAction::RemoveFile))
-            })
-    }
-}
-
-#[derive(Clone, Copy)]
-enum DownloadAction {
-    Pause,
-    Resume,
-    OpenFolder,
-    CopyLink,
-    RemoveFromList,
-    RemoveFile,
-}
-
-impl DownloadAction {
-    fn presentation(self) -> (&'static str, &'static str) {
-        match self {
-            Self::Pause => ("Pausar descarga", "icons/pause.svg"),
-            Self::Resume => ("Reanudar descarga", "icons/resume.svg"),
-            Self::OpenFolder => ("Abrir carpeta", "icons/folder-open.svg"),
-            Self::CopyLink => ("Copiar enlace", "icons/copy.svg"),
-            Self::RemoveFromList => ("Eliminar de la lista", "icons/x.svg"),
-            Self::RemoveFile => ("Eliminar archivo", "icons/trash.svg"),
-        }
-    }
-
-    fn run(self, id: uuid::Uuid, tasks_model: &Entity<TasksModel>, cx: &mut App) {
-        match self {
-            Self::Pause => tasks_model.update(cx, |model, cx| model.pause_task(id, cx)),
-            Self::Resume => tasks_model.update(cx, |model, cx| model.resume_task(id, cx)),
-            Self::RemoveFromList | Self::RemoveFile => tasks_model.update(cx, |model, cx| {
-                model.delete_task(id, matches!(self, Self::RemoveFile), cx);
-            }),
-            Self::OpenFolder | Self::CopyLink => {
-                let Some(task) = tasks_model
-                    .read(cx)
-                    .tasks()
-                    .iter()
-                    .find(|task| task.id == id)
-                else {
-                    return;
-                };
-                match self {
-                    Self::OpenFolder => {
-                        let selection = format!("/select,{}", task.output_path.display());
-                        let _ = std::process::Command::new("explorer.exe")
-                            .arg(selection)
-                            .spawn();
-                    }
-                    Self::CopyLink => {
-                        cx.write_to_clipboard(ClipboardItem::new_string(task.url.clone()))
-                    }
-                    _ => {}
-                }
-            }
-        }
     }
 }

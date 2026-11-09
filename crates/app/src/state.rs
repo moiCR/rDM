@@ -11,6 +11,8 @@ use rdm_core::{
 };
 use uuid::Uuid;
 
+use crate::views::NewDownloadModalState;
+
 #[derive(Default, Clone, Copy)]
 pub struct QuickDownloadState {
     pub expanded: bool,
@@ -52,6 +54,35 @@ impl TasksModel {
             previous_bytes: Vec::new(),
             last_sample_at: Instant::now(),
         };
+
+        let mut intercept_rx = core.subscribe_intercepted();
+        cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
+            loop {
+                match intercept_rx.recv().await {
+                    Ok(intercepted) => {
+                        let res = entity.update(cx, |_, cx| {
+                            cx.set_global(NewDownloadModalState {
+                                open: true,
+                                pending: Some(intercepted),
+                            });
+                            cx.activate(true);
+                            for window in cx.windows() {
+                                let _ = window.update(cx, |_, window, _| {
+                                    window.activate_window();
+                                    window.refresh();
+                                });
+                            }
+                        });
+                        if res.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        })
+        .detach();
 
         cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
             let core_init = Arc::clone(&core);
@@ -190,6 +221,17 @@ impl TasksModel {
         output_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
+        self.start_configured_download(url, output_path, None, None, cx);
+    }
+
+    pub fn start_configured_download(
+        &self,
+        url: String,
+        output_path: Option<PathBuf>,
+        connections: Option<usize>,
+        referer: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         let core = Arc::clone(&self.core);
         let runtime = Arc::clone(&self.runtime);
         cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -198,7 +240,7 @@ impl TasksModel {
                 .spawn(async move {
                     if let Ok(task) = core_task
                         .engine()
-                        .create_task(&url, output_path, None, None)
+                        .create_task(&url, output_path, connections, referer)
                         .await
                     {
                         let _ = core_task.engine().start_task(task.id).await;

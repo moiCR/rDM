@@ -12,7 +12,7 @@ use crate::{
     },
     state::{CoreContext, QuickDownloadState},
     theme::ActiveTheme,
-    views::SettingsModal,
+    views::{DeleteDownloadModal, NewDownloadModal, SettingsModal},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -158,6 +158,8 @@ impl Layout for AppLayout {
             )
             .children(dock.then_some(Dock))
             .child(SettingsModal::new())
+            .child(NewDownloadModal::new())
+            .child(DeleteDownloadModal::new())
             .into_any_element()
     }
 }

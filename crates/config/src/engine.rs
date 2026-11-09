@@ -23,6 +23,14 @@ fn default_theme() -> String {
     "dark".to_string()
 }
 
+fn default_server_enabled() -> bool {
+    true
+}
+
+fn default_server_port() -> u16 {
+    9654
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct EngineConfig {
@@ -40,6 +48,10 @@ pub struct EngineConfig {
     pub max_retries: usize,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default = "default_server_enabled")]
+    pub server_enabled: bool,
+    #[serde(default = "default_server_port")]
+    pub server_port: u16,
 }
 
 impl Default for EngineConfig {
@@ -52,6 +64,8 @@ impl Default for EngineConfig {
             max_speed_bytes_per_sec: 0,
             max_retries: default_max_retries(),
             theme: default_theme(),
+            server_enabled: default_server_enabled(),
+            server_port: default_server_port(),
         }
     }
 }
@@ -71,6 +85,8 @@ impl EngineConfig {
             max_speed_bytes_per_sec: 0,
             max_retries: default_max_retries(),
             theme: default_theme(),
+            server_enabled: default_server_enabled(),
+            server_port: default_server_port(),
         }
     }
 
@@ -106,6 +122,16 @@ impl EngineConfig {
 
     pub fn with_theme(mut self, theme: impl Into<String>) -> Self {
         self.theme = theme.into();
+        self
+    }
+
+    pub fn with_server_enabled(mut self, enabled: bool) -> Self {
+        self.server_enabled = enabled;
+        self
+    }
+
+    pub fn with_server_port(mut self, port: u16) -> Self {
+        self.server_port = port;
         self
     }
 }

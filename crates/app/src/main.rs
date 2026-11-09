@@ -26,6 +26,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let core = Arc::new(Core::new()?);
     let ui_config = core.config().ui_config();
 
+    let core_server = Arc::clone(&core);
+    runtime.spawn(async move {
+        let _ = rdm_core::server::run_server(core_server).await;
+    });
+
     let app = gpui_kit::application().with_assets(Assets::new());
 
     app.run(move |cx: &mut App| {
