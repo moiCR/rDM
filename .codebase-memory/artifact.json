@@ -1,12 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "e1920fa0197fd1b4e3bf8a547ddc9edda0100c7a",
-    "indexed_at": "2026-11-08T23:28:24Z",
-    "project": "C-Users-ssnow-pro-rDM",
-    "nodes": 883,
-    "edges": 3245,
-    "original_size": 4980736,
-    "compressed_size": 638433,
-    "compression_level": 9,
-    "reconcile_basis": "git-clean-head"
+    "commit": "0dc7840414be9a0df07ab168bc4339742a48345b",
+    "indexed_at": "2026-11-09T22:05:56Z",
+    "project": "rDM",
+    "nodes": 2970,
+    "edges": 13757,
+    "original_size": 10747904,
+    "compressed_size": 1953061,
+    "compression_level": 9
 }
