@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
-    sync::RwLock,
+    sync::{Mutex, RwLock},
 };
 use thiserror::Error;
 
@@ -30,6 +30,7 @@ pub enum ConfigError {
 pub struct ConfigManager {
     app_config: RwLock<AppConfig>,
     config_file_path: PathBuf,
+    save_lock: Mutex<()>,
 }
 
 impl Default for ConfigManager {
@@ -47,6 +48,7 @@ impl ConfigManager {
         Self {
             app_config: RwLock::new(initial_config),
             config_file_path,
+            save_lock: Mutex::new(()),
         }
     }
 
@@ -59,6 +61,7 @@ impl ConfigManager {
         Self {
             app_config: RwLock::new(app_config),
             config_file_path,
+            save_lock: Mutex::new(()),
         }
     }
 
@@ -108,20 +111,29 @@ impl ConfigManager {
     where
         F: FnOnce(&mut UIConfig),
     {
+        let updated = self.update_ui_config_in_memory(update_fn);
+        self.save()?;
+        Ok(updated)
+    }
+
+    pub fn update_ui_config_in_memory<F>(&self, update_fn: F) -> UIConfig
+    where
+        F: FnOnce(&mut UIConfig),
+    {
         let mut guard = match self.app_config.write() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };
 
         update_fn(&mut guard.ui);
-        let updated = guard.ui.clone();
-        drop(guard);
-
-        self.save()?;
-        Ok(updated)
+        guard.ui.clone()
     }
 
     pub fn save(&self) -> Result<(), ConfigError> {
+        let _save_guard = match self.save_lock.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         let current = self.app_config();
         if let Some(parent) = self.config_file_path.parent() {
             std::fs::create_dir_all(parent)?;

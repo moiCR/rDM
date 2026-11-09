@@ -3,17 +3,26 @@ use gpui_kit::component::input::{Input, InputState};
 
 use crate::{
     components::{ActionTooltip, IconButton},
-    layout::SidebarState,
+    layout::toggle_sidebar,
     state::{CoreContext, QuickDownloadState},
     theme::ActiveTheme,
 };
 
 #[derive(IntoElement)]
-pub struct Titlebar;
+pub struct Titlebar {
+    show_sidebar_toggle: bool,
+}
 
 impl Titlebar {
     pub fn new() -> Self {
-        Self
+        Self {
+            show_sidebar_toggle: true,
+        }
+    }
+
+    pub(super) fn sidebar_toggle(mut self, show: bool) -> Self {
+        self.show_sidebar_toggle = show;
+        self
     }
 }
 
@@ -27,10 +36,8 @@ impl RenderOnce for Titlebar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let background = cx.theme().background();
         let surface_hover = cx.theme().surface_hover();
-        let border = cx.theme().border();
         let text_color = cx.theme().text_color();
         let text_muted = cx.theme().text_muted();
-        let accent = cx.theme().accent();
         let error = cx.theme().error();
 
         let is_expanded = cx
@@ -68,30 +75,19 @@ impl RenderOnce for Titlebar {
                     .px_4()
                     .h_full()
                     .flex_shrink_0()
-                    .child(
+                    .children(self.show_sidebar_toggle.then(|| {
                         IconButton::new("btn-collapse-sidebar", "icons/panel-left.svg")
                             .tooltip("Alternar barra lateral")
                             .shortcut("Ctrl+B")
-                            .on_click(|_event, window, cx| {
-                                let current = cx
-                                    .try_global::<SidebarState>()
-                                    .map(|state| state.collapsed)
-                                    .unwrap_or(false);
-                                cx.set_global(SidebarState {
-                                    collapsed: !current,
-                                });
-                                window.refresh();
-                            }),
-                    )
+                            .on_click(|_, window, cx| toggle_sidebar(window, cx))
+                    }))
                     .child(
                         div()
                             .id("quick-download-morph")
-                            .group("quick-download-morph")
                             .overflow_hidden()
                             .flex()
                             .items_center()
                             .h_8()
-                            .hover(move |style| style.bg(surface_hover))
                             .on_click({
                                 let q_input = quick_input.clone();
                                 move |_event, window, cx| {
@@ -137,12 +133,15 @@ impl RenderOnce for Titlebar {
                             .child(
                                 div()
                                     .id("btn-create-task-icon")
+                                    .group("quick-download-icon")
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .size_8()
                                     .flex_shrink_0()
+                                    .rounded(px(8.0))
                                     .cursor_pointer()
+                                    .hover(move |style| style.bg(surface_hover))
                                     .tooltip(|_, cx| {
                                         cx.new(|_| {
                                             ActionTooltip::new("Nueva descarga").shortcut("Ctrl+N")
@@ -157,17 +156,9 @@ impl RenderOnce for Titlebar {
                                                 "icons/plus.svg"
                                             })
                                             .size_4()
-                                            .text_color(if is_expanded {
-                                                accent
-                                            } else {
-                                                text_muted
-                                            })
-                                            .group_hover("quick-download-morph", move |style| {
-                                                style.text_color(if is_expanded {
-                                                    accent
-                                                } else {
-                                                    text_color
-                                                })
+                                            .text_color(text_muted)
+                                            .group_hover("quick-download-icon", move |style| {
+                                                style.text_color(text_color)
                                             }),
                                     ),
                             )
@@ -191,16 +182,14 @@ impl RenderOnce for Titlebar {
                                     )
                                     .children(if has_text {
                                         Some(
-                                            div()
-                                                .id("btn-submit-quick-download")
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .size_5()
-                                                .rounded_full()
-                                                .cursor_pointer()
-                                                .hover(move |s| s.bg(surface_hover))
-                                                .on_click(move |_event, window, cx| {
+                                            IconButton::new(
+                                                "btn-submit-quick-download",
+                                                "icons/plus.svg",
+                                            )
+                                            .size(px(20.0))
+                                            .icon_size(px(12.0))
+                                            .on_click(
+                                                move |_event, window, cx| {
                                                     let text = q_submit.read(cx).text().to_string();
                                                     if !text.trim().is_empty() {
                                                         let model = cx.tasks_model().clone();
@@ -219,27 +208,16 @@ impl RenderOnce for Titlebar {
                                                         });
                                                         window.refresh();
                                                     }
-                                                })
-                                                .child(
-                                                    svg()
-                                                        .path("icons/plus.svg")
-                                                        .size_3()
-                                                        .text_color(accent),
-                                                ),
+                                                },
+                                            ),
                                         )
                                     } else {
                                         None
                                     })
                                     .child(
-                                        div()
-                                            .id("btn-close-quick-download")
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .size_5()
-                                            .rounded_full()
-                                            .cursor_pointer()
-                                            .hover(move |s| s.bg(surface_hover))
+                                        IconButton::new("btn-close-quick-download", "icons/x.svg")
+                                            .size(px(20.0))
+                                            .icon_size(px(12.0))
                                             .on_click(move |_event, window, cx| {
                                                 q_clear.update(cx, |s, cx| {
                                                     s.set_value("", window, cx);
@@ -248,46 +226,12 @@ impl RenderOnce for Titlebar {
                                                     expanded: false,
                                                 });
                                                 window.refresh();
-                                            })
-                                            .child(
-                                                svg()
-                                                    .path("icons/x.svg")
-                                                    .size_3()
-                                                    .text_color(text_muted),
-                                            ),
+                                            }),
                                     ),
                             )
-                            .with_spring(
-                                "quick-download-spring",
-                                quick_spring,
-                                move |this, phase| {
-                                    let width = phase.interpolate_clamped(px(32.0), px(360.0));
-                                    let radius = phase.interpolate_clamped(px(8.0), px(24.0));
-                                    let bg_color = phase.interpolate_clamped(
-                                        Rgba {
-                                            r: surface_hover.r,
-                                            g: surface_hover.g,
-                                            b: surface_hover.b,
-                                            a: 0.0,
-                                        },
-                                        surface_hover,
-                                    );
-                                    let border_col = phase.interpolate_clamped(
-                                        Rgba {
-                                            r: border.r,
-                                            g: border.g,
-                                            b: border.b,
-                                            a: 0.0,
-                                        },
-                                        border,
-                                    );
-                                    this.w(width)
-                                        .rounded(radius)
-                                        .bg(bg_color)
-                                        .border_1()
-                                        .border_color(border_col)
-                                },
-                            ),
+                            .with_spring("quick-download-spring", quick_spring, |this, phase| {
+                                this.w(phase.interpolate_clamped(px(32.0), px(360.0)))
+                            }),
                     ),
             )
             .child(

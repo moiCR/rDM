@@ -4,9 +4,10 @@ use gpui_kit::component::input::{Input, InputState};
 use std::{path::PathBuf, sync::Arc};
 
 use crate::{
-    components::{IconButton, Modal, ModalSubView, PillButton},
+    components::{ActionTooltip, IconButton, Modal, ModalSubView, PillButton},
+    layout::NavigationStyle,
     state::CoreContext,
-    theme::{ActiveTheme, ThemeManager, dark::DarkTheme, light::LightTheme},
+    theme::{ActiveTheme, PrimaryColors, ThemeManager, dark::DarkTheme, light::LightTheme},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +30,7 @@ struct ModalPalette {
     text_color: Rgba,
     text_muted: Rgba,
     accent: Rgba,
+    primary: PrimaryColors,
 }
 
 pub struct SettingsInputs {
@@ -42,7 +44,6 @@ pub struct SettingsInputs {
 #[derive(Clone)]
 pub struct SettingsFormState {
     pub theme: String,
-    pub sidebar_style: String,
     pub accent_color: String,
 }
 
@@ -50,8 +51,7 @@ impl SettingsFormState {
     pub fn from_ui_config(ui_config: &rdm_config::UIConfig) -> Self {
         Self {
             theme: ui_config.theme.clone(),
-            sidebar_style: ui_config.sidebar_style.clone(),
-            accent_color: ui_config.accent_color.clone(),
+            accent_color: ui_config.accent_override().unwrap_or_default().to_owned(),
         }
     }
 }
@@ -191,10 +191,11 @@ impl RenderOnce for SettingsModal {
             text_color: cx.theme().text_color(),
             text_muted: cx.theme().text_muted(),
             accent: cx.theme().accent(),
+            primary: cx.theme().primary(),
         };
 
         let current_theme = form.theme.clone();
-        let current_sidebar = form.sidebar_style.clone();
+        let navigation_style = NavigationStyle::from_key(&current_ui_cfg.sidebar_style);
         let current_accent = form.accent_color.clone();
 
         let inputs = inputs_state.read(cx);
@@ -235,7 +236,7 @@ impl RenderOnce for SettingsModal {
                             })
                             .child(Self::render_appearance_subview(
                                 &current_theme,
-                                &current_sidebar,
+                                navigation_style,
                                 &current_accent,
                                 form_state.clone(),
                                 palette,
@@ -650,14 +651,14 @@ impl RenderOnce for SettingsModal {
 impl SettingsModal {
     fn render_appearance_subview(
         current_theme: &str,
-        current_sidebar: &str,
+        navigation_style: NavigationStyle,
         current_accent: &str,
         state: Entity<SettingsFormState>,
         palette: ModalPalette,
         config: Arc<rdm_config::ConfigManager>,
     ) -> impl IntoElement {
         let row1 = ["#9e9e9e", "#1e1e1e", "#ef4444", "#f97316", "#10b981"];
-        let row2 = ["#0088ff", "#4422ff", "#9900ff", "#ff0099", "#e07070"];
+        let row2 = ["", "#4422ff", "#9900ff", "#ff0099", "#e07070"];
 
         div()
             .flex()
@@ -678,6 +679,7 @@ impl SettingsModal {
                                 Self::figma_color_squircle(
                                     hex,
                                     current_accent,
+                                    palette.primary,
                                     state.clone(),
                                     config.clone(),
                                 )
@@ -692,6 +694,7 @@ impl SettingsModal {
                                 Self::figma_color_squircle(
                                     hex,
                                     current_accent,
+                                    palette.primary,
                                     state.clone(),
                                     config.clone(),
                                 )
@@ -716,20 +719,16 @@ impl SettingsModal {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(Self::pill_button(
-                                "classic",
+                            .child(Self::navigation_button(
+                                NavigationStyle::Normal,
                                 "Normal",
-                                current_sidebar,
-                                state.clone(),
-                                palette,
+                                navigation_style,
                                 config.clone(),
                             ))
-                            .child(Self::pill_button(
-                                "modern",
-                                "Moderna",
-                                current_sidebar,
-                                state.clone(),
-                                palette,
+                            .child(Self::navigation_button(
+                                NavigationStyle::Dock,
+                                "Dock",
+                                navigation_style,
                                 config.clone(),
                             )),
                     ),
@@ -774,27 +773,32 @@ impl SettingsModal {
     fn figma_color_squircle(
         hex: &'static str,
         current: &str,
+        primary: PrimaryColors,
         state: Entity<SettingsFormState>,
         config: Arc<rdm_config::ConfigManager>,
     ) -> impl IntoElement {
         let is_selected = current.eq_ignore_ascii_case(hex);
+        let is_default = hex.is_empty();
         let (base_color, darker_border) = match hex {
             "#9e9e9e" => (rgb(0x9e9e9e), rgb(0x737373)),
             "#1e1e1e" => (rgb(0x1e1e1e), rgb(0x0a0a0a)),
             "#ef4444" => (rgb(0xef4444), rgb(0xb91c1c)),
             "#f97316" => (rgb(0xf97316), rgb(0xc2410c)),
             "#10b981" => (rgb(0x10b981), rgb(0x047857)),
-            "#0088ff" => (rgb(0x0088ff), rgb(0x0055cc)),
             "#4422ff" => (rgb(0x4422ff), rgb(0x280dbb)),
             "#9900ff" => (rgb(0x9900ff), rgb(0x6b00b3)),
             "#ff0099" => (rgb(0xff0099), rgb(0xb8006e)),
             "#e07070" => (rgb(0xe07070), rgb(0xb84848)),
-            _ => (rgb(0x0088ff), rgb(0x0055cc)),
+            _ => (primary.fill, primary.border),
         };
         let state_click = state.clone();
 
-        div()
-            .id(ElementId::Name(format!("color-{hex}").into()))
+        let swatch = div()
+            .id(if is_default {
+                ElementId::Name("color-theme-default".into())
+            } else {
+                ElementId::Name(format!("color-{hex}").into())
+            })
             .size(px(46.0))
             .relative()
             .overflow_hidden()
@@ -835,31 +839,43 @@ impl SettingsModal {
                     .h(px(12.0))
                     .rounded_b(if is_selected { px(14.0) } else { px(99.0) })
                     .bg(rgba(0x00000028)),
-            )
+            );
+
+        if is_default {
+            swatch.tooltip(|_, cx| cx.new(|_| ActionTooltip::new("Color del tema")).into())
+        } else {
+            swatch
+        }
     }
 
-    fn pill_button(
-        style_key: &'static str,
+    fn navigation_button(
+        style: NavigationStyle,
         label: &'static str,
-        current: &str,
-        state: Entity<SettingsFormState>,
-        _palette: ModalPalette,
+        current: NavigationStyle,
         config: Arc<rdm_config::ConfigManager>,
     ) -> impl IntoElement {
-        let is_selected = current == style_key;
-        let state_click = state.clone();
+        let style_key = style.key();
         PillButton::new(
             ElementId::Name(format!("btn-style-{style_key}").into()),
             label,
         )
-        .selected(is_selected)
+        .selected(current == style)
         .on_click(move |_event, window, cx| {
-            state_click.update(cx, |f, _| {
-                f.sidebar_style = style_key.to_string();
-            });
-            let _ = config.update_ui_config(|ui| {
+            if NavigationStyle::from_key(&config.ui_config().sidebar_style) == style {
+                return;
+            }
+            config.update_ui_config_in_memory(|ui| {
                 ui.sidebar_style = style_key.to_string();
             });
+            let config = config.clone();
+            cx.tasks_model()
+                .read(cx)
+                .tokio_handle()
+                .spawn_blocking(move || {
+                    if let Err(error) = config.save() {
+                        eprintln!("No se pudo guardar el modo de navegación: {error}");
+                    }
+                });
             window.refresh();
         })
     }
@@ -883,7 +899,7 @@ impl SettingsModal {
         .rounded(ButtonRounded::Size(px(24.0)))
         .selected(is_selected)
         .color(if is_selected {
-            rgb(0xffffff)
+            palette.text_color
         } else {
             palette.text_muted
         })

@@ -6,11 +6,36 @@ use gpui::*;
 use gpui_router::Layout;
 
 use crate::{
-    layout::{sidebar::Sidebar, titlebar::Titlebar},
-    state::QuickDownloadState,
+    layout::{
+        sidebar::{Dock, Sidebar},
+        titlebar::Titlebar,
+    },
+    state::{CoreContext, QuickDownloadState},
     theme::ActiveTheme,
     views::SettingsModal,
 };
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NavigationStyle {
+    Normal,
+    Dock,
+}
+
+impl NavigationStyle {
+    pub(crate) fn from_key(key: &str) -> Self {
+        match key {
+            "dock" => Self::Dock,
+            _ => Self::Normal,
+        }
+    }
+
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Self::Normal => "classic",
+            Self::Dock => "dock",
+        }
+    }
+}
 
 #[derive(Default, Clone, Copy)]
 pub struct SidebarState {
@@ -18,6 +43,16 @@ pub struct SidebarState {
 }
 
 impl Global for SidebarState {}
+
+pub(super) fn toggle_sidebar(window: &mut Window, cx: &mut App) {
+    let collapsed = cx
+        .try_global::<SidebarState>()
+        .is_some_and(|state| state.collapsed);
+    cx.set_global(SidebarState {
+        collapsed: !collapsed,
+    });
+    window.refresh();
+}
 
 #[derive(Default)]
 pub struct AppLayout {
@@ -36,24 +71,26 @@ impl Layout for AppLayout {
     }
 
     fn render_layout(self: Box<Self>, window: &mut Window, cx: &mut App) -> AnyElement {
+        let dock = NavigationStyle::from_key(&cx.core().config().ui_config().sidebar_style)
+            == NavigationStyle::Dock;
         let collapsed = cx
             .try_global::<SidebarState>()
             .map(|state| state.collapsed)
             .unwrap_or(false);
 
         let focus_handle = window
-            .use_keyed_state("app-layout-focus", cx, |_, cx| cx.focus_handle())
+            .use_keyed_state("app-layout-focus", cx, |window, cx| {
+                let handle = cx.focus_handle();
+                let initial_focus = handle.clone();
+                window.defer(cx, move |window, cx| {
+                    if window.focused(cx).is_none() {
+                        window.focus(&initial_focus, cx);
+                    }
+                });
+                handle
+            })
             .read(cx)
             .clone();
-
-        let is_modal_open = cx
-            .try_global::<crate::views::SettingsModalState>()
-            .map(|s| s.open)
-            .unwrap_or(false);
-
-        if !is_modal_open && window.focused(cx).is_none() {
-            window.focus(&focus_handle, cx);
-        }
 
         let spring_config = SpringConfig::new(200.0, 24.0, 1.0);
         let collapse_spring = SpringAnimation::new(spring_config).to(!collapsed);
@@ -63,17 +100,11 @@ impl Layout for AppLayout {
             .track_focus(&focus_handle)
             .key_context("AppLayout")
             .on_key_down(move |event, window, cx| {
-                if event.keystroke.modifiers.control
+                if !dock
+                    && event.keystroke.modifiers.control
                     && event.keystroke.key.eq_ignore_ascii_case("b")
                 {
-                    let current = cx
-                        .try_global::<SidebarState>()
-                        .map(|state| state.collapsed)
-                        .unwrap_or(false);
-                    cx.set_global(SidebarState {
-                        collapsed: !current,
-                    });
-                    window.refresh();
+                    toggle_sidebar(window, cx);
                 } else if event.keystroke.modifiers.control
                     && event.keystroke.key.eq_ignore_ascii_case("n")
                 {
@@ -91,19 +122,20 @@ impl Layout for AppLayout {
             .font_family("Geist")
             .bg(cx.theme().background())
             .text_color(cx.theme().text_color())
-            .child(Titlebar::new())
+            .child(Titlebar::new().sidebar_toggle(!dock))
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .flex_1()
-                    .size_full()
-                    .child(
+                    .min_h_0()
+                    .w_full()
+                    .children((!dock).then(|| {
                         div()
                             .id("sidebar-container")
                             .overflow_hidden()
                             .h_full()
-                            .child(Sidebar::new())
+                            .child(Sidebar)
                             .with_spring(
                                 "sidebar-collapse-animation",
                                 collapse_spring,
@@ -111,17 +143,20 @@ impl Layout for AppLayout {
                                     let width = phase.interpolate_clamped(px(0.0), px(200.0));
                                     this.w(width)
                                 },
-                            ),
-                    )
+                            )
+                    }))
                     .child(
                         div()
                             .flex()
                             .flex_1()
+                            .min_w_0()
+                            .min_h_0()
                             .size_full()
                             .overflow_hidden()
                             .children(self.outlet),
                     ),
             )
+            .children(dock.then_some(Dock))
             .child(SettingsModal::new())
             .into_any_element()
     }

@@ -24,8 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = runtime.enter();
 
     let core = Arc::new(Core::new()?);
-    let initial_theme_str = core.config().config().theme.clone();
-    let initial_accent_str = core.config().ui_config().accent_color.clone();
+    let ui_config = core.config().ui_config();
 
     let app = gpui_kit::application().with_assets(Assets::new());
 
@@ -35,14 +34,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         gpui_router::init(cx);
 
         let mut theme_mgr = ThemeManager::new();
-        if initial_theme_str == "light" {
+        if ui_config.theme == "light" {
             theme_mgr.set_theme(Box::new(LightTheme));
             gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Light, None, cx);
         } else {
             theme_mgr.set_theme(Box::new(DarkTheme));
             gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
         }
-        theme_mgr.set_accent_hex(&initial_accent_str);
+        if let Some(accent) = ui_config.accent_override() {
+            theme_mgr.set_accent_hex(accent);
+        }
         cx.set_global(theme_mgr);
 
         let tasks_model = cx.new(|cx| TasksModel::new(Arc::clone(&core), Arc::clone(&runtime), cx));

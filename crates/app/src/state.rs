@@ -110,6 +110,10 @@ impl TasksModel {
         &self.tasks
     }
 
+    pub(crate) fn tokio_handle(&self) -> &tokio::runtime::Handle {
+        self.runtime.handle()
+    }
+
     fn refresh_snapshots(&mut self, live_tasks: Vec<Arc<Task>>, update_speed_sample: bool) {
         let now = Instant::now();
         let elapsed_secs = now

@@ -263,11 +263,7 @@ impl RenderOnce for PillButton {
             .border_1()
             .border_color(if is_selected { text_color } else { border })
             .bg(if is_selected { surface_hover } else { border })
-            .text_color(if is_selected {
-                rgb(0xffffff)
-            } else {
-                text_muted
-            })
+            .text_color(if is_selected { text_color } else { text_muted })
             .font_weight(if is_selected {
                 FontWeight::SEMIBOLD
             } else {

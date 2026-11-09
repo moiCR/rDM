@@ -98,50 +98,50 @@ impl RenderOnce for ModalSubView {
         let on_back_backdrop = self.on_back.clone();
         let on_back_btn = self.on_back.clone();
 
-        let header_element =
-            if let Some(custom_header) = self.header {
-                Some(custom_header)
-            } else if self.title.is_some() || self.icon_path.is_some() || self.on_back.is_some() {
-                let title_str = self.title.clone();
-                let icon_str = self.icon_path.clone();
+        let header_element = if let Some(custom_header) = self.header {
+            Some(custom_header)
+        } else if self.title.is_some() || self.icon_path.is_some() || self.on_back.is_some() {
+            let title_str = self.title.clone();
+            let icon_str = self.icon_path.clone();
 
-                Some(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2p5()
-                                .children(icon_str.map(|path| {
-                                    svg().path(path).size_5().text_color(rgb(0xffffff))
-                                }))
-                                .children(title_str.map(|title| {
-                                    div()
-                                        .text_xl()
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_color(palette_text)
-                                        .child(title)
-                                })),
-                        )
-                        .children(on_back_btn.map(|handler| {
-                            IconButton::new("btn-subview-close", "icons/x.svg")
-                                .size(px(28.0))
-                                .icon_size(px(14.0))
-                                .rounded(ButtonRounded::Size(px(99.0)))
-                                .color(palette_text_muted)
-                                .hover_bg(palette_surface_hover)
-                                .on_click(move |_event, window, cx| {
-                                    handler(window, cx);
-                                })
-                        }))
-                        .into_any_element(),
-                )
-            } else {
-                None
-            };
+            Some(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2p5()
+                            .children(
+                                icon_str
+                                    .map(|path| svg().path(path).size_5().text_color(palette_text)),
+                            )
+                            .children(title_str.map(|title| {
+                                div()
+                                    .text_xl()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(palette_text)
+                                    .child(title)
+                            })),
+                    )
+                    .children(on_back_btn.map(|handler| {
+                        IconButton::new("btn-subview-close", "icons/x.svg")
+                            .size(px(28.0))
+                            .icon_size(px(14.0))
+                            .rounded(ButtonRounded::Size(px(99.0)))
+                            .color(palette_text_muted)
+                            .hover_bg(palette_surface_hover)
+                            .on_click(move |_event, window, cx| {
+                                handler(window, cx);
+                            })
+                    }))
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
 
         let footer_element = self.footer;
 

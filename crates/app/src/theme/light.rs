@@ -1,52 +1,61 @@
 use gpui::{Rgba, rgb};
 
-use super::Theme;
+use super::{PrimaryColors, Theme};
 
 #[derive(Default, Clone, Copy)]
 pub struct LightTheme;
 
 impl Theme for LightTheme {
     fn background(&self) -> Rgba {
-        rgb(0xfaf8f6)
+        rgb(0xf0f4fa)
     }
 
     fn surface(&self) -> Rgba {
-        rgb(0xf0eeeb)
+        rgb(0xffffff)
     }
 
     fn surface_hover(&self) -> Rgba {
-        rgb(0xe2dfdc)
+        rgb(0xe7effa)
     }
 
     fn border(&self) -> Rgba {
-        rgb(0xd6d3d0)
+        rgb(0xd3dfee)
     }
 
     fn text_color(&self) -> Rgba {
-        rgb(0x171717)
+        rgb(0x152840)
     }
 
     fn text_muted(&self) -> Rgba {
-        rgb(0x85827e)
+        rgb(0x516780)
     }
 
     fn accent(&self) -> Rgba {
-        rgb(0x2563eb)
+        self.primary().fill
+    }
+
+    fn primary(&self) -> PrimaryColors {
+        let fill = rgb(0x19365f);
+        PrimaryColors {
+            fill,
+            border: fill,
+            text: rgb(0xffffff),
+        }
     }
 
     fn downloading(&self) -> Rgba {
-        rgb(0x0284c7)
+        rgb(0x006d83)
     }
 
     fn paused(&self) -> Rgba {
-        rgb(0xd97706)
+        rgb(0x8f530c)
     }
 
     fn completed(&self) -> Rgba {
-        rgb(0x16a34a)
+        rgb(0x166b50)
     }
 
     fn error(&self) -> Rgba {
-        rgb(0xdc2626)
+        rgb(0xac3443)
     }
 }

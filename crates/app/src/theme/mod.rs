@@ -3,6 +3,13 @@ pub mod light;
 
 use gpui::{App, Context, Rgba, rgb};
 
+#[derive(Clone, Copy)]
+pub struct PrimaryColors {
+    pub fill: Rgba,
+    pub border: Rgba,
+    pub text: Rgba,
+}
+
 pub trait Theme: 'static + Send + Sync {
     fn background(&self) -> Rgba;
     fn surface(&self) -> Rgba;
@@ -11,6 +18,7 @@ pub trait Theme: 'static + Send + Sync {
     fn text_color(&self) -> Rgba;
     fn text_muted(&self) -> Rgba;
     fn accent(&self) -> Rgba;
+    fn primary(&self) -> PrimaryColors;
 
     fn downloading(&self) -> Rgba;
     fn paused(&self) -> Rgba;
@@ -68,6 +76,10 @@ impl Theme for ThemeManager {
     fn accent(&self) -> Rgba {
         self.accent_override
             .unwrap_or_else(|| self.active_theme.accent())
+    }
+
+    fn primary(&self) -> PrimaryColors {
+        self.active_theme.primary()
     }
 
     fn downloading(&self) -> Rgba {

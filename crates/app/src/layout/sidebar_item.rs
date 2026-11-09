@@ -1,196 +1,126 @@
-use gpui::{prelude::FluentBuilder, *};
+use gpui::{prelude::FluentBuilder as _, *};
+use gpui_kit::base::Button;
 
-use crate::{ext::transitions::*, theme::ActiveTheme};
+use crate::{components::ActionTooltip, theme::ActiveTheme, views::SettingsModalState};
 
-pub type SidebarItemAction = Box<dyn Fn(&mut Window, &mut App) + 'static>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SidebarVariant {
-    Classic,
-    Modern,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum NavigationItem {
+    Dashboard,
+    Downloads,
+    Settings,
 }
 
-#[derive(IntoElement)]
-pub struct SidebarItem {
-    label: &'static str,
-    icon_path: &'static str,
-    path: Option<&'static str>,
-    active: bool,
-    action: Option<SidebarItemAction>,
-    variant: SidebarVariant,
-}
+impl NavigationItem {
+    pub(super) const ALL: [Self; 3] = [Self::Dashboard, Self::Downloads, Self::Settings];
 
-pub fn sidebar_item(
-    label: &'static str,
-    icon_path: &'static str,
-    path: Option<&'static str>,
-    active: bool,
-    action: Option<SidebarItemAction>,
-) -> SidebarItem {
-    SidebarItem {
-        label,
-        icon_path,
-        path,
-        active,
-        action,
-        variant: SidebarVariant::Classic,
+    fn label(self) -> &'static str {
+        match self {
+            Self::Dashboard => "Dashboard",
+            Self::Downloads => "Downloads",
+            Self::Settings => "Ajustes",
+        }
     }
-}
 
-pub fn sidebar_item_with_variant(
-    label: &'static str,
-    icon_path: &'static str,
-    path: Option<&'static str>,
-    active: bool,
-    action: Option<SidebarItemAction>,
-    variant: SidebarVariant,
-) -> SidebarItem {
-    SidebarItem {
-        label,
-        icon_path,
-        path,
-        active,
-        action,
-        variant,
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Dashboard => "icons/dashboard.svg",
+            Self::Downloads => "icons/download.svg",
+            Self::Settings => "icons/settings.svg",
+        }
     }
-}
 
-impl RenderOnce for SidebarItem {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let surface = cx.theme().surface();
-        let surface_hover = cx.theme().surface_hover();
-        let text_color = cx.theme().text_color();
-        let text_muted = cx.theme().text_muted();
-        let accent = cx.theme().accent();
-
-        let hover_state = window.use_keyed_state(self.label, cx, |_, _| false);
-        let hovered = *hover_state.read(cx);
-        let active = self.active;
-        let label = self.label;
-        let icon_path = self.icon_path;
-        let path = self.path;
-        let action = self.action;
-        let variant = self.variant;
-
-        if variant == SidebarVariant::Classic {
-            let hover_state_classic = hover_state.clone();
-            return div()
-                .id(ElementId::Name(format!("classic-{label}").into()))
-                .flex()
-                .items_center()
-                .w_full()
-                .py_2()
-                .px_1()
-                .cursor_pointer()
-                .on_hover(move |is_hovered, window, cx| {
-                    hover_state_classic.update(cx, |state, cx| {
-                        if *state != *is_hovered {
-                            *state = *is_hovered;
-                            cx.notify();
-                        }
-                    });
-                    window.refresh();
-                })
-                .when_some(path, |this, target_path| {
-                    this.on_click(move |_event, window, cx| {
-                        gpui_router::use_navigate(window, cx).push(target_path);
-                    })
-                })
-                .when_some(action, |this, on_click_action| {
-                    this.on_click(move |_event, window, cx| {
-                        (on_click_action)(window, cx);
-                    })
-                })
-                .child(
-                    div()
-                        .id(ElementId::Name(format!("classic-text-{label}").into()))
-                        .with_transitions(format!("classic-text-trans-{label}"), |t| {
-                            t.all(millis(300))
-                        })
-                        .text_size(px(18.0))
-                        .line_height(relative(1.2))
-                        .font_weight(if active {
-                            FontWeight::BOLD
-                        } else {
-                            FontWeight::MEDIUM
-                        })
-                        .text_color(if active || hovered {
-                            text_color
-                        } else {
-                            text_muted
-                        })
-                        .hover_style(|s| s.text_color(text_color))
-                        .child(label),
-                )
-                .into_any_element();
+    pub(super) fn active(cx: &App) -> Option<Self> {
+        if cx
+            .try_global::<SettingsModalState>()
+            .is_some_and(|state| state.open)
+        {
+            return Some(Self::Settings);
         }
 
-        let highlighted = active || hovered;
-        let spring_config = SpringConfig::new(180.0, 26.0, 1.0);
-        let color_spring = SpringAnimation::new(spring_config).to(highlighted);
+        match gpui_router::use_location(cx).pathname.as_str() {
+            "/" => Some(Self::Dashboard),
+            "/downloads" => Some(Self::Downloads),
+            _ => None,
+        }
+    }
 
-        div()
-            .id(ElementId::Name(format!("modern-{label}").into()))
-            .flex()
-            .items_center()
-            .gap_3()
-            .w_full()
-            .px_3()
-            .py_2()
-            .rounded(px(14.0))
-            .cursor_pointer()
-            .on_hover(move |is_hovered, _window, cx| {
-                hover_state.update(cx, |state, cx| {
-                    if *state != *is_hovered {
-                        *state = *is_hovered;
-                        cx.notify();
-                    }
+    fn activate(self, window: &mut Window, cx: &mut App) {
+        let path = match self {
+            Self::Dashboard => "/",
+            Self::Downloads => "/downloads",
+            Self::Settings => {
+                cx.set_global(SettingsModalState {
+                    open: true,
+                    subview: None,
                 });
-            })
-            .when_some(path, |this, target_path| {
-                this.on_click(move |_event, window, cx| {
-                    gpui_router::use_navigate(window, cx).push(target_path);
-                })
-            })
-            .when_some(action, |this, on_click_action| {
-                this.on_click(move |_event, window, cx| {
-                    (on_click_action)(window, cx);
-                })
-            })
-            .with_spring(
-                ElementId::Name(format!("{label}-modern-bg").into()),
-                color_spring,
-                move |this, phase| {
-                    let bg = if active {
-                        surface_hover
-                    } else {
-                        phase.interpolate_clamped(surface.opacity(0.0), surface_hover.opacity(0.6))
-                    };
-                    let icon_fg = if active { accent } else { text_muted };
-                    let fg = if active { text_color } else { text_muted };
+                window.refresh();
+                return;
+            }
+        };
 
-                    this.bg(bg)
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .size_5()
-                                .child(svg().path(icon_path).size_4().text_color(icon_fg)),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(14.0))
-                                .font_weight(if active {
-                                    FontWeight::SEMIBOLD
-                                } else {
-                                    FontWeight::NORMAL
-                                })
-                                .text_color(fg)
-                                .child(label),
-                        )
-                },
+        if gpui_router::use_location(cx).pathname != path {
+            gpui_router::use_navigate(window, cx).push(path);
+        }
+    }
+
+    pub(super) fn sidebar_button(self, active: bool, cx: &App) -> Button {
+        let theme = cx.theme();
+        let text = theme.text_color();
+        let color = if active { text } else { theme.text_muted() };
+
+        Button::new(self.label())
+            .group(self.label())
+            .accessibility_label(self.label())
+            .w_full()
+            .justify_start()
+            .gap_2p5()
+            .py_2()
+            .px_1()
+            .cursor_pointer()
+            .text_size(px(18.0))
+            .line_height(relative(1.2))
+            .font_weight(if active {
+                FontWeight::BOLD
+            } else {
+                FontWeight::MEDIUM
+            })
+            .text_color(color)
+            .hover(move |style| style.text_color(text))
+            .on_click(move |_, window, cx| self.activate(window, cx))
+            .child(
+                svg()
+                    .path(self.icon())
+                    .size_4()
+                    .flex_shrink_0()
+                    .text_color(color)
+                    .group_hover(self.label(), move |style| style.text_color(text)),
             )
-            .into_any_element()
+            .child(self.label())
+    }
+
+    pub(super) fn dock_button(
+        self,
+        size: Pixels,
+        color: Rgba,
+        hover_color: Option<Rgba>,
+    ) -> Button {
+        Button::new(self.label())
+            .group(self.label())
+            .accessibility_label(self.label())
+            .size(size)
+            .flex_shrink_0()
+            .rounded(px(12.0))
+            .cursor_pointer()
+            .tooltip(move |_, cx| cx.new(|_| ActionTooltip::new(self.label())).into())
+            .on_click(move |_, window, cx| self.activate(window, cx))
+            .child(
+                svg()
+                    .path(self.icon())
+                    .size(px(19.0))
+                    .text_color(color)
+                    .when_some(hover_color, |icon, hover_color| {
+                        icon.group_hover(self.label(), move |style| style.text_color(hover_color))
+                    }),
+            )
     }
 }
