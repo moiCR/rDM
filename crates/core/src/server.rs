@@ -44,6 +44,12 @@ pub struct PingResponse {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct YouTubeFormatsResponse {
+    pub status: String,
+    pub formats: Vec<crate::engine::YouTubeFormat>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ErrorResponse {
     pub status: String,
     pub message: String,
@@ -108,6 +114,29 @@ async fn handle_connection(mut stream: TcpStream, core: Arc<Core>) -> Result<(),
             };
             send_json_response(&mut stream, 200, &response).await?;
         }
+        ("GET", path) if path.starts_with("/api/v1/youtube?v=") => {
+            let video_id = path.trim_start_matches("/api/v1/youtube?v=").trim();
+            match core.engine().resolve_youtube_formats(video_id).await {
+                Ok(formats) => {
+                    let response = YouTubeFormatsResponse {
+                        status: "ok".to_string(),
+                        formats,
+                    };
+                    send_json_response(&mut stream, 200, &response).await?;
+                }
+                Err(err) => {
+                    send_json_response(
+                        &mut stream,
+                        500,
+                        &ErrorResponse {
+                            status: "error".to_string(),
+                            message: err.to_string(),
+                        },
+                    )
+                    .await?;
+                }
+            }
+        }
         ("POST", "/api/v1/download") | ("POST", "/download") => {
             let download_req: ExtensionDownloadRequest = match serde_json::from_slice(&parsed.body)
             {
@@ -153,22 +182,24 @@ async fn handle_connection(mut stream: TcpStream, core: Arc<Core>) -> Result<(),
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| s.to_string());
 
-            let (file_name, total_size, content_type, supports_ranges) = match probe_result {
-                Ok(probe) => {
-                    let resolved_name = requested_name.unwrap_or(probe.file_name);
-                    (
-                        resolved_name,
-                        probe.total_size,
-                        probe.content_type,
-                        probe.supports_ranges,
-                    )
-                }
-                Err(_) => {
-                    let fallback_name =
-                        requested_name.unwrap_or_else(|| fallback_filename_from_url(&trimmed_url));
-                    (fallback_name, 0, None, true)
-                }
-            };
+            let (final_url, file_name, total_size, content_type, supports_ranges) =
+                match probe_result {
+                    Ok(probe) => {
+                        let resolved_name = requested_name.unwrap_or(probe.file_name);
+                        (
+                            probe.url,
+                            resolved_name,
+                            probe.total_size,
+                            probe.content_type,
+                            probe.supports_ranges,
+                        )
+                    }
+                    Err(_) => {
+                        let fallback_name = requested_name
+                            .unwrap_or_else(|| fallback_filename_from_url(&trimmed_url));
+                        (trimmed_url, fallback_name, 0, None, true)
+                    }
+                };
 
             let cfg = core.config().config();
             let connections = if supports_ranges {
@@ -183,7 +214,7 @@ async fn handle_connection(mut stream: TcpStream, core: Arc<Core>) -> Result<(),
             let intercept_id = Uuid::new_v4();
             let intercepted = InterceptedDownload {
                 id: intercept_id,
-                url: trimmed_url,
+                url: final_url,
                 file_name: file_name.clone(),
                 total_size,
                 content_type,

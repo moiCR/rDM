@@ -94,6 +94,14 @@ function formatBytes(bytes) {
   return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
+function sanitizeTitle(title) {
+  return title
+    .replace(/^\(\d+\)\s*/, "")
+    .replace(/\s*-\s*YouTube$/i, "")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .trim();
+}
+
 function extractMediaInfo(url, headers) {
   let contentType = "";
   let contentLength = 0;
@@ -127,6 +135,41 @@ function extractMediaInfo(url, headers) {
   const pathname = parsedUrl.pathname.toLowerCase();
   if (pathname.endsWith(".ts") || pathname.endsWith(".m4s")) {
     return null;
+  }
+
+  const queryMime = (parsedUrl.searchParams.get("mime") || "").toLowerCase();
+  const isGoogleVideo =
+    pathname.endsWith("/videoplayback") &&
+    (queryMime.startsWith("video/") || queryMime.startsWith("audio/"));
+
+  if (isGoogleVideo) {
+    const clen = parseInt(parsedUrl.searchParams.get("clen") || "0", 10) || contentLength;
+    const cleanUrlObj = new URL(url);
+    cleanUrlObj.searchParams.delete("range");
+    cleanUrlObj.searchParams.delete("rn");
+    cleanUrlObj.searchParams.delete("rbuf");
+    cleanUrlObj.searchParams.delete("ump");
+    cleanUrlObj.searchParams.delete("sabr");
+
+    const isAudio = queryMime.startsWith("audio/");
+    const subFormat = queryMime.includes("mp4")
+      ? isAudio
+        ? "m4a"
+        : "mp4"
+      : isAudio
+        ? "webm"
+        : "webm";
+
+    return {
+      url: cleanUrlObj.toString(),
+      dedupeKey: `${parsedUrl.origin}${parsedUrl.pathname}?itag=${parsedUrl.searchParams.get("itag") || subFormat}`,
+      filename: `videoplayback.${subFormat}`,
+      genericName: true,
+      fileExt: `.${subFormat}`,
+      sizeBytes: clen,
+      sizeFormatted: formatBytes(clen),
+      ext: isAudio ? "AUDIO" : subFormat.toUpperCase(),
+    };
   }
 
   const mediaExtensions = [".mp4", ".webm", ".mkv", ".mov", ".m3u8", ".mp3", ".m4a", ".flac"];
@@ -171,14 +214,22 @@ function extractMediaInfo(url, headers) {
     }
   }
 
+  const fallbackExt = isManifest ? ".m3u8" : matchedExt || ".mp4";
+  const baseWithoutExt = rawName.replace(/\.[a-z0-9]{2,5}$/i, "").toLowerCase();
+  const isGeneric = ["video", "videoplayback", "master", "index", "playlist", "stream"].includes(
+    baseWithoutExt
+  );
+
   if (!/\.[a-z0-9]{2,5}$/i.test(rawName)) {
-    const fallbackExt = isManifest ? ".m3u8" : matchedExt || ".mp4";
     rawName = `${rawName}${fallbackExt}`;
   }
 
   return {
     url,
+    dedupeKey: url,
     filename: rawName,
+    genericName: isGeneric,
+    fileExt: fallbackExt,
     sizeBytes: contentLength,
     sizeFormatted: formatBytes(contentLength),
     ext: extLabel,
@@ -207,7 +258,7 @@ chrome.webRequest.onHeadersReceived.addListener(
     if (!info) return;
 
     const list = tabMediaMap.get(details.tabId) || [];
-    const existingIndex = list.findIndex((item) => item.url === info.url);
+    const existingIndex = list.findIndex((item) => item.dedupeKey === info.dedupeKey);
     if (existingIndex !== -1) {
       if (info.sizeBytes > list[existingIndex].sizeBytes) {
         list[existingIndex] = { ...list[existingIndex], ...info };
@@ -367,7 +418,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ media: [], tabUrl: null });
         return;
       }
-      const media = tabMediaMap.get(activeTab.id) || [];
+      const rawList = tabMediaMap.get(activeTab.id) || [];
+      const tabTitle = activeTab.title ? sanitizeTitle(activeTab.title) : null;
+      const media = rawList.map((item) => {
+        if (item.genericName && tabTitle) {
+          return {
+            ...item,
+            filename: `${tabTitle}${item.fileExt || ".mp4"}`,
+          };
+        }
+        return item;
+      });
       sendResponse({ media, tabUrl: activeTab.url || null });
     });
     return true;

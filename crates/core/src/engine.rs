@@ -26,6 +26,15 @@ pub struct ResourceProbe {
     pub content_type: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct YouTubeFormat {
+    pub url: String,
+    pub filename: String,
+    pub quality: String,
+    pub ext: String,
+    pub size_bytes: u64,
+}
+
 #[derive(Clone)]
 pub struct Engine {
     config: Arc<ConfigManager>,
@@ -118,11 +127,128 @@ impl Engine {
         Ok(())
     }
 
+    pub async fn resolve_youtube_formats(
+        &self,
+        video_id: &str,
+    ) -> Result<Vec<YouTubeFormat>, EngineError> {
+        let android_ua = "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip";
+        let payload = serde_json::json!({
+            "videoId": video_id,
+            "context": {
+                "client": {
+                    "clientName": "ANDROID",
+                    "clientVersion": "20.10.38",
+                    "androidSdkVersion": 34,
+                    "osName": "Android",
+                    "osVersion": "14",
+                    "userAgent": android_ua
+                }
+            }
+        });
+
+        let response = self
+            .client
+            .post("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+            .header(reqwest::header::USER_AGENT, android_ua)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(payload.to_string())
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(EngineError::HttpStatus(response.status()));
+        }
+
+        let body_bytes = response.bytes().await?;
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes)?;
+        let raw_title = json
+            .get("videoDetails")
+            .and_then(|v| v.get("title"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("youtube_video");
+        let clean_title = decode_and_sanitize_filename(raw_title);
+
+        let mut results = Vec::new();
+
+        if let Some(formats) = json
+            .get("streamingData")
+            .and_then(|s| s.get("formats"))
+            .and_then(|f| f.as_array())
+        {
+            for fmt in formats {
+                let Some(url) = fmt.get("url").and_then(|u| u.as_str()) else {
+                    continue;
+                };
+                let quality = fmt
+                    .get("qualityLabel")
+                    .and_then(|q| q.as_str())
+                    .unwrap_or("360p");
+                let size_bytes = fmt
+                    .get("contentLength")
+                    .and_then(|c| c.as_str())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(0);
+
+                results.push(YouTubeFormat {
+                    url: url.to_string(),
+                    filename: format!("{clean_title}.mp4"),
+                    quality: quality.to_string(),
+                    ext: format!("MP4 {quality}"),
+                    size_bytes,
+                });
+            }
+        }
+
+        if let Some(adaptive) = json
+            .get("streamingData")
+            .and_then(|s| s.get("adaptiveFormats"))
+            .and_then(|f| f.as_array())
+        {
+            for fmt in adaptive {
+                let itag = fmt.get("itag").and_then(|i| i.as_u64()).unwrap_or(0);
+                if itag != 140 {
+                    continue;
+                }
+                let Some(url) = fmt.get("url").and_then(|u| u.as_str()) else {
+                    continue;
+                };
+                let size_bytes = fmt
+                    .get("contentLength")
+                    .and_then(|c| c.as_str())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(0);
+
+                results.push(YouTubeFormat {
+                    url: url.to_string(),
+                    filename: format!("{clean_title}.m4a"),
+                    quality: "Audio".to_string(),
+                    ext: "AUDIO M4A".to_string(),
+                    size_bytes,
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
     pub async fn probe(
         &self,
         url: &str,
         referer: Option<&str>,
     ) -> Result<ResourceProbe, EngineError> {
+        if let Some(video_id) = extract_youtube_video_id(url)
+            && let Ok(formats) = self.resolve_youtube_formats(&video_id).await
+            && let Some(first) = formats.into_iter().next()
+        {
+            return Ok(ResourceProbe {
+                url: first.url,
+                file_name: first.filename,
+                total_size: first.size_bytes,
+                supports_ranges: true,
+                content_type: Some("video/mp4".to_string()),
+            });
+        }
+
         let resolved_referer = resolve_referer(url, referer);
 
         let mut head_builder = self.client.head(url);
@@ -231,7 +357,7 @@ impl Engine {
         let task_id = Uuid::new_v4();
         let task = Arc::new(Task::new(
             task_id,
-            url.to_string(),
+            probe.url,
             destination_path,
             probe.total_size,
             active_connections,
@@ -777,6 +903,40 @@ fn resolve_referer(url_str: &str, custom_referer: Option<&str>) -> Option<String
     {
         let scheme = parsed_url.scheme();
         return Some(format!("{scheme}://{host}/"));
+    }
+
+    None
+}
+
+pub fn extract_youtube_video_id(url_str: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url_str).ok()?;
+    let host = parsed.host_str()?.to_lowercase();
+
+    if host == "youtu.be" {
+        let mut segs = parsed.path_segments()?;
+        let id = segs.next()?.trim();
+        if !id.is_empty() {
+            return Some(id.to_string());
+        }
+        return None;
+    }
+
+    if host == "youtube.com" || host == "www.youtube.com" || host == "m.youtube.com" {
+        let path = parsed.path();
+        if path == "/watch" {
+            for (k, v) in parsed.query_pairs() {
+                if k == "v" && !v.trim().is_empty() {
+                    return Some(v.trim().to_string());
+                }
+            }
+        } else if let Some(rest) = path
+            .strip_prefix("/shorts/")
+            .or_else(|| path.strip_prefix("/embed/"))
+            && let Some(id) = rest.split('/').next()
+            && !id.trim().is_empty()
+        {
+            return Some(id.trim().to_string());
+        }
     }
 
     None

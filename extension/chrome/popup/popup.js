@@ -8,6 +8,8 @@ const mediaSection = document.getElementById("media-section");
 const mediaDivider = document.getElementById("media-divider");
 const mediaList = document.getElementById("media-list");
 
+let currentPort = 9654;
+
 function updateStatus(connected) {
   if (connected) {
     statusIndicator.className = "status-pill connected";
@@ -15,6 +17,74 @@ function updateStatus(connected) {
   } else {
     statusIndicator.className = "status-pill disconnected";
     statusText.textContent = "Desconectado";
+  }
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return null;
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function sanitizeTitle(title) {
+  return (title || "video")
+    .replace(/^\(\d+\)\s*/, "")
+    .replace(/\s*-\s*YouTube$/i, "")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .trim();
+}
+
+function extractYouTubeVideoId(urlStr) {
+  if (!urlStr) return null;
+  try {
+    const parsed = new URL(urlStr);
+    const host = parsed.hostname.toLowerCase();
+    if (host === "youtu.be") {
+      const id = parsed.pathname.split("/").filter(Boolean)[0];
+      return id || null;
+    }
+    if (
+      host === "youtube.com" ||
+      host === "www.youtube.com" ||
+      host === "m.youtube.com"
+    ) {
+      if (parsed.pathname === "/watch") {
+        return parsed.searchParams.get("v");
+      }
+      if (
+        parsed.pathname.startsWith("/shorts/") ||
+        parsed.pathname.startsWith("/embed/")
+      ) {
+        return parsed.pathname.split("/").filter(Boolean)[1] || null;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function sendDirectToRdm(url, filename, referer) {
+  const port = parseInt(serverPortInput.value, 10) || currentPort || 9654;
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/v1/download`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        filename: filename || null,
+        referer: referer || null,
+      }),
+    });
+    return response.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -43,7 +113,8 @@ function renderMediaItems(items, fallbackReferer) {
 
     const meta = document.createElement("span");
     meta.className = "media-meta";
-    const sizeLabel = item.sizeFormatted || "Video detectado";
+    const sizeLabel =
+      item.sizeFormatted || formatBytes(item.size_bytes) || "Video detectado";
     meta.textContent = `${item.ext || "VIDEO"} • ${sizeLabel}`;
 
     info.appendChild(title);
@@ -53,28 +124,23 @@ function renderMediaItems(items, fallbackReferer) {
     btn.className = "save-btn";
     btn.textContent = "Descargar";
 
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       btn.disabled = true;
       btn.textContent = "Enviando...";
-      chrome.runtime.sendMessage(
-        {
-          type: "DOWNLOAD_MEDIA",
-          url: item.url,
-          filename: item.filename,
-          referer: item.referer || fallbackReferer || null,
-        },
-        (res) => {
-          if (!chrome.runtime.lastError && res && res.success) {
-            btn.textContent = "Enviado ✓";
-          } else {
-            btn.textContent = "Error";
-          }
-          setTimeout(() => {
-            btn.disabled = false;
-            btn.textContent = "Descargar";
-          }, 1200);
-        }
+      const ok = await sendDirectToRdm(
+        item.url,
+        item.filename,
+        item.referer || fallbackReferer || null
       );
+      if (ok) {
+        btn.textContent = "Enviado ✓";
+      } else {
+        btn.textContent = "Error";
+      }
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = "Descargar";
+      }, 1200);
     });
 
     row.appendChild(info);
@@ -83,8 +149,80 @@ function renderMediaItems(items, fallbackReferer) {
   }
 }
 
+async function detectActiveTabMedia() {
+  let backgroundMedia = [];
+  let activeUrl = null;
+  let activeTitle = null;
+
+  await new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: "GET_TAB_MEDIA" }, (res) => {
+        void chrome.runtime.lastError;
+        if (res && Array.isArray(res.media)) {
+          backgroundMedia = res.media;
+          activeUrl = res.tabUrl || null;
+        }
+        resolve();
+      });
+    } catch {
+      resolve();
+    }
+  });
+
+  if (chrome.tabs && chrome.tabs.query) {
+    await new Promise((resolve) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        void chrome.runtime.lastError;
+        const tab = tabs && tabs[0];
+        if (tab) {
+          activeUrl = tab.url || activeUrl;
+          activeTitle = tab.title || null;
+        }
+        resolve();
+      });
+    });
+  }
+
+  const ytVideoId = extractYouTubeVideoId(activeUrl);
+  if (ytVideoId) {
+    const cleanTitle = sanitizeTitle(activeTitle || "youtube_video");
+    const fallbackItem = [
+      {
+        url: activeUrl,
+        filename: `${cleanTitle}.mp4`,
+        ext: "MP4",
+        sizeFormatted: "YouTube Video",
+        referer: activeUrl,
+      },
+    ];
+    renderMediaItems(fallbackItem, activeUrl);
+
+    const port = parseInt(serverPortInput.value, 10) || currentPort || 9654;
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/api/v1/youtube?v=${encodeURIComponent(ytVideoId)}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.formats) && data.formats.length > 0) {
+          renderMediaItems(data.formats, activeUrl);
+          return;
+        }
+      }
+    } catch {
+      // Mantiene el fallbackItem ya renderizado
+    }
+    return;
+  }
+
+  if (backgroundMedia.length > 0) {
+    renderMediaItems(backgroundMedia, activeUrl);
+  }
+}
+
 function persistSettings(callback) {
   const port = parseInt(serverPortInput.value, 10) || 9654;
+  currentPort = port;
   const newSettings = {
     interceptDownloads: interceptToggle.checked,
     showNotifications: notificationsToggle.checked,
@@ -104,6 +242,7 @@ function persistSettings(callback) {
 chrome.runtime.sendMessage({ type: "CHECK_STATUS" }, (response) => {
   if (chrome.runtime.lastError || !response) {
     updateStatus(false);
+    detectActiveTabMedia();
     return;
   }
 
@@ -111,14 +250,10 @@ chrome.runtime.sendMessage({ type: "CHECK_STATUS" }, (response) => {
   if (response.settings) {
     interceptToggle.checked = Boolean(response.settings.interceptDownloads);
     notificationsToggle.checked = Boolean(response.settings.showNotifications);
-    serverPortInput.value = response.settings.serverPort || 9654;
+    currentPort = response.settings.serverPort || 9654;
+    serverPortInput.value = currentPort;
   }
-});
-
-chrome.runtime.sendMessage({ type: "GET_TAB_MEDIA" }, (response) => {
-  if (!chrome.runtime.lastError && response && Array.isArray(response.media)) {
-    renderMediaItems(response.media, response.tabUrl);
-  }
+  detectActiveTabMedia();
 });
 
 interceptToggle.addEventListener("change", () => {
