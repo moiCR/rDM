@@ -521,17 +521,7 @@ impl MultimediaModule {
             None => return Err("La descarga no tiene una conversión pendiente.".into()),
         }
 
-        let output = tokio::fs::OpenOptions::new()
-            .write(true)
-            .open(&staged_path)
-            .await
-            .map_err(|error| format!("No se puede abrir la salida de FFmpeg: {error}"))?;
-        let metadata = output.metadata().await.map_err(|error| error.to_string())?;
-        if !metadata.is_file() || metadata.len() == 0 {
-            return Err("FFmpeg produjo un archivo vacío.".into());
-        }
-        output.sync_all().await.map_err(|error| error.to_string())?;
-        Ok(metadata.len())
+        validate_staging(&staged_path).await
     }
 
     pub(super) async fn publish_conversion(&self, task: &Task) -> Result<(), String> {
@@ -590,6 +580,20 @@ impl MultimediaModule {
     }
 }
 
+async fn validate_staging(path: &Path) -> Result<u64, String> {
+    let output = tokio::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .await
+        .map_err(|error| format!("No se puede abrir la salida de FFmpeg: {error}"))?;
+    let metadata = output.metadata().await.map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err("FFmpeg produjo un archivo vacío.".into());
+    }
+    output.sync_all().await.map_err(|error| error.to_string())?;
+    Ok(metadata.len())
+}
+
 pub(super) fn track_paths(
     path: &Path,
     total_size: u64,
@@ -610,7 +614,7 @@ pub(super) fn track_paths(
         .chain(audio.map(|size| (temp_part_path(path, "audio.part"), size)))
 }
 
-fn staging_path(output_path: &Path, task_id: Uuid) -> PathBuf {
+pub(super) fn staging_path(output_path: &Path, task_id: Uuid) -> PathBuf {
     output_path.with_file_name(format!(".rdm-{task_id}.conversion.part"))
 }
 
@@ -853,4 +857,19 @@ pub fn extract_youtube_video_id(url_str: &str) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn empty_staged_output_is_rejected() -> std::io::Result<()> {
+        let path = std::env::temp_dir().join(format!("rdm_empty_{}.part", Uuid::new_v4()));
+        tokio::fs::write(&path, []).await?;
+        let result = validate_staging(&path).await;
+        tokio::fs::remove_file(path).await?;
+        assert!(matches!(result, Err(reason) if reason.contains("archivo vacío")));
+        Ok(())
+    }
 }

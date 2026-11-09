@@ -3,9 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rdm_core::Core;
 use rdm_core::{
-    EngineError,
+    Core, Engine, EngineError,
     task::{Task, TaskStatus},
 };
 
@@ -17,15 +16,16 @@ use crate::{
 };
 
 pub struct CliRunner {
-    core: Core,
+    engine: Arc<Engine>,
     reporter: ProgressReporter,
 }
 
 impl CliRunner {
     pub fn new() -> Result<Self, CliError> {
         let core = Core::new()?;
+        let engine = Arc::clone(core.engine());
         let reporter = ProgressReporter::default();
-        Ok(Self { core, reporter })
+        Ok(Self { engine, reporter })
     }
 
     pub async fn run(&self, args: CliArgs) -> Result<(), CliError> {
@@ -38,7 +38,7 @@ impl CliRunner {
             } => {
                 self.reporter.info(&format!("Probing URL: {url}"));
 
-                let probe = self.core.engine().probe(&url, referer.as_deref()).await?;
+                let probe = self.engine.probe(&url, referer.as_deref()).await?;
 
                 self.reporter.info(&format!("File: {}", probe.file_name));
                 self.reporter
@@ -61,8 +61,7 @@ impl CliRunner {
                 }
 
                 let task = self
-                    .core
-                    .engine()
+                    .engine
                     .create_task(&url, output, connections, referer)
                     .await?;
 
@@ -71,12 +70,12 @@ impl CliRunner {
                 self.reporter
                     .info(&format!("Active connections: {}", task.connections));
 
-                self.core.engine().start_task(task.id).await?;
+                self.engine.start_task(task.id).await?;
                 self.monitor_task(task).await
             }
             CliCommand::Info { url, referer } => {
                 self.reporter.info(&format!("Probing URL: {url}"));
-                let probe = self.core.engine().probe(&url, referer.as_deref()).await?;
+                let probe = self.engine.probe(&url, referer.as_deref()).await?;
 
                 println!();
                 println!("Remote Resource Information:");
@@ -109,7 +108,7 @@ impl CliRunner {
                 Ok(())
             }
             CliCommand::List => {
-                let tasks = self.core.engine().all_tasks().await;
+                let tasks = self.engine.all_tasks().await;
                 if tasks.is_empty() {
                     self.reporter.info("No download tasks found in history.");
                     return Ok(());
@@ -117,11 +116,11 @@ impl CliRunner {
 
                 println!();
                 println!(
-                    "{:<36}  {:<12}  {:<8}  {:<10}  FILE",
+                    "{:<36}  {:<19}  {:<8}  {:<10}  FILE",
                     "TASK ID", "STATUS", "PROGRESS", "SIZE"
                 );
                 println!(
-                    "{:-<36}  {:-<12}  {:-<8}  {:-<10}  {:-<20}",
+                    "{:-<36}  {:-<19}  {:-<8}  {:-<10}  {:-<20}",
                     "", "", "", "", ""
                 );
 
@@ -147,7 +146,7 @@ impl CliRunner {
                         .unwrap_or("unknown");
 
                     println!(
-                        "{:<36}  {:<12}  {:<8}  {:<10}  {}",
+                        "{:<36}  {:<19}  {:<8}  {:<10}  {}",
                         task.id, status_str, pct, size_str, file_str
                     );
                 }
@@ -155,16 +154,16 @@ impl CliRunner {
                 Ok(())
             }
             CliCommand::Resume { id } => {
-                let task = self.core.engine().get_task(id).await?;
+                let task = self.engine.get_task(id).await?;
                 self.reporter.info(&format!(
                     "Resuming task {id}: {}",
                     task.output_path.display()
                 ));
-                self.core.engine().resume_task(id).await?;
+                self.engine.resume_task(id).await?;
                 self.monitor_task(task).await
             }
             CliCommand::Delete { id, delete_file } => {
-                self.core.engine().delete_task(id, delete_file).await?;
+                self.engine.delete_task(id, delete_file).await?;
                 self.reporter
                     .success(&format!("Task {id} removed successfully"));
                 Ok(())
@@ -257,8 +256,9 @@ impl CliRunner {
                 }
                 _ = tokio::signal::ctrl_c() => {
                     self.reporter.finish();
-                    match self.core.engine().pause_task(task.id).await {
-                        Ok(()) => {}
+                    match self.engine.pause_task(task.id).await {
+                        Ok(()) if task.status() == TaskStatus::Paused => {}
+                        Ok(()) => continue,
                         Err(EngineError::ConversionInProgress(_)) => {
                             self.reporter.info("Waiting for FFmpeg to finish...");
                             continue;
@@ -273,5 +273,51 @@ impl CliRunner {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rdm_config::{ConfigManager, EngineConfig};
+    use rdm_core::{DiskManager, task::PostProcessAction};
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn resume_reports_conversion_error_without_redownloading()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = std::env::temp_dir().join(format!("rdm_cli_resume_{}", Uuid::new_v4()));
+        let config = EngineConfig::default()
+            .with_state_dir(directory.clone())
+            .with_download_dir(directory.clone());
+        let engine = Arc::new(Engine::new(
+            Arc::new(ConfigManager::from_config(config)),
+            Arc::new(DiskManager::new()),
+        )?);
+        let task = engine
+            .create_task_with_options(
+                "https://example.invalid/googlevideo.com/videoplayback?clen=4",
+                Some(directory.join("audio.mp3")),
+                None,
+                None,
+                Some(PostProcessAction::ConvertMp3 { bitrate_kbps: 128 }),
+            )
+            .await?;
+        task.set_status(TaskStatus::ConversionFailed("previous failure".into()));
+        let runner = CliRunner {
+            engine,
+            reporter: ProgressReporter::default(),
+        };
+        let result = runner
+            .run(CliArgs {
+                command: CliCommand::Resume { id: task.id },
+            })
+            .await;
+        assert!(
+            matches!(result, Err(CliError::ConversionFailed(reason)) if reason.contains("audio.part"))
+        );
+        assert!(!tokio::fs::try_exists(&task.output_path).await?);
+        tokio::fs::remove_dir_all(directory).await?;
+        Ok(())
     }
 }

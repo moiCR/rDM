@@ -20,7 +20,9 @@ use crate::{
 
 use super::{
     EngineModule, ResourceProbe,
-    multimedia::{MultimediaModule, normalize_post_process, stream_user_agent, track_paths},
+    multimedia::{
+        MultimediaModule, normalize_post_process, staging_path, stream_user_agent, track_paths,
+    },
     transfer::{
         decode_and_sanitize_filename, download_to_path, extract_file_name_from_url,
         resolve_referer, stream_request,
@@ -166,13 +168,28 @@ impl DownloadModule {
 
     pub(super) async fn save_state(&self) -> Result<(), EngineError> {
         let _write = self.state_write.lock().await;
+        self.persist_snapshot(None).await
+    }
+
+    async fn persist_snapshot(
+        &self,
+        status_update: Option<(Uuid, &TaskStatus)>,
+    ) -> Result<(), EngineError> {
         let state_dir = self.config.config().state_dir;
         let tasks: Vec<_> = self
             .tasks
             .read()
             .await
             .values()
-            .map(|task| task.to_persisted())
+            .map(|task| {
+                let mut snapshot = task.to_persisted();
+                if let Some((id, status)) = status_update
+                    && id == task.id
+                {
+                    snapshot.status = status.clone();
+                }
+                snapshot
+            })
             .collect();
         persist_tasks_to_disk(&state_dir, &tasks).await
     }
@@ -339,9 +356,7 @@ impl DownloadModule {
         }
 
         let max_concurrent = self.config.config().max_concurrent_downloads.max(1);
-        let active_count = self.active_downloads_count().await;
-
-        if active_count >= max_concurrent {
+        if is_conversion || self.active_downloads_count().await >= max_concurrent {
             task.set_status(if is_conversion {
                 TaskStatus::ConversionQueued
             } else {
@@ -354,14 +369,14 @@ impl DownloadModule {
                 }
             }
             let _ = self.save_state().await;
+            drop(dispatch);
+            if is_conversion {
+                self.process_queue().await;
+            }
             return Ok(());
         }
 
         self.remove_from_queue(task_id).await;
-        if is_conversion {
-            self.spawn_conversion(task);
-            return Ok(());
-        }
         let result = self.launch_download(task).await;
         drop(dispatch);
         if result.is_err() {
@@ -618,28 +633,31 @@ impl DownloadModule {
             let result = download.convert(&task).await;
             {
                 let _dispatch = download.dispatch.lock().await;
-                match result {
+                let was_staged = matches!(
+                    task.status(),
+                    TaskStatus::Processing {
+                        staged_size: Some(_)
+                    }
+                );
+                let status = match result {
                     Ok(()) => {
                         download.multimedia.remove_parts(&task).await;
-                        task.set_status(TaskStatus::Completed);
-                        let _ = download.save_state().await;
+                        TaskStatus::Completed
                     }
                     Err(error) => {
-                        let was_staged = matches!(
-                            task.status(),
-                            TaskStatus::Processing {
-                                staged_size: Some(_)
-                            }
-                        );
                         if !was_staged {
                             download.multimedia.discard_staging(&task).await;
                         }
-                        task.set_status(TaskStatus::ConversionFailed(error));
-                        if download.save_state().await.is_ok() && was_staged {
-                            download.multimedia.discard_staging(&task).await;
-                        }
+                        TaskStatus::ConversionFailed(error)
                     }
+                };
+                let _write = download.state_write.lock().await;
+                let saved = download.persist_snapshot(Some((task.id, &status))).await;
+                if was_staged && saved.is_ok() && matches!(status, TaskStatus::ConversionFailed(_))
+                {
+                    download.multimedia.discard_staging(&task).await;
                 }
+                task.set_status(status);
             }
             download.process_queue().await;
         });
@@ -658,7 +676,9 @@ impl DownloadModule {
     pub(super) async fn pause_task(self: &Arc<Self>, task_id: Uuid) -> Result<(), EngineError> {
         let dispatch = self.dispatch.lock().await;
         let task = self.get_task(task_id).await?;
-        ensure_download_control(&task)?;
+        if !download_control_available(&task)? {
+            return Ok(());
+        }
         self.remove_from_queue(task_id).await;
         task.pause();
         let _ = self.save_state().await;
@@ -670,7 +690,9 @@ impl DownloadModule {
     pub(super) async fn cancel_task(self: &Arc<Self>, task_id: Uuid) -> Result<(), EngineError> {
         let dispatch = self.dispatch.lock().await;
         let task = self.get_task(task_id).await?;
-        ensure_download_control(&task)?;
+        if !download_control_available(&task)? {
+            return Ok(());
+        }
         self.remove_from_queue(task_id).await;
         task.cancel();
         let _ = self.save_state().await;
@@ -733,13 +755,14 @@ fn is_active(status: &TaskStatus) -> bool {
     )
 }
 
-fn ensure_download_control(task: &Task) -> Result<(), EngineError> {
+fn download_control_available(task: &Task) -> Result<bool, EngineError> {
     match task.status() {
         TaskStatus::Processing { .. } | TaskStatus::ConversionQueued => {
             Err(EngineError::ConversionInProgress(task.id))
         }
-        TaskStatus::ConversionFailed(_) => Err(EngineError::ConversionNotRetryable(task.id)),
-        _ => Ok(()),
+        TaskStatus::ConversionFailed(_) => Ok(false),
+        TaskStatus::Completed if task.post_process.is_some() => Ok(false),
+        _ => Ok(true),
     }
 }
 
@@ -845,14 +868,20 @@ fn resolve_unique_path(
     let reserved: HashSet<_> = tasks
         .iter()
         .flat_map(|task| {
-            std::iter::once(task.output_path.clone()).chain(
-                track_paths(
-                    &task.output_path,
-                    task.total_size,
-                    task.post_process.as_ref(),
+            std::iter::once(task.output_path.clone())
+                .chain(
+                    track_paths(
+                        &task.output_path,
+                        task.total_size,
+                        task.post_process.as_ref(),
+                    )
+                    .map(|(path, _)| path),
                 )
-                .map(|(path, _)| path),
-            )
+                .chain(
+                    task.post_process
+                        .as_ref()
+                        .map(|_| staging_path(&task.output_path, task.id)),
+                )
         })
         .map(|path| reservation_key(&path))
         .collect();
@@ -951,6 +980,9 @@ fn extract_file_name_from_disposition(disposition: &str) -> Option<String> {
 
     star_filename.or(fallback_filename)
 }
+
+#[cfg(test)]
+mod conversion_tests;
 
 #[cfg(test)]
 mod tests {
