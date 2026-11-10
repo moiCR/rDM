@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+
+      - name: Extract version
+        id: vars
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="rDM") | .version')
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build release binaries
+        run: cargo build --release --workspace
+
+      - name: Package installer and portable archive
+        shell: pwsh
+        run: |
+          ./scripts/package-windows.ps1 -Version "${{ steps.vars.outputs.version }}"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/rDM-Setup-*.exe
+            dist/rDM-*.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true

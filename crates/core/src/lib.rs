@@ -11,6 +11,7 @@ pub mod engine;
 pub mod error;
 pub mod server;
 pub mod task;
+pub mod updater;
 
 #[derive(Clone)]
 pub struct Core {

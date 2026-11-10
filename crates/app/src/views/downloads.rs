@@ -67,7 +67,7 @@ impl ViewPalette {
     }
 }
 
-fn format_bytes(bytes: u64) -> String {
+pub(super) fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
     const GB: f64 = MB * 1024.0;
@@ -95,7 +95,7 @@ fn truncate_file_name(name: &str, max_chars: usize) -> String {
     }
 }
 
-fn task_progress_percent(task: &TaskSnapshot) -> f32 {
+pub(super) fn task_progress_percent(task: &TaskSnapshot) -> f32 {
     match (task.total_size, &task.status) {
         (
             _,
@@ -107,6 +107,19 @@ fn task_progress_percent(task: &TaskSnapshot) -> f32 {
         (0, _) => 0.0,
         _ => (task.progress.clamp(0.0, 1.0) * 100.0) as f32,
     }
+}
+
+pub(super) fn download_card_surface(surface: Rgba, raised: Rgba, border: Rgba) -> Div {
+    div()
+        .rounded(px(24.0))
+        .bg(linear_gradient(
+            180.0,
+            linear_color_stop(raised, 0.0),
+            linear_color_stop(surface, 1.0),
+        ))
+        .border_1()
+        .border_color(border)
+        .shadow_md()
 }
 
 fn format_remaining(task: &TaskSnapshot) -> SharedString {
@@ -260,19 +273,10 @@ impl DownloadsView {
             _ => None,
         };
 
-        div()
+        download_card_surface(palette.surface, palette.surface_hover, palette.border)
             .id(("download-card", task_key))
             .w(px(296.0))
             .p_4()
-            .rounded(px(24.0))
-            .bg(linear_gradient(
-                180.0,
-                linear_color_stop(palette.surface_hover, 0.0),
-                linear_color_stop(palette.surface, 1.0),
-            ))
-            .border_1()
-            .border_color(palette.border)
-            .shadow_md()
             .flex()
             .flex_col()
             .justify_between()
@@ -366,6 +370,44 @@ impl DownloadsView {
                             .items_center()
                             .gap_1()
                             .children(retry_conversion)
+                            .when(task.status == TaskStatus::Completed, |actions| {
+                                let file_button = |id, icon, tooltip| {
+                                    IconButton::new((id, task_key), icon)
+                                        .size(px(30.0))
+                                        .icon_size(px(14.0))
+                                        .rounded(ButtonRounded::Size(px(99.0)))
+                                        .color(palette.text_muted)
+                                        .hover_bg(palette.surface_hover)
+                                        .tooltip(tooltip)
+                                };
+                                let file_to_open = task.output_path.clone();
+                                let file_to_reveal = task.output_path.clone();
+                                actions
+                                    .child(
+                                        file_button(
+                                            "download-card-open-file",
+                                            "icons/external-link.svg",
+                                            "Abrir archivo",
+                                        )
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                cx.open_with_system(&file_to_open);
+                                            },
+                                        ),
+                                    )
+                                    .child(
+                                        file_button(
+                                            "download-card-reveal-file",
+                                            "icons/folder-open.svg",
+                                            "Mostrar en carpeta",
+                                        )
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                cx.reveal_path(&file_to_reveal);
+                                            },
+                                        ),
+                                    )
+                            })
                             .children(toggle_action.map(|(is_pause, icon_path, tooltip_text)| {
                                 let model = tasks_model.clone();
                                 IconButton::new(("download-card-toggle", task_key), icon_path)

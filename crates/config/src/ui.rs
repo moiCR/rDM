@@ -8,6 +8,10 @@ fn default_sidebar_style() -> String {
     "classic".to_string()
 }
 
+fn default_auto_check_updates() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct UIConfig {
@@ -16,6 +20,8 @@ pub struct UIConfig {
     #[serde(default = "default_sidebar_style")]
     pub sidebar_style: String,
     pub accent_color: String,
+    #[serde(default = "default_auto_check_updates")]
+    pub auto_check_updates: bool,
 }
 
 impl Default for UIConfig {
@@ -24,6 +30,7 @@ impl Default for UIConfig {
             theme: default_theme(),
             sidebar_style: default_sidebar_style(),
             accent_color: String::new(),
+            auto_check_updates: default_auto_check_updates(),
         }
     }
 }

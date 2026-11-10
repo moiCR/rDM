@@ -5,6 +5,7 @@ use std::{
         Arc, RwLock,
         atomic::{AtomicU64, Ordering},
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -134,6 +135,8 @@ pub struct PersistedTask {
     pub connections: usize,
     pub referer: Option<String>,
     pub status: TaskStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<u64>,
     pub segments: Vec<PersistedSegment>,
     #[serde(default)]
     pub post_process: Option<PostProcessAction>,
@@ -149,9 +152,32 @@ pub struct Task {
     pub connections: usize,
     pub referer: Option<String>,
     pub post_process: Option<PostProcessAction>,
-    status: RwLock<TaskStatus>,
+    state: RwLock<TaskState>,
     segments: RwLock<Vec<Arc<DownloadSegment>>>,
     cancellation_token: RwLock<CancellationToken>,
+}
+
+#[derive(Debug)]
+pub(crate) struct TaskState {
+    pub status: TaskStatus,
+    pub completed_at: Option<u64>,
+}
+
+impl TaskState {
+    pub(crate) fn new(status: TaskStatus) -> Self {
+        let completed_at = if status == TaskStatus::Completed {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .map(|duration| duration.as_secs())
+        } else {
+            None
+        };
+        Self {
+            status,
+            completed_at,
+        }
+    }
 }
 
 impl Task {
@@ -184,24 +210,37 @@ impl Task {
             connections,
             referer,
             post_process,
-            status: RwLock::new(TaskStatus::Pending),
+            state: RwLock::new(TaskState::new(TaskStatus::Pending)),
             segments: RwLock::new(Vec::new()),
             cancellation_token: RwLock::new(CancellationToken::new()),
         }
     }
 
     pub fn status(&self) -> TaskStatus {
-        match self.status.read() {
-            Ok(guard) => guard.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        }
+        self.status_and_completion().0
+    }
+
+    pub fn status_and_completion(&self) -> (TaskStatus, Option<u64>) {
+        let state = self
+            .state
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (state.status.clone(), state.completed_at)
     }
 
     pub fn set_status(&self, new_status: TaskStatus) {
-        match self.status.write() {
-            Ok(mut guard) => *guard = new_status,
-            Err(poisoned) => *poisoned.into_inner() = new_status,
+        self.set_state(TaskState::new(new_status));
+    }
+
+    pub(crate) fn set_state(&self, mut new_state: TaskState) {
+        let mut state = self
+            .state
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if new_state.status == TaskStatus::Completed && state.status == TaskStatus::Completed {
+            new_state.completed_at = state.completed_at.or(new_state.completed_at);
         }
+        *state = new_state;
     }
 
     pub fn progress_ratio(&self) -> f64 {
@@ -253,6 +292,7 @@ impl Task {
     }
 
     pub fn to_persisted(&self) -> PersistedTask {
+        let (status, completed_at) = self.status_and_completion();
         let segments = self
             .segments()
             .into_iter()
@@ -266,7 +306,8 @@ impl Task {
             downloaded_bytes: self.downloaded_bytes.load(Ordering::Relaxed),
             connections: self.connections,
             referer: self.referer.clone(),
-            status: self.status(),
+            status,
+            completed_at,
             segments,
             post_process: self.post_process.clone(),
         }
@@ -298,7 +339,12 @@ impl Task {
             connections: persisted.connections,
             referer: persisted.referer,
             post_process: persisted.post_process,
-            status: RwLock::new(status),
+            state: RwLock::new(TaskState {
+                completed_at: (status == TaskStatus::Completed)
+                    .then_some(persisted.completed_at)
+                    .flatten(),
+                status,
+            }),
             segments: RwLock::new(segments),
             cancellation_token: RwLock::new(CancellationToken::new()),
         }
@@ -346,6 +392,30 @@ mod tests {
 
         segment.set_status(SegmentStatus::Downloading);
         assert_eq!(segment.status(), SegmentStatus::Downloading);
+    }
+
+    #[test]
+    fn completion_date_survives_persistence_and_legacy_tasks_still_load()
+    -> Result<(), serde_json::Error> {
+        let task = Task::new(Uuid::new_v4(), String::new(), PathBuf::new(), 0, 1, None);
+        task.set_status(TaskStatus::Completed);
+        let completion = task.status_and_completion();
+        assert!(completion.1.is_some());
+
+        let snapshot = serde_json::to_value(task.to_persisted())?;
+        let restored = Task::from_persisted(serde_json::from_value(snapshot.clone())?);
+        assert_eq!(restored.status_and_completion(), completion);
+
+        let mut legacy = snapshot;
+        if let Some(fields) = legacy.as_object_mut() {
+            fields.remove("completed_at");
+        }
+        let restored = Task::from_persisted(serde_json::from_value(legacy)?);
+        assert_eq!(
+            restored.status_and_completion(),
+            (TaskStatus::Completed, None)
+        );
+        Ok(())
     }
 
     #[test]

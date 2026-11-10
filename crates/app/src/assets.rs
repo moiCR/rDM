@@ -8,11 +8,19 @@ pub struct Assets {
 
 impl Default for Assets {
     fn default() -> Self {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("public");
-        let base_dir = if manifest_dir.exists() {
-            manifest_dir
+        let exe_public = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|dir| dir.join("public")));
+
+        let base_dir = if let Some(exe_dir) = exe_public.filter(|path| path.is_dir()) {
+            exe_dir
         } else {
-            PathBuf::from("public")
+            let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("public");
+            if manifest_dir.exists() {
+                manifest_dir
+            } else {
+                PathBuf::from("public")
+            }
         };
         Self { base_dir }
     }

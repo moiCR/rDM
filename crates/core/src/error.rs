@@ -44,4 +44,10 @@ pub enum EngineError {
 
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+
+    #[error("No update installer found in release assets")]
+    NoUpdateInstaller,
+
+    #[error("Update failed: {0}")]
+    UpdateError(String),
 }

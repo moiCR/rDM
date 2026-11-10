@@ -15,7 +15,10 @@ use uuid::Uuid;
 use crate::{
     disk::DiskManager,
     error::EngineError,
-    task::{DownloadSegment, PersistedTask, PostProcessAction, SegmentStatus, Task, TaskStatus},
+    task::{
+        DownloadSegment, PersistedTask, PostProcessAction, SegmentStatus, Task, TaskState,
+        TaskStatus,
+    },
 };
 
 use super::{
@@ -173,7 +176,7 @@ impl DownloadModule {
 
     async fn persist_snapshot(
         &self,
-        status_update: Option<(Uuid, &TaskStatus)>,
+        state_update: Option<(Uuid, &TaskState)>,
     ) -> Result<(), EngineError> {
         let state_dir = self.config.config().state_dir;
         let tasks: Vec<_> = self
@@ -183,10 +186,11 @@ impl DownloadModule {
             .values()
             .map(|task| {
                 let mut snapshot = task.to_persisted();
-                if let Some((id, status)) = status_update
+                if let Some((id, state)) = state_update
                     && id == task.id
                 {
-                    snapshot.status = status.clone();
+                    snapshot.status = state.status.clone();
+                    snapshot.completed_at = state.completed_at;
                 }
                 snapshot
             })
@@ -651,13 +655,16 @@ impl DownloadModule {
                         TaskStatus::ConversionFailed(error)
                     }
                 };
+                let state = TaskState::new(status);
                 let _write = download.state_write.lock().await;
-                let saved = download.persist_snapshot(Some((task.id, &status))).await;
-                if was_staged && saved.is_ok() && matches!(status, TaskStatus::ConversionFailed(_))
+                let saved = download.persist_snapshot(Some((task.id, &state))).await;
+                if was_staged
+                    && saved.is_ok()
+                    && matches!(state.status, TaskStatus::ConversionFailed(_))
                 {
                     download.multimedia.discard_staging(&task).await;
                 }
-                task.set_status(status);
+                task.set_state(state);
             }
             download.process_queue().await;
         });

@@ -4,14 +4,31 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chrono::{DateTime, Datelike, Days, Local, NaiveDate};
 use gpui::{App, AsyncApp, Context, Entity, Global, WeakEntity};
 use rdm_core::{
     Core, Engine,
     task::{Task, TaskStatus},
+    updater::{ReleaseInfo, UpdateProgress},
 };
 use uuid::Uuid;
 
 use crate::views::NewDownloadModalState;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdaterStatus {
+    Idle,
+    Checking,
+    UpToDate,
+    Available(ReleaseInfo),
+    Downloading {
+        info: ReleaseInfo,
+        downloaded_bytes: u64,
+        total_bytes: u64,
+    },
+    Installing,
+    Error(String),
+}
 
 #[derive(Default, Clone, Copy)]
 pub struct QuickDownloadState {
@@ -39,6 +56,59 @@ pub struct TasksModel {
     tasks: Vec<TaskSnapshot>,
     previous_bytes: Vec<(Uuid, u64)>,
     last_sample_at: Instant,
+    download_history: Option<DownloadHistory>,
+    updater_status: UpdaterStatus,
+    active_update_progress: Option<Arc<UpdateProgress>>,
+}
+
+pub(crate) const HISTORY_WEEKS: usize = 53;
+pub(crate) const HISTORY_WEEKDAYS: usize = 7;
+const HISTORY_DAYS: usize = 365;
+
+pub(crate) struct DownloadHistory {
+    pub first_week: NaiveDate,
+    pub first_cell: usize,
+    pub last_cell: usize,
+    pub counts: [usize; HISTORY_WEEKS * HISTORY_WEEKDAYS],
+    pub total: usize,
+    pub undated: usize,
+}
+
+impl DownloadHistory {
+    fn from_tasks(tasks: &[Arc<Task>], today: NaiveDate) -> Option<Self> {
+        let start = today.checked_sub_days(Days::new((HISTORY_DAYS - 1) as u64))?;
+        let first_cell = start.weekday().num_days_from_monday() as usize;
+        let first_week = start.checked_sub_days(Days::new(first_cell as u64))?;
+        let mut history = Self {
+            first_week,
+            first_cell,
+            last_cell: first_cell + HISTORY_DAYS - 1,
+            counts: [0; HISTORY_WEEKS * HISTORY_WEEKDAYS],
+            total: 0,
+            undated: 0,
+        };
+
+        for task in tasks {
+            let (status, completed_at) = task.status_and_completion();
+            if status != TaskStatus::Completed {
+                continue;
+            }
+            let Some(date) = completed_at
+                .and_then(|seconds| i64::try_from(seconds).ok())
+                .and_then(|seconds| DateTime::from_timestamp(seconds, 0))
+                .map(|time| time.with_timezone(&Local).date_naive())
+            else {
+                history.undated += 1;
+                continue;
+            };
+            if (start..=today).contains(&date) {
+                let cell = date.signed_duration_since(first_week).num_days() as usize;
+                history.counts[cell] += 1;
+                history.total += 1;
+            }
+        }
+        Some(history)
+    }
 }
 
 impl TasksModel {
@@ -47,13 +117,27 @@ impl TasksModel {
         runtime: Arc<tokio::runtime::Runtime>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let auto_check = core.config().ui_config().auto_check_updates;
         let model = Self {
             core: Arc::clone(&core),
             runtime: Arc::clone(&runtime),
             tasks: Vec::new(),
             previous_bytes: Vec::new(),
             last_sample_at: Instant::now(),
+            download_history: None,
+            updater_status: UpdaterStatus::Idle,
+            active_update_progress: None,
         };
+
+        if auto_check {
+            cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
+                cx.background_executor().timer(Duration::from_secs(3)).await;
+                let _ = entity.update(cx, |this, cx| {
+                    this.check_for_updates(cx);
+                });
+            })
+            .detach();
+        }
 
         let mut intercept_rx = core.subscribe_intercepted();
         cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -86,12 +170,17 @@ impl TasksModel {
 
         cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
             let core_init = Arc::clone(&core);
-            let initial_tasks = runtime
-                .spawn(async move { core_init.engine().all_tasks().await })
+            let (initial_tasks, history) = runtime
+                .spawn(async move {
+                    let tasks = core_init.engine().all_tasks().await;
+                    let history = DownloadHistory::from_tasks(&tasks, Local::now().date_naive());
+                    (tasks, history)
+                })
                 .await
                 .unwrap_or_default();
 
             let _ = entity.update(cx, |this, cx| {
+                this.download_history = history;
                 this.refresh_snapshots(initial_tasks, true);
                 cx.notify();
                 cx.refresh_windows();
@@ -108,7 +197,7 @@ impl TasksModel {
                 let should_persist = tick_count.is_multiple_of(4);
 
                 let core_loop = Arc::clone(&core);
-                let tasks = runtime
+                let (tasks, history) = runtime
                     .spawn(async move {
                         let all = core_loop.engine().all_tasks().await;
                         if should_persist
@@ -116,12 +205,25 @@ impl TasksModel {
                         {
                             let _ = core_loop.engine().save_state().await;
                         }
-                        all
+                        let history = DownloadHistory::from_tasks(&all, Local::now().date_naive());
+                        (all, history)
                     })
                     .await
                     .unwrap_or_default();
 
                 let update_result = entity.update(cx, |this, cx| {
+                    if let Some(progress) = &this.active_update_progress
+                        && let UpdaterStatus::Downloading { ref info, .. } = this.updater_status
+                    {
+                        let downloaded = progress.downloaded_bytes.load(Ordering::Relaxed);
+                        let total = progress.total_bytes.load(Ordering::Relaxed);
+                        this.updater_status = UpdaterStatus::Downloading {
+                            info: info.clone(),
+                            downloaded_bytes: downloaded,
+                            total_bytes: total,
+                        };
+                    }
+                    this.download_history = history;
                     this.refresh_snapshots(tasks, true);
                     cx.notify();
                     cx.refresh_windows();
@@ -137,8 +239,135 @@ impl TasksModel {
         model
     }
 
+    pub fn updater_status(&self) -> &UpdaterStatus {
+        &self.updater_status
+    }
+
+    pub fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.updater_status,
+            UpdaterStatus::Checking | UpdaterStatus::Downloading { .. } | UpdaterStatus::Installing
+        ) {
+            return;
+        }
+        self.updater_status = UpdaterStatus::Checking;
+        cx.notify();
+        cx.refresh_windows();
+
+        let runtime = Arc::clone(&self.runtime);
+        cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = runtime
+                .spawn(async move { rdm_core::updater::check_for_update().await })
+                .await;
+
+            let status = match result {
+                Ok(Ok(Some(info))) => UpdaterStatus::Available(info),
+                Ok(Ok(None)) => UpdaterStatus::UpToDate,
+                Ok(Err(e)) => UpdaterStatus::Error(e.to_string()),
+                Err(e) => UpdaterStatus::Error(e.to_string()),
+            };
+
+            let _ = entity.update(cx, |this, cx| {
+                this.updater_status = status;
+                cx.notify();
+                cx.refresh_windows();
+            });
+        })
+        .detach();
+    }
+
+    pub fn install_update(&mut self, cx: &mut Context<Self>) {
+        let UpdaterStatus::Available(info) = self.updater_status.clone() else {
+            return;
+        };
+        let Some(installer_url) = info.installer_url.clone() else {
+            self.updater_status =
+                UpdaterStatus::Error("No se encontró instalador en los adjuntos".into());
+            cx.notify();
+            cx.refresh_windows();
+            return;
+        };
+
+        let progress = Arc::new(UpdateProgress::default());
+        self.active_update_progress = Some(Arc::clone(&progress));
+        self.updater_status = UpdaterStatus::Downloading {
+            info: info.clone(),
+            downloaded_bytes: 0,
+            total_bytes: info.installer_size,
+        };
+        cx.notify();
+        cx.refresh_windows();
+
+        let installer_name = info
+            .installer_name
+            .clone()
+            .unwrap_or_else(|| "rDM-Setup.exe".into());
+        let temp_target = std::env::temp_dir().join(installer_name);
+
+        let runtime = Arc::clone(&self.runtime);
+        let progress_download = Arc::clone(&progress);
+        let target_download = temp_target.clone();
+
+        cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let download_res = runtime
+                .spawn(async move {
+                    rdm_core::updater::download_installer(
+                        &installer_url,
+                        &target_download,
+                        progress_download,
+                    )
+                    .await
+                })
+                .await;
+
+            match download_res {
+                Ok(Ok(())) => {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.updater_status = UpdaterStatus::Installing;
+                        cx.notify();
+                        cx.refresh_windows();
+                    });
+
+                    if let Err(e) = rdm_core::updater::launch_installer(&temp_target) {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.updater_status = UpdaterStatus::Error(e.to_string());
+                            this.active_update_progress = None;
+                            cx.notify();
+                            cx.refresh_windows();
+                        });
+                    } else {
+                        let _ = entity.update(cx, |_, cx| {
+                            cx.quit();
+                        });
+                    }
+                }
+                Ok(Err(e)) => {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.updater_status = UpdaterStatus::Error(e.to_string());
+                        this.active_update_progress = None;
+                        cx.notify();
+                        cx.refresh_windows();
+                    });
+                }
+                Err(e) => {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.updater_status = UpdaterStatus::Error(e.to_string());
+                        this.active_update_progress = None;
+                        cx.notify();
+                        cx.refresh_windows();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     pub fn tasks(&self) -> &[TaskSnapshot] {
         &self.tasks
+    }
+
+    pub(crate) fn download_history(&self) -> Option<&DownloadHistory> {
+        self.download_history.as_ref()
     }
 
     pub(crate) fn tokio_handle(&self) -> &tokio::runtime::Handle {
@@ -384,5 +613,50 @@ impl CoreContext for App {
 
     fn tasks_model(&self) -> &Entity<TasksModel> {
         &self.global::<AppState>().tasks_model
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn download_history_counts_only_dated_completions_in_the_calendar_window()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 9).ok_or("invalid date")?;
+        let make_task = |status, days_ago: Option<u64>| -> Option<Arc<Task>> {
+            let task = Task::new(Uuid::new_v4(), String::new(), PathBuf::new(), 0, 1, None);
+            let mut stored = task.to_persisted();
+            stored.status = status;
+            stored.completed_at = match days_ago {
+                Some(days) => {
+                    let time = today
+                        .checked_sub_days(Days::new(days))?
+                        .and_hms_opt(12, 0, 0)?;
+                    Some(
+                        u64::try_from(Local.from_local_datetime(&time).single()?.timestamp())
+                            .ok()?,
+                    )
+                }
+                None => None,
+            };
+            Some(Arc::new(Task::from_persisted(stored)))
+        };
+        let tasks = [
+            make_task(TaskStatus::Completed, Some(0)).ok_or("missing completion")?,
+            make_task(TaskStatus::Completed, Some(0)).ok_or("missing completion")?,
+            make_task(TaskStatus::Completed, Some(364)).ok_or("missing oldest completion")?,
+            make_task(TaskStatus::Completed, Some(365)).ok_or("missing excluded completion")?,
+            make_task(TaskStatus::Completed, None).ok_or("missing legacy completion")?,
+            make_task(TaskStatus::Paused, Some(0)).ok_or("missing paused task")?,
+        ];
+        let history =
+            DownloadHistory::from_tasks(&tasks, today).ok_or("invalid calendar window")?;
+        assert_eq!(history.counts[history.first_cell], 1);
+        assert_eq!(history.counts[history.last_cell], 2);
+        assert_eq!(history.total, 3);
+        assert_eq!(history.undated, 1);
+        Ok(())
     }
 }

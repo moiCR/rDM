@@ -559,15 +559,14 @@ impl MultimediaModule {
             return;
         };
         let staged_path = staging_path(&persisted.output_path, persisted.id);
-        let was_published = persisted.post_process.is_some()
-            && staged_size.is_some_and(|size| {
-                size > 0
-                    && std::fs::symlink_metadata(&staged_path)
-                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-                    && std::fs::symlink_metadata(&persisted.output_path)
-                        .is_ok_and(|metadata| metadata.is_file() && metadata.len() == size)
-            });
-        if was_published {
+        if persisted.post_process.is_some()
+            && let Some(size) = staged_size.filter(|&size| size > 0)
+            && std::fs::symlink_metadata(&staged_path)
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            && let Ok(metadata) = std::fs::symlink_metadata(&persisted.output_path)
+            && metadata.is_file()
+            && metadata.len() == size
+        {
             for (path, _) in track_paths(
                 &persisted.output_path,
                 persisted.total_size,
@@ -576,6 +575,11 @@ impl MultimediaModule {
                 let _ = std::fs::remove_file(path);
             }
             persisted.status = TaskStatus::Completed;
+            persisted.completed_at = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs());
         }
     }
 }

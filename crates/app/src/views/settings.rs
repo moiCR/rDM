@@ -6,8 +6,11 @@ use std::{path::PathBuf, sync::Arc};
 use crate::{
     components::{ActionTooltip, IconButton, Modal, ModalSubView, PillButton},
     layout::NavigationStyle,
-    state::CoreContext,
-    theme::{ActiveTheme, PrimaryColors, ThemeManager, dark::DarkTheme, light::LightTheme},
+    state::{CoreContext, UpdaterStatus},
+    theme::{
+        ActiveTheme, PrimaryColors, ThemeManager, dark::DarkTheme, light::LightTheme,
+        parse_hex_color,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -774,7 +777,157 @@ impl RenderOnce for SettingsModal {
                                                     .w_full(),
                                             ),
                                     ),
-                            ),
+                            )
+                            .child({
+                                let updater_status = cx.tasks_model().read(cx).updater_status().clone();
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_6()
+                                    .py_2()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1p5()
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_size(px(14.0))
+                                                    .text_color(palette.text_color)
+                                                    .child(format!(
+                                                        "Actualizaciones (v{})",
+                                                        rdm_core::updater::current_version()
+                                                    )),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(palette.text_muted)
+                                                    .child(match &updater_status {
+                                                        UpdaterStatus::Idle => {
+                                                            "Comprueba si hay nuevas versiones de rDM disponibles.".to_string()
+                                                        }
+                                                        UpdaterStatus::Checking => {
+                                                            "Buscando actualizaciones en GitHub...".to_string()
+                                                        }
+                                                        UpdaterStatus::UpToDate => {
+                                                            "rDM está actualizado a la versión más reciente.".to_string()
+                                                        }
+                                                        UpdaterStatus::Available(info) => {
+                                                            format!("¡Versión v{} disponible para instalar!", info.version)
+                                                        }
+                                                        UpdaterStatus::Downloading {
+                                                            downloaded_bytes,
+                                                            total_bytes,
+                                                            ..
+                                                        } => {
+                                                            if *total_bytes > 0 {
+                                                                format!(
+                                                                    "Descargando instalador: {:.1} MB / {:.1} MB ({:.0}%)",
+                                                                    *downloaded_bytes as f64 / 1048576.0,
+                                                                    *total_bytes as f64 / 1048576.0,
+                                                                    (*downloaded_bytes as f64 / *total_bytes as f64) * 100.0
+                                                                )
+                                                            } else {
+                                                                format!(
+                                                                    "Descargando instalador: {:.1} MB...",
+                                                                    *downloaded_bytes as f64 / 1048576.0
+                                                                )
+                                                            }
+                                                        }
+                                                        UpdaterStatus::Installing => {
+                                                            "Instalando actualización y reiniciando rDM...".to_string()
+                                                        }
+                                                        UpdaterStatus::Error(e) => {
+                                                            format!("Error de actualización: {e}")
+                                                        }
+                                                    }),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(match &updater_status {
+                                                UpdaterStatus::Available(_) => {
+                                                    let tasks_model = cx.tasks_model().clone();
+                                                    PillButton::new("btn-install-update", "Actualizar ahora")
+                                                        .selected(true)
+                                                        .on_click(move |_, window, cx| {
+                                                            tasks_model.update(cx, |model, cx| {
+                                                                model.install_update(cx);
+                                                            });
+                                                            window.refresh();
+                                                        })
+                                                }
+                                                UpdaterStatus::Checking
+                                                | UpdaterStatus::Downloading { .. }
+                                                | UpdaterStatus::Installing => {
+                                                    PillButton::new("btn-checking-update", "Comprobando...")
+                                                        .selected(false)
+                                                }
+                                                _ => {
+                                                    let tasks_model = cx.tasks_model().clone();
+                                                    PillButton::new("btn-check-updates", "Buscar actualizaciones")
+                                                        .selected(false)
+                                                        .on_click(move |_, window, cx| {
+                                                            tasks_model.update(cx, |model, cx| {
+                                                                model.check_for_updates(cx);
+                                                            });
+                                                            window.refresh();
+                                                        })
+                                                }
+                                            }),
+                                    )
+                            })
+                            .child({
+                                let auto_check = current_ui_cfg.auto_check_updates;
+                                let cfg_auto_check = config_manager.clone();
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_6()
+                                    .py_2()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1p5()
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_size(px(14.0))
+                                                    .text_color(palette.text_color)
+                                                    .child("Búsqueda automática"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(palette.text_muted)
+                                                    .child("Comprobar nuevas versiones automáticamente al iniciar la app."),
+                                            ),
+                                    )
+                                    .child(
+                                        PillButton::new(
+                                            "btn-toggle-auto-check",
+                                            if auto_check { "Activado" } else { "Desactivado" },
+                                        )
+                                        .selected(auto_check)
+                                        .on_click(move |_, window, _cx| {
+                                            let next = !auto_check;
+                                            let _ = cfg_auto_check.update_ui_config(|u| {
+                                                u.auto_check_updates = next;
+                                            });
+                                            window.refresh();
+                                        }),
+                                    )
+                            }),
                     ),
             )
     }
@@ -808,10 +961,10 @@ impl SettingsModal {
                             .items_center()
                             .gap_2p5()
                             .children(row1.iter().map(|&hex| {
-                                Self::figma_color_squircle(
+                                Self::accent_swatch(
                                     hex,
                                     current_accent,
-                                    palette.primary,
+                                    palette,
                                     state.clone(),
                                     config.clone(),
                                 )
@@ -823,10 +976,10 @@ impl SettingsModal {
                             .items_center()
                             .gap_2p5()
                             .children(row2.iter().map(|&hex| {
-                                Self::figma_color_squircle(
+                                Self::accent_swatch(
                                     hex,
                                     current_accent,
-                                    palette.primary,
+                                    palette,
                                     state.clone(),
                                     config.clone(),
                                 )
@@ -902,28 +1055,24 @@ impl SettingsModal {
             )
     }
 
-    fn figma_color_squircle(
+    fn accent_swatch(
         hex: &'static str,
         current: &str,
-        primary: PrimaryColors,
+        palette: ModalPalette,
         state: Entity<SettingsFormState>,
         config: Arc<rdm_config::ConfigManager>,
     ) -> impl IntoElement {
         let is_selected = current.eq_ignore_ascii_case(hex);
         let is_default = hex.is_empty();
-        let (base_color, darker_border) = match hex {
-            "#9e9e9e" => (rgb(0x9e9e9e), rgb(0x737373)),
-            "#1e1e1e" => (rgb(0x1e1e1e), rgb(0x0a0a0a)),
-            "#ef4444" => (rgb(0xef4444), rgb(0xb91c1c)),
-            "#f97316" => (rgb(0xf97316), rgb(0xc2410c)),
-            "#10b981" => (rgb(0x10b981), rgb(0x047857)),
-            "#4422ff" => (rgb(0x4422ff), rgb(0x280dbb)),
-            "#9900ff" => (rgb(0x9900ff), rgb(0x6b00b3)),
-            "#ff0099" => (rgb(0xff0099), rgb(0xb8006e)),
-            "#e07070" => (rgb(0xe07070), rgb(0xb84848)),
-            _ => (primary.fill, primary.border),
-        };
-        let state_click = state.clone();
+        let color = parse_hex_color(hex).unwrap_or(palette.primary.fill);
+        let outline = palette.text_color;
+        let surface = linear_gradient(
+            145.0,
+            linear_color_stop(color.blend(rgb(0xffffff).opacity(0.18)), 0.0),
+            linear_color_stop(color.blend(rgb(0x000000).opacity(0.20)), 1.0),
+        );
+        let edge = color.blend(outline.opacity(0.24));
+        let selection = outline.opacity(0.75);
 
         let swatch = div()
             .id(if is_default {
@@ -932,16 +1081,20 @@ impl SettingsModal {
                 ElementId::Name(format!("color-{hex}").into())
             })
             .size(px(46.0))
-            .relative()
-            .overflow_hidden()
-            .rounded(if is_selected { px(16.0) } else { px(99.0) })
-            .bg(base_color)
+            .rounded_full()
             .border_2()
-            .border_color(darker_border)
+            .border_color(selection.opacity(if is_selected { 1.0 } else { 0.0 }))
+            .p(px(1.0))
             .cursor_pointer()
-            .hover(move |s| s.opacity(0.9))
+            .hover(move |s| {
+                s.border_color(if is_selected {
+                    selection
+                } else {
+                    outline.opacity(0.38)
+                })
+            })
             .on_click(move |_event, window, cx| {
-                state_click.update(cx, |f, _| {
+                state.update(cx, |f, _| {
                     f.accent_color = hex.to_string();
                 });
                 let _ = config.update_ui_config(|ui| {
@@ -954,23 +1107,11 @@ impl SettingsModal {
             })
             .child(
                 div()
-                    .absolute()
-                    .top(px(2.0))
-                    .left(px(5.0))
-                    .right(px(5.0))
-                    .h(px(16.0))
+                    .size_full()
                     .rounded_full()
-                    .bg(rgba(0xffffff45)),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .right_0()
-                    .h(px(12.0))
-                    .rounded_b(if is_selected { px(14.0) } else { px(99.0) })
-                    .bg(rgba(0x00000028)),
+                    .bg(surface)
+                    .border_1()
+                    .border_color(edge),
             );
 
         if is_default {

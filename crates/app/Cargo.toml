@@ -18,3 +18,9 @@ rdm-config.workspace = true
 uuid.workspace = true
 anyhow = { workspace = true }
 smallvec = "1.16.4"
+chrono = "0.4.45"
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+

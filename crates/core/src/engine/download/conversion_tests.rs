@@ -401,6 +401,13 @@ async fn ffmpeg_publishes_mp4_and_mp3_with_conversion_only_retries()
     mp3.set_status(TaskStatus::Paused);
     engine.resume_task(mp3.id).await?;
     assert_eq!(wait_for_conversion(&mp3).await?, TaskStatus::Completed);
+    let restored = test_engine(&directory)?;
+    let completion = mp3.status_and_completion();
+    assert!(completion.1.is_some());
+    assert_eq!(
+        restored.get_task(mp3.id).await?.status_and_completion(),
+        completion
+    );
     assert!(tokio::fs::read(&mp3.output_path).await?.starts_with(b"ID3"));
     assert!(!tokio::fs::try_exists(mp3_input).await?);
     tokio::fs::remove_dir_all(directory).await?;

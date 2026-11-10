@@ -4,8 +4,9 @@ use gpui_kit::component::input::{Input, InputState};
 use crate::{
     components::{ActionTooltip, IconButton},
     layout::toggle_sidebar,
-    state::{CoreContext, QuickDownloadState},
+    state::{CoreContext, QuickDownloadState, UpdaterStatus},
     theme::ActiveTheme,
+    views::SettingsModalState,
 };
 
 #[derive(IntoElement)]
@@ -57,6 +58,27 @@ impl RenderOnce for Titlebar {
         let q_clear = quick_input.clone();
         let current_text = quick_input.read(cx).text().to_string();
         let has_text = !current_text.trim().is_empty();
+
+        let updater_status = cx.tasks_model().read(cx).updater_status().clone();
+        let update_badge = match updater_status {
+            UpdaterStatus::Available(info) => {
+                Some((format!("v{} disponible", info.version), false))
+            }
+            UpdaterStatus::Downloading {
+                downloaded_bytes,
+                total_bytes,
+                ..
+            } => {
+                let pct = if total_bytes > 0 {
+                    (downloaded_bytes as f64 / total_bytes as f64 * 100.0) as u32
+                } else {
+                    0
+                };
+                Some((format!("Actualizando... {pct}%"), true))
+            }
+            _ => None,
+        };
+        let accent = cx.theme().accent();
 
         div()
             .flex()
@@ -243,6 +265,42 @@ impl RenderOnce for Titlebar {
                     .flex_1()
                     .h_full(),
             )
+            .children(update_badge.map(|(label, is_downloading)| {
+                div()
+                    .id("btn-titlebar-update-badge")
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .px_2p5()
+                    .py_1()
+                    .mr_2()
+                    .rounded_full()
+                    .bg(accent.opacity(0.15))
+                    .border_1()
+                    .border_color(accent.opacity(0.35))
+                    .text_color(accent)
+                    .text_xs()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(accent.opacity(0.25)))
+                    .on_click(move |_event, window, cx| {
+                        cx.set_global(SettingsModalState {
+                            open: true,
+                            subview: None,
+                        });
+                        window.refresh();
+                    })
+                    .child(
+                        svg()
+                            .path(if is_downloading {
+                                "icons/loader.svg"
+                            } else {
+                                "icons/download.svg"
+                            })
+                            .size_3()
+                            .text_color(accent),
+                    )
+                    .child(label)
+            }))
             .child(
                 div()
                     .flex()
