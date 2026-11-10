@@ -53,7 +53,7 @@ fn main() {
             let mut res = winres::WindowsResource::new();
             res.set_icon(public_ico_path.to_str().unwrap_or("public/app_icon.ico"));
             res.set("ProductName", "rDM");
-            res.set("FileDescription", "rDM - Internet Download Manager");
+            res.set("FileDescription", "rDM");
             res.set("LegalCopyright", "Copyright (c) 2026 moiCR");
             let _ = res.compile();
         }
