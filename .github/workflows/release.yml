@@ -4,50 +4,64 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-
+  release:
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: release-create-${{ github.ref_name }}
+      cancel-in-progress: false
     steps:
-      - name: Checkout repository
+      - name: Check out release source
         uses: actions/checkout@v4
 
-      - name: Setup Rust toolchain
+      - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-
-      - name: Extract version
-        id: vars
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         shell: bash
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="rDM") | .version')
+          version="$(cargo metadata --locked --no-deps --format-version 1 |
+            jq -er '.packages[] | select(.name == "rDM") | .version')"
+          if [[ "$RELEASE_TAG" != "v$version" ]]; then
+            echo "Release tag $RELEASE_TAG does not match app version $version." >&2
+            exit 1
           fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
-      - name: Build release binaries
-        run: cargo build --release --workspace
-
-      - name: Package installer and portable archive
-        shell: pwsh
+      - name: Create GitHub release from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
         run: |
-          ./scripts/package-windows.ps1 -Version "${{ steps.vars.outputs.version }}"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --title "rDM $RELEASE_TAG" --notes-file CHANGELOG.md --latest
 
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/rDM-Setup-*.exe
-            dist/rDM-*.zip
-          draft: false
-          prerelease: false
-          generate_release_notes: true
+  windows:
+    needs: release
+    uses: ./.github/workflows/windows.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+      source_ref: ${{ github.sha }}
+
+  linux:
+    needs: release
+    uses: ./.github/workflows/linux.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+      source_ref: ${{ github.sha }}
+
+  extensions:
+    needs: release
+    uses: ./.github/workflows/extensions.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+      source_ref: ${{ github.sha }}

@@ -8,7 +8,7 @@ $rootDir = Split-Path -Parent $PSScriptRoot
 Set-Location $rootDir
 
 Write-Host "==> Compilando rDM en modo Release..." -ForegroundColor Cyan
-cargo build --release --workspace
+cargo build --release --locked --workspace
 
 $distDir = Join-Path $rootDir "dist"
 if (Test-Path $distDir) {

@@ -1,0 +1,63 @@
+name: Browser Extensions
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Existing GitHub release tag to update
+        required: true
+        type: string
+      source_ref:
+        description: Git ref to build
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag, for example v1.0.0
+        required: true
+        type: string
+      source_ref:
+        description: Git ref to build (defaults to the release tag)
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-2025
+    concurrency:
+      group: release-extensions-${{ inputs.release_tag }}
+      cancel-in-progress: false
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || format('refs/tags/{0}', inputs.release_tag) }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+
+      - name: Build browser extensions
+        working-directory: extension
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Package browser extensions
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Compress-Archive -Path 'extension/chrome/*' -DestinationPath 'dist/rdm-chrome.zip' -Force
+          Compress-Archive -Path 'extension/firefox/*' -DestinationPath 'dist/rdm-firefox.zip' -Force
+
+      - name: Upload browser extensions to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload --repo $env:GITHUB_REPOSITORY --clobber -- $env:RELEASE_TAG dist/rdm-chrome.zip dist/rdm-firefox.zip

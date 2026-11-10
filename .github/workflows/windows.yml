@@ -1,0 +1,83 @@
+name: Windows
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Existing GitHub release tag to update
+        required: true
+        type: string
+      source_ref:
+        description: Git ref to build
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag, for example v1.0.0
+        required: true
+        type: string
+      source_ref:
+        description: Git ref to build (defaults to the release tag)
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-2025
+    concurrency:
+      group: release-windows-${{ inputs.release_tag }}
+      cancel-in-progress: false
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || format('refs/tags/{0}', inputs.release_tag) }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+
+      - name: Validate release target
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          $version = ($metadata.packages | Where-Object { $_.name -ceq 'rDM' }).version
+          if (-not $version -or $env:RELEASE_TAG -cne "v$version") {
+            throw "Release tag $env:RELEASE_TAG does not match app version $version."
+          }
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install Inno Setup
+        run: choco install innosetup --version=6.7.1 --yes --no-progress
+
+      - name: Build installer and portable archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          ./scripts/package-windows.ps1 -Version $env:VERSION
+
+      - name: Replace Windows release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $installer = "dist/rDM-Setup-v$env:VERSION-x64.exe"
+          $archive = "dist/rDM-v$env:VERSION-portable-x64.zip"
+          foreach ($asset in @($installer, $archive)) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
+              throw "Missing release asset $asset."
+            }
+          }
+          gh release upload $env:RELEASE_TAG $installer $archive --repo $env:GITHUB_REPOSITORY --clobber
