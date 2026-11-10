@@ -18,7 +18,7 @@ use crate::{
     assets::Assets,
     router::RootRouter,
     state::{AppState, TasksModel},
-    theme::{ThemeManager, dark::DarkTheme, light::LightTheme},
+    theme::ThemeManager,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,17 +41,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         gpui_router::init(cx);
 
         let mut theme_mgr = ThemeManager::new();
-        if ui_config.theme == "light" {
-            theme_mgr.set_theme(Box::new(LightTheme));
-            gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Light, None, cx);
-        } else {
-            theme_mgr.set_theme(Box::new(DarkTheme));
-            gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
-        }
         if let Some(accent) = ui_config.accent_override() {
             theme_mgr.set_accent_hex(accent);
         }
         cx.set_global(theme_mgr);
+        ThemeManager::apply_mode(&ui_config.theme, cx);
 
         let tasks_model = cx.new(|cx| TasksModel::new(Arc::clone(&core), Arc::clone(&runtime), cx));
         cx.set_global(AppState::new(core, tasks_model));

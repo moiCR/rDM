@@ -13,7 +13,7 @@ use rdm_core::{
 };
 use uuid::Uuid;
 
-use crate::views::NewDownloadModalState;
+use crate::views::NewDownloadModal;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdaterStatus {
@@ -30,12 +30,21 @@ pub enum UpdaterStatus {
     Error(String),
 }
 
-#[derive(Default, Clone, Copy)]
-pub struct QuickDownloadState {
-    pub expanded: bool,
+#[derive(Default)]
+pub struct DownloadRequest {
+    pub url: String,
+    pub output_path: Option<PathBuf>,
+    pub directory: Option<PathBuf>,
+    pub connections: Option<usize>,
+    pub referer: Option<String>,
+    pub post_process: Option<rdm_core::task::PostProcessAction>,
+    pub retry_task: Option<Uuid>,
 }
 
-impl Global for QuickDownloadState {}
+pub struct DownloadStartResult {
+    pub task_id: Option<Uuid>,
+    pub error: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub struct TaskSnapshot {
@@ -145,13 +154,10 @@ impl TasksModel {
                 match intercept_rx.recv().await {
                     Ok(intercepted) => {
                         let res = entity.update(cx, |_, cx| {
-                            cx.set_global(NewDownloadModalState {
-                                open: true,
-                                pending: Some(intercepted),
-                            });
                             cx.activate(true);
-                            for window in cx.windows() {
-                                let _ = window.update(cx, |_, window, _| {
+                            if let Some(handle) = cx.windows().into_iter().next() {
+                                let _ = handle.update(cx, |_, window, cx| {
+                                    NewDownloadModal::open(Some(intercepted), window, cx);
                                     window.activate_window();
                                     window.refresh();
                                 });
@@ -450,49 +456,76 @@ impl TasksModel {
         output_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
-        self.start_configured_download(url, output_path, None, None, None, cx);
+        self.start_configured_download(
+            DownloadRequest {
+                url,
+                output_path,
+                ..Default::default()
+            },
+            cx,
+        )
+        .detach();
     }
 
     pub fn start_configured_download(
         &self,
-        url: String,
-        output_path: Option<PathBuf>,
-        connections: Option<usize>,
-        referer: Option<String>,
-        post_process: Option<rdm_core::task::PostProcessAction>,
+        request: DownloadRequest,
         cx: &mut Context<Self>,
-    ) {
+    ) -> gpui::Task<DownloadStartResult> {
+        let retry_task = request.retry_task;
         let core = Arc::clone(&self.core);
         let runtime = Arc::clone(&self.runtime);
         cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let core_task = Arc::clone(&core);
-            let all = runtime
+            let outcome = runtime
                 .spawn(async move {
-                    if let Ok(task) = core_task
-                        .engine()
-                        .create_task_with_options(
-                            &url,
-                            output_path,
-                            connections,
-                            referer,
-                            post_process,
-                        )
-                        .await
-                    {
-                        let _ = core_task.engine().start_task(task.id).await;
+                    let mut task_id = request.retry_task;
+                    let result = async {
+                        if task_id.is_none() {
+                            if let Some(directory) = &request.directory {
+                                core.disk().ensure_directory(directory).await?;
+                            }
+                            let task = core
+                                .engine()
+                                .create_task_with_options(
+                                    &request.url,
+                                    request.output_path,
+                                    request.connections,
+                                    request.referer,
+                                    request.post_process,
+                                )
+                                .await?;
+                            task_id = Some(task.id);
+                        }
+                        if let Some(id) = task_id {
+                            core.engine().start_task(id).await?;
+                        }
+                        Ok::<(), rdm_core::EngineError>(())
                     }
-                    core_task.engine().all_tasks().await
+                    .await;
+                    (
+                        DownloadStartResult {
+                            task_id,
+                            error: result.err().map(|error| error.to_string()),
+                        },
+                        core.engine().all_tasks().await,
+                    )
                 })
-                .await
-                .unwrap_or_default();
-
-            let _ = entity.update(cx, |this, cx| {
-                this.refresh_snapshots(all, false);
-                cx.notify();
-                cx.refresh_windows();
-            });
+                .await;
+            match outcome {
+                Ok((result, all)) => {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.refresh_snapshots(all, false);
+                        cx.notify();
+                        cx.refresh_windows();
+                    });
+                    result
+                }
+                Err(error) => DownloadStartResult {
+                    task_id: retry_task,
+                    error: Some(error.to_string()),
+                },
+            }
         })
-        .detach();
     }
 
     pub fn pause_task(&self, task_id: Uuid, cx: &mut Context<Self>) {

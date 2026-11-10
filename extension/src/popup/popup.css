@@ -1,19 +1,19 @@
 :root {
-  --bg-root: #060c16;
-  --bg-card: #0b1424;
-  --bg-surface: #0e192d;
-  --bg-elevated: #14223a;
-  --bg-hover: #1c2f4f;
-  --border-subtle: #14223a;
-  --border-default: #1e3252;
-  --text-primary: #ffffff;
-  --text-secondary: #8ea4c8;
-  --text-muted: #566a8a;
+  --bg-root: #070708;
+  --bg-card: #0d0d11;
+  --bg-surface: #15151a;
+  --bg-elevated: #1c1c21;
+  --bg-hover: #27272c;
+  --border-subtle: #1c1c21;
+  --border-default: #27272c;
+  --text-primary: #f2f6fc;
+  --text-secondary: #a0a0a8;
+  --text-muted: #777780;
   --accent: #223c61;
-  --accent-hover: #2d4d7c;
-  --accent-bright: #3b82f6;
-  --success: #34d399;
-  --danger: #f87171;
+  --accent-hover: #2c4c7a;
+  --accent-bright: #91add4;
+  --success: #6ed9ad;
+  --danger: #ff9c9c;
 }
 
 * {
@@ -43,7 +43,7 @@ body {
   width: 240px;
   height: 120px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(59, 130, 246, 0.14) 0%, rgba(124, 58, 237, 0.05) 60%, transparent 100%);
+  background: radial-gradient(circle, rgba(145, 173, 212, 0.1) 0%, rgba(34, 60, 97, 0.04) 60%, transparent 100%);
   pointer-events: none;
   z-index: 0;
 }
@@ -372,7 +372,7 @@ body {
 
 .status-indicator.online .status-dot {
   background-color: var(--success);
-  box-shadow: 0 0 8px rgba(52, 211, 153, 0.5);
+  box-shadow: 0 0 8px rgba(110, 217, 173, 0.5);
 }
 
 .status-indicator.offline {

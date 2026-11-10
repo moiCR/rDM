@@ -7,27 +7,31 @@ pub struct DarkTheme;
 
 impl Theme for DarkTheme {
     fn background(&self) -> Rgba {
-        rgb(0x060c16)
+        rgb(0x070708)
     }
 
     fn surface(&self) -> Rgba {
-        rgb(0x0b1424)
+        rgb(0x0d0d11)
+    }
+
+    fn input_background(&self) -> Option<Rgba> {
+        Some(rgb(0x15151a))
     }
 
     fn surface_hover(&self) -> Rgba {
-        rgb(0x121f33)
+        rgb(0x1c1c21)
     }
 
     fn border(&self) -> Rgba {
-        rgb(0x1b2a40)
+        rgb(0x27272c)
     }
 
     fn text_color(&self) -> Rgba {
-        rgb(0xeaf2ff)
+        rgb(0xa0a0a8)
     }
 
     fn text_muted(&self) -> Rgba {
-        rgb(0xaabbd2)
+        rgb(0x777780)
     }
 
     fn accent(&self) -> Rgba {

@@ -23,6 +23,7 @@ pub struct IconButton {
     tooltip: Option<SharedString>,
     shortcut: Option<SharedString>,
     color: Option<Rgba>,
+    background: Option<Rgba>,
     hover_bg: Option<Rgba>,
     on_click: Option<ClickHandler>,
     selected: bool,
@@ -42,6 +43,7 @@ impl IconButton {
             tooltip: None,
             shortcut: None,
             color: None,
+            background: None,
             hover_bg: None,
             on_click: None,
             selected: false,
@@ -86,6 +88,11 @@ impl IconButton {
 
     pub fn color(mut self, color: impl Into<Rgba>) -> Self {
         self.color = Some(color.into());
+        self
+    }
+
+    pub fn background(mut self, background: Rgba) -> Self {
+        self.background = Some(background);
         self
     }
 
@@ -164,6 +171,7 @@ impl RenderOnce for IconButton {
             .w(w)
             .h(h)
             .rounded(rounding)
+            .when_some(self.background, |this, background| this.bg(background))
             .when(is_selected, |this| {
                 this.bg(surface_hover).border_1().border_color(text_color)
             })

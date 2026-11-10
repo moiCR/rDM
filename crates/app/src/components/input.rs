@@ -6,6 +6,15 @@ pub use gpui_kit::component::input::{
 
 use crate::theme::ActiveTheme;
 
+pub fn themed_input(state: &Entity<InputState>, cx: &App) -> Input {
+    let input = Input::new(state);
+    if let Some(background) = cx.theme().input_background() {
+        input.bg(background)
+    } else {
+        input
+    }
+}
+
 #[derive(IntoElement)]
 pub struct TextInput {
     id: ElementId,
@@ -86,7 +95,11 @@ impl TextInput {
 
 impl RenderOnce for TextInput {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let bg = self.bg.unwrap_or_else(|| cx.theme().surface());
+        let theme = cx.theme();
+        let bg = self
+            .bg
+            .or_else(|| theme.input_background())
+            .unwrap_or_else(|| theme.surface());
         let border = self.border_color.unwrap_or_else(|| cx.theme().border());
         let text_color = self.text_color.unwrap_or_else(|| cx.theme().text_color());
 

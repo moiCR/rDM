@@ -11,6 +11,11 @@ use crate::error::EngineError;
 pub struct DiskManager {}
 
 impl DiskManager {
+    pub async fn ensure_directory(&self, path: &Path) -> Result<(), EngineError> {
+        tokio::fs::create_dir_all(path).await?;
+        Ok(())
+    }
+
     pub fn new() -> Self {
         Self {}
     }

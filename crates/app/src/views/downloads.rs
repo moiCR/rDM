@@ -7,8 +7,9 @@ use uuid::Uuid;
 
 use crate::{
     components::{ActionTooltip, IconButton, Modal, PillButton, ProgressBar},
-    state::{CoreContext, QuickDownloadState, TaskSnapshot, TasksModel},
+    state::{CoreContext, TaskSnapshot, TasksModel},
     theme::ActiveTheme,
+    views::NewDownloadModal,
 };
 
 #[derive(Default, Clone)]
@@ -481,8 +482,7 @@ impl DownloadsView {
                             .cursor_pointer()
                             .hover(move |style| style.text_color(palette.text_color).underline())
                             .on_click(|_, window, cx| {
-                                cx.set_global(QuickDownloadState { expanded: true });
-                                window.refresh();
+                                NewDownloadModal::open(None, window, cx);
                             })
                     })
                     .child("Pulsa + para añadir una"),

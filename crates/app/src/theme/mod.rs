@@ -2,6 +2,7 @@ pub mod dark;
 pub mod light;
 
 use gpui::{App, Context, Rgba, rgb};
+use gpui_kit::component::{Theme as ComponentTheme, ThemeMode};
 
 #[derive(Clone, Copy)]
 pub struct PrimaryColors {
@@ -13,6 +14,9 @@ pub struct PrimaryColors {
 pub trait Theme: 'static + Send + Sync {
     fn background(&self) -> Rgba;
     fn surface(&self) -> Rgba;
+    fn input_background(&self) -> Option<Rgba> {
+        None
+    }
     fn surface_hover(&self) -> Rgba;
     fn border(&self) -> Rgba;
     fn text_color(&self) -> Rgba;
@@ -55,6 +59,10 @@ impl Theme for ThemeManager {
 
     fn surface(&self) -> Rgba {
         self.active_theme.surface()
+    }
+
+    fn input_background(&self) -> Option<Rgba> {
+        self.active_theme.input_background()
     }
 
     fn surface_hover(&self) -> Rgba {
@@ -108,8 +116,27 @@ impl ThemeManager {
         self
     }
 
-    pub fn set_theme(&mut self, theme: Box<dyn Theme>) {
-        self.active_theme = theme;
+    pub fn apply_mode(mode: &str, cx: &mut App) {
+        let (theme, component_mode): (Box<dyn Theme>, _) = if mode == "light" {
+            (Box::new(light::LightTheme), ThemeMode::Light)
+        } else {
+            (Box::new(dark::DarkTheme), ThemeMode::Dark)
+        };
+        cx.global_mut::<Self>().active_theme = theme;
+        ComponentTheme::change(component_mode, None, cx);
+
+        if component_mode.is_dark() {
+            let dark = dark::DarkTheme;
+            ComponentTheme::update(cx, |theme| {
+                theme.colors.background = dark.background().into();
+                theme.colors.popover = dark.surface().into();
+                theme.colors.list_hover = dark.surface_hover().into();
+                theme.colors.border = dark.border().into();
+                theme.colors.input = dark.border().into();
+                theme.colors.foreground = dark.text_color().into();
+                theme.colors.muted_foreground = dark.text_muted().into();
+            });
+        }
     }
 
     pub fn set_accent(&mut self, color: Option<Rgba>) {

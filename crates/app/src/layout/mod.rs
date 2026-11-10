@@ -10,7 +10,7 @@ use crate::{
         sidebar::{Dock, Sidebar},
         titlebar::Titlebar,
     },
-    state::{CoreContext, QuickDownloadState},
+    state::CoreContext,
     theme::ActiveTheme,
     views::{DeleteDownloadModal, NewDownloadModal, SettingsModal},
 };
@@ -108,12 +108,8 @@ impl Layout for AppLayout {
                 } else if event.keystroke.modifiers.control
                     && event.keystroke.key.eq_ignore_ascii_case("n")
                 {
-                    let current = cx
-                        .try_global::<QuickDownloadState>()
-                        .map(|state| state.expanded)
-                        .unwrap_or(false);
-                    cx.set_global(QuickDownloadState { expanded: !current });
-                    window.refresh();
+                    NewDownloadModal::open(None, window, cx);
+                    cx.stop_propagation();
                 }
             })
             .flex()

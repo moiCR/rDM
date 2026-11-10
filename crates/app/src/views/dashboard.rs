@@ -6,9 +6,9 @@ use smallvec::SmallVec;
 
 use crate::{
     components::{ButtonRounded, IconButton, PillButton, ProgressBar},
-    state::{CoreContext, DownloadHistory, QuickDownloadState, TaskSnapshot},
+    state::{CoreContext, DownloadHistory, TaskSnapshot},
     theme::{ActiveTheme, Theme},
-    views::SettingsModalState,
+    views::{NewDownloadModal, SettingsModalState},
 };
 
 use super::downloads::{download_card_surface, format_bytes, task_progress_percent};
@@ -154,8 +154,7 @@ impl DashboardView {
                         PillButton::new("dashboard-new-download", "Nueva descarga")
                             .selected(true)
                             .on_click(|_, window, cx| {
-                                cx.set_global(QuickDownloadState { expanded: true });
-                                window.refresh();
+                                NewDownloadModal::open(None, window, cx);
                             }),
                     ),
             )
@@ -245,7 +244,7 @@ impl DashboardView {
                                     .on_click(|_, window, cx| {
                                         cx.set_global(SettingsModalState {
                                             open: true,
-                                            subview: None,
+                                            ..Default::default()
                                         });
                                         window.refresh();
                                     }),

@@ -11,6 +11,8 @@ pub type ModalCloseHandler = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
 pub struct Modal {
     id: ElementId,
     open: bool,
+    compact: bool,
+    fit_content: bool,
     width: Option<Pixels>,
     max_height: Option<Pixels>,
     title: Option<SharedString>,
@@ -27,6 +29,8 @@ impl Modal {
         Self {
             id: id.into(),
             open: false,
+            compact: false,
+            fit_content: false,
             width: None,
             max_height: None,
             title: None,
@@ -44,8 +48,18 @@ impl Modal {
         self
     }
 
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
+        self
+    }
+
     pub fn width(mut self, width: impl Into<Pixels>) -> Self {
         self.width = Some(width.into());
+        self
+    }
+
+    pub fn fit_content(mut self) -> Self {
+        self.fit_content = true;
         self
     }
 
@@ -208,12 +222,16 @@ impl RenderOnce for Modal {
                                     .opacity(alpha)
                                     .w(card_w)
                                     .max_h(card_max_h)
-                                    .p_8()
-                                    .gap_6()
+                                    .when(self.compact, |card| {
+                                        card.p_4()
+                                            .gap_2()
+                                            .when(!self.fit_content, |card| card.h(card_max_h))
+                                    })
+                                    .when(!self.compact, |card| {
+                                        card.p_8().gap_6().border_1().border_color(palette_border)
+                                    })
                                     .rounded(px(24.0))
                                     .bg(palette_surface)
-                                    .border_1()
-                                    .border_color(palette_border)
                                     .shadow_xl()
                                     .flex()
                                     .flex_col()

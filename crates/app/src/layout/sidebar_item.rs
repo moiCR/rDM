@@ -51,7 +51,7 @@ impl NavigationItem {
             Self::Settings => {
                 cx.set_global(SettingsModalState {
                     open: true,
-                    subview: None,
+                    ..Default::default()
                 });
                 window.refresh();
                 return;
