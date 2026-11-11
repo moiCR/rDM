@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "117d83b458cad98453734c6057ed4463f6457f1c",
-    "indexed_at": "2026-11-11T21:12:11Z",
+    "commit": "4ce63aacf80913a2ba76648357f6854c8b76267c",
+    "indexed_at": "2026-11-11T21:17:02Z",
     "project": "home-moi-pro-rDM",
     "nodes": 3637,
-    "edges": 15560,
-    "original_size": 16515072,
-    "compressed_size": 3005768,
+    "edges": 15563,
+    "original_size": 16580608,
+    "compressed_size": 3008409,
     "compression_level": 3
 }

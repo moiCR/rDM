@@ -239,8 +239,12 @@ pub(crate) fn install(
     runtime.spawn(run_tray(events, tray_available));
     cx.spawn(async move |cx| {
         let mut initialized = false;
+        let mut last_tray_available = false;
         while let Some(event) = receiver.recv().await {
             cx.update(|cx| {
+                let tray_available = available(cx);
+                let tray_changed = tray_available != last_tray_available;
+                last_tray_available = tray_available;
                 let show = match event {
                     DesktopEvent::Open => true,
                     DesktopEvent::Quit => {
@@ -248,19 +252,21 @@ pub(crate) fn install(
                         return;
                     }
                     DesktopEvent::Ready => {
-                        let show = !initialized && (!startup || !available(cx));
+                        let show = !initialized && (!startup || !tray_available);
                         initialized = true;
                         show
                     }
                     DesktopEvent::TrayLost => {
-                        initialized && !available(cx) && cx.windows().is_empty()
+                        initialized && !tray_available && cx.windows().is_empty()
                     }
                 };
                 if show && let Err(error) = open_window(cx) {
                     eprintln!("No se pudo abrir rDM: {error}");
                     cx.quit();
                 }
-                cx.refresh_windows();
+                if tray_changed {
+                    cx.refresh_windows();
+                }
             });
         }
     })

@@ -51,7 +51,7 @@ pub struct DownloadStartResult {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TaskSnapshot {
     pub id: Uuid,
     pub file_name: String,
@@ -79,6 +79,7 @@ pub(crate) const HISTORY_WEEKS: usize = 53;
 pub(crate) const HISTORY_WEEKDAYS: usize = 7;
 const HISTORY_DAYS: usize = 365;
 
+#[derive(PartialEq, Eq)]
 pub(crate) struct DownloadHistory {
     pub first_week: NaiveDate,
     pub first_cell: usize,
@@ -231,21 +232,34 @@ impl TasksModel {
                     .unwrap_or_default();
 
                 let update_result = entity.update(cx, |this, cx| {
+                    let mut changed = false;
                     if let Some(progress) = &this.active_update_progress
-                        && let UpdaterStatus::Downloading { ref info, .. } = this.updater_status
+                        && let UpdaterStatus::Downloading {
+                            ref info,
+                            downloaded_bytes,
+                            total_bytes,
+                        } = this.updater_status
                     {
                         let downloaded = progress.downloaded_bytes.load(Ordering::Relaxed);
                         let total = progress.total_bytes.load(Ordering::Relaxed);
-                        this.updater_status = UpdaterStatus::Downloading {
-                            info: info.clone(),
-                            downloaded_bytes: downloaded,
-                            total_bytes: total,
-                        };
+                        if downloaded != downloaded_bytes || total != total_bytes {
+                            this.updater_status = UpdaterStatus::Downloading {
+                                info: info.clone(),
+                                downloaded_bytes: downloaded,
+                                total_bytes: total,
+                            };
+                            changed = true;
+                        }
                     }
-                    this.download_history = history;
-                    this.refresh_snapshots(tasks, true);
-                    cx.notify();
-                    cx.refresh_windows();
+                    if this.download_history != history {
+                        this.download_history = history;
+                        changed = true;
+                    }
+                    changed |= this.refresh_snapshots(tasks, true);
+                    if changed {
+                        cx.notify();
+                        cx.refresh_windows();
+                    }
                 });
 
                 if update_result.is_err() {
@@ -462,7 +476,7 @@ impl TasksModel {
         self.runtime.handle()
     }
 
-    fn refresh_snapshots(&mut self, live_tasks: Vec<Arc<Task>>, update_speed_sample: bool) {
+    fn refresh_snapshots(&mut self, live_tasks: Vec<Arc<Task>>, update_speed_sample: bool) -> bool {
         let now = Instant::now();
         let elapsed_secs = now
             .duration_since(self.last_sample_at)
@@ -529,7 +543,12 @@ impl TasksModel {
             self.previous_bytes = new_previous_bytes;
             self.last_sample_at = now;
         }
-        self.tasks = new_snapshots;
+        if self.tasks == new_snapshots {
+            false
+        } else {
+            self.tasks = new_snapshots;
+            true
+        }
     }
 
     pub fn start_download(
