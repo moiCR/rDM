@@ -15,8 +15,8 @@ impl NavigationItem {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Dashboard => "Dashboard",
-            Self::Downloads => "Downloads",
+            Self::Dashboard => "Inicio",
+            Self::Downloads => "Descargas",
             Self::Settings => "Ajustes",
         }
     }

@@ -104,7 +104,6 @@ impl RenderOnce for DashboardView {
                             .flex_col()
                             .gap_3()
                             .px_5()
-                            .child(Self::header())
                             .child(Self::metrics(&summary, speed_limit, theme))
                             .child(
                                 div()
@@ -123,43 +122,6 @@ impl RenderOnce for DashboardView {
 }
 
 impl DashboardView {
-    fn header() -> impl IntoElement {
-        div()
-            .flex()
-            .flex_wrap()
-            .flex_shrink_0()
-            .items_center()
-            .justify_between()
-            .gap_2()
-            .pb_1()
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Dashboard"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(
-                        PillButton::new("dashboard-all-downloads", "Ver descargas").on_click(
-                            |_, window, cx| {
-                                gpui_router::use_navigate(window, cx).push("/downloads");
-                            },
-                        ),
-                    )
-                    .child(
-                        PillButton::new("dashboard-new-download", "Nueva descarga")
-                            .selected(true)
-                            .on_click(|_, window, cx| {
-                                NewDownloadModal::open(None, window, cx);
-                            }),
-                    ),
-            )
-    }
-
     fn panel(theme: &dyn Theme) -> Div {
         download_card_surface(theme.surface(), theme.surface_hover(), theme.border())
             .flex()
