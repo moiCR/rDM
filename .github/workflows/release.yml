@@ -1,67 +1,72 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-24.04
-    concurrency:
-      group: release-create-${{ github.ref_name }}
-      cancel-in-progress: false
+    outputs:
+      release_tag: ${{ steps.version.outputs.release_tag }}
     steps:
       - name: Check out release source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Validate release tag
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
+      - name: Determine release version
+        id: version
         shell: bash
         run: |
           version="$(cargo metadata --locked --no-deps --format-version 1 |
             jq -er '.packages[] | select(.name == "rDM") | .version')"
-          if [[ "$RELEASE_TAG" != "v$version" ]]; then
-            echo "Release tag $RELEASE_TAG does not match app version $version." >&2
+          release_tag="v$version"
+          if git show-ref --verify --quiet "refs/tags/$release_tag" &&
+             [[ "$(git rev-list -n 1 "$release_tag")" != "$GITHUB_SHA" ]]; then
+            echo "Tag $release_tag already points to another commit. Bump the version in Cargo.toml." >&2
             exit 1
           fi
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release from CHANGELOG.md
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
         shell: bash
         run: |
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             exit 0
           fi
           gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --verify-tag --title "rDM $RELEASE_TAG" --notes-file CHANGELOG.md --latest
+            --target "$GITHUB_SHA" --title "rDM $RELEASE_TAG" --notes-file CHANGELOG.md --latest
 
   windows:
     needs: release
     uses: ./.github/workflows/windows.yml
     with:
-      release_tag: ${{ github.ref_name }}
+      release_tag: ${{ needs.release.outputs.release_tag }}
       source_ref: ${{ github.sha }}
 
   linux:
     needs: release
     uses: ./.github/workflows/linux.yml
     with:
-      release_tag: ${{ github.ref_name }}
+      release_tag: ${{ needs.release.outputs.release_tag }}
       source_ref: ${{ github.sha }}
 
   extensions:
     needs: release
     uses: ./.github/workflows/extensions.yml
     with:
-      release_tag: ${{ github.ref_name }}
+      release_tag: ${{ needs.release.outputs.release_tag }}
       source_ref: ${{ github.sha }}
