@@ -97,6 +97,7 @@ pub(super) struct Dock;
 
 impl RenderOnce for Dock {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let labels = NavigationItem::ALL.map(|item| item.label(cx));
         let state = window.use_keyed_state("navigation-dock-state", cx, |_, cx| DockState {
             pointer_inside: false,
             focus: cx.focus_handle(),
@@ -175,6 +176,7 @@ impl RenderOnce for Dock {
                                     ITEM_SIZE,
                                     muted.blend(text.opacity(coverage)),
                                     (coverage < 0.5).then_some(text),
+                                    labels[index].clone(),
                                 )
                             }),
                     )

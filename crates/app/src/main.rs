@@ -3,6 +3,7 @@
 pub mod assets;
 pub mod components;
 pub mod ext;
+pub mod lang;
 pub mod layout;
 pub mod router;
 pub mod state;
@@ -48,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let core = Arc::new(Core::new()?);
     let ui_config = core.config().ui_config();
+    let language = lang::Lang::new(&ui_config.language)?;
 
     let core_server = Arc::clone(&core);
     runtime.spawn(async move {
@@ -57,6 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = gpui_kit::application().with_assets(Assets::new());
 
     app.run(move |cx: &mut App| {
+        cx.set_global(language);
         #[cfg(windows)]
         let desktop_events = windows_desktop::Desktop::install(cx)
             .inspect_err(|error| eprintln!("No se pudo crear la bandeja de rDM: {error}"))

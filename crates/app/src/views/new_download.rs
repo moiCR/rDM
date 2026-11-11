@@ -6,6 +6,7 @@ use rdm_core::{InterceptedDownload, task::PostProcessAction};
 use uuid::Uuid;
 
 use crate::{
+    lang::{ActiveLang, Lang},
     state::{CoreContext, DownloadRequest},
     theme::ActiveTheme,
 };
@@ -38,17 +39,17 @@ struct DownloadForm {
 fn validate_url(text: &str) -> Result<&str, &'static str> {
     let text = text.trim();
     if text.is_empty() {
-        return Err("Introduce una URL de descarga.");
+        return Err("validation.url_required");
     }
     if text
         .chars()
         .any(|character| character.is_whitespace() || character.is_control())
     {
-        return Err("Introduce una sola URL, sin espacios ni saltos de línea.");
+        return Err("validation.single_url");
     }
-    let url = gpui::http_client::Url::parse(text).map_err(|_| "La URL no es válida.")?;
+    let url = gpui::http_client::Url::parse(text).map_err(|_| "validation.url_invalid")?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        return Err("Usa una URL HTTP o HTTPS.");
+        return Err("validation.url_scheme");
     }
     Ok(text)
 }
@@ -64,7 +65,7 @@ fn validate_file_name(name: &str) -> Result<(), &'static str> {
             .chars()
             .any(|character| character.is_control() || r#"<>:"/\|?*"#.contains(character))
     {
-        return Err("Usa un nombre de archivo válido, sin rutas ni caracteres reservados.");
+        return Err("validation.file_name");
     }
     let stem = name
         .split('.')
@@ -84,7 +85,7 @@ fn validate_file_name(name: &str) -> Result<(), &'static str> {
         })
     });
     if reserved {
-        return Err("Ese nombre está reservado por Windows.");
+        return Err("validation.reserved_name");
     }
     Ok(())
 }
@@ -94,15 +95,15 @@ fn validate_connections(text: &str) -> Result<usize, &'static str> {
         .parse::<usize>()
         .ok()
         .filter(|value| (1..=32).contains(value))
-        .ok_or("Introduce un número de conexiones entre 1 y 32.")
+        .ok_or("validation.connections")
 }
 
 impl DownloadForm {
     fn new(item: Option<InterceptedDownload>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let config = cx.core().config().config();
         let url = cx.new(|cx| {
-            let mut input =
-                TextareaState::new(window, cx).placeholder("Introduce una URL de descarga…");
+            let mut input = TextareaState::new(window, cx)
+                .placeholder(cx.lang().get("new_download.url_placeholder"));
             if let Some(item) = &item {
                 input.set_value(item.url.clone(), window, cx);
             }
@@ -110,7 +111,8 @@ impl DownloadForm {
             input
         });
         let file_name = cx.new(|cx| {
-            let mut input = InputState::new(window, cx).placeholder("Nombre automático");
+            let mut input = InputState::new(window, cx)
+                .placeholder(cx.lang().get("new_download.automatic_name"));
             if let Some(item) = &item {
                 input.set_value(item.file_name.clone(), window, cx);
             }
@@ -128,6 +130,14 @@ impl DownloadForm {
             input
         });
         let subscriptions = vec![
+            cx.observe_global_in::<Lang>(window, |this, window, cx| {
+                let url = cx.lang().get("new_download.url_placeholder");
+                let name = cx.lang().get("new_download.automatic_name");
+                this.url
+                    .update(cx, |input, cx| input.set_placeholder(url, window, cx));
+                this.file_name
+                    .update(cx, |input, cx| input.set_placeholder(name, window, cx));
+            }),
             cx.subscribe(&url, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.error = None;
@@ -191,7 +201,7 @@ impl DownloadForm {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Selecciona la carpeta de descargas".into()),
+            prompt: Some(cx.lang().get("new_download.select_directory")),
         });
         cx.spawn_in(window, async move |entity, cx| {
             if let Ok(Ok(Some(paths))) = prompt.await
@@ -334,7 +344,7 @@ impl RenderOnce for NewDownloadView {
             .bg(cx.theme().background())
             .text_color(cx.theme().text_color())
             .p_8()
-            .child("New Download")
+            .child(cx.lang().get("new_download.title"))
     }
 }
 

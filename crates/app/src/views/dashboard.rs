@@ -5,10 +5,11 @@ use rdm_core::task::TaskStatus;
 use smallvec::SmallVec;
 
 use crate::{
-    components::{ButtonRounded, IconButton, PillButton, ProgressBar},
+    components::{ButtonRounded, IconButton, ProgressBar},
+    lang::ActiveLang,
     state::{CoreContext, DownloadHistory, TaskSnapshot},
     theme::{ActiveTheme, Theme},
-    views::{NewDownloadModal, SettingsModalState},
+    views::SettingsModalState,
 };
 
 use super::downloads::{download_card_surface, format_bytes, task_progress_percent};
@@ -104,7 +105,7 @@ impl RenderOnce for DashboardView {
                             .flex_col()
                             .gap_3()
                             .px_5()
-                            .child(Self::metrics(&summary, speed_limit, theme))
+                            .child(Self::metrics(&summary, speed_limit, theme, cx))
                             .child(
                                 div()
                                     .flex()
@@ -112,10 +113,10 @@ impl RenderOnce for DashboardView {
                                     .flex_grow_1()
                                     .flex_shrink_0()
                                     .gap_3()
-                                    .child(Self::task_panel(&summary, theme))
-                                    .child(Self::transfer_panel(&summary, theme)),
+                                    .child(Self::task_panel(&summary, theme, cx))
+                                    .child(Self::transfer_panel(&summary, theme, cx)),
                             )
-                            .child(Self::history_panel(tasks.download_history(), theme)),
+                            .child(Self::history_panel(tasks.download_history(), theme, cx)),
                     ),
             )
     }
@@ -128,7 +129,7 @@ impl DashboardView {
             .flex_col()
     }
 
-    fn label(text: &'static str, theme: &dyn Theme) -> Div {
+    fn label(text: SharedString, theme: &dyn Theme) -> Div {
         div()
             .text_xs()
             .font_weight(FontWeight::MEDIUM)
@@ -153,10 +154,15 @@ impl DashboardView {
             .p_4()
     }
 
-    fn metrics(summary: &DashboardSummary<'_>, speed_limit: u64, theme: &dyn Theme) -> Div {
+    fn metrics(
+        summary: &DashboardSummary<'_>,
+        speed_limit: u64,
+        theme: &dyn Theme,
+        cx: &App,
+    ) -> Div {
         let muted = theme.text_muted();
         let speed_limit = if speed_limit == 0 {
-            "Sin límite".to_owned()
+            cx.lang().get("dashboard.unlimited").to_string()
         } else {
             format!("{}/s", format_bytes(speed_limit))
         };
@@ -169,8 +175,8 @@ impl DashboardView {
             .gap_3()
             .child(
                 Self::metric(theme)
-                    .child(Self::label("MOTOR", theme))
-                    .child(Self::value("Listo"))
+                    .child(Self::label(cx.lang().get("dashboard.engine"), theme))
+                    .child(Self::value(cx.lang().get("dashboard.ready")))
                     .child(
                         div()
                             .flex()
@@ -187,14 +193,19 @@ impl DashboardView {
             )
             .child(
                 Self::metric(theme)
-                    .child(Self::label("LÍMITE", theme))
+                    .child(Self::label(cx.lang().get("dashboard.limit"), theme))
                     .child(Self::value(speed_limit))
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .justify_between()
-                            .child(div().text_xs().text_color(muted).child("Velocidad global"))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(cx.lang().get("dashboard.global_speed")),
+                            )
                             .child(
                                 IconButton::new("dashboard-speed-settings", "icons/settings.svg")
                                     .size(px(22.0))
@@ -202,7 +213,7 @@ impl DashboardView {
                                     .rounded(ButtonRounded::Size(px(5.0)))
                                     .color(muted)
                                     .hover_bg(theme.surface_hover())
-                                    .tooltip("Ajustar límite de velocidad")
+                                    .tooltip(cx.lang().get("dashboard.adjust_limit"))
                                     .on_click(|_, window, cx| {
                                         cx.set_global(SettingsModalState {
                                             open: true,
@@ -215,7 +226,7 @@ impl DashboardView {
             )
             .child(
                 Self::metric(theme)
-                    .child(Self::label("DESCARGA", theme))
+                    .child(Self::label(cx.lang().get("dashboard.download"), theme))
                     .child(Self::value(format!("{}/s", format_bytes(summary.speed))))
                     .child(
                         div()
@@ -229,12 +240,17 @@ impl DashboardView {
                                     .rounded_full()
                                     .bg(theme.accent()),
                             )
-                            .child(div().text_xs().text_color(muted).child("Velocidad actual")),
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(cx.lang().get("dashboard.current_speed")),
+                            ),
                     ),
             )
             .child(
                 Self::metric(theme)
-                    .child(Self::label("ERRORES", theme))
+                    .child(Self::label(cx.lang().get("dashboard.errors"), theme))
                     .child(
                         Self::value(summary.failed.to_string())
                             .when(summary.failed > 0, |value| value.text_color(theme.error())),
@@ -244,19 +260,19 @@ impl DashboardView {
                             .text_xs()
                             .text_color(muted)
                             .child(if summary.failed > 0 {
-                                "Tareas con error"
+                                cx.lang().get("dashboard.failed_tasks")
                             } else {
-                                "Sin errores"
+                                cx.lang().get("dashboard.no_errors")
                             }),
                     ),
             )
     }
 
-    fn task_panel(summary: &DashboardSummary<'_>, theme: &dyn Theme) -> Div {
+    fn task_panel(summary: &DashboardSummary<'_>, theme: &dyn Theme, cx: &App) -> Div {
         let counts = [
-            ("En descarga", summary.downloading),
-            ("En cola", summary.queued),
-            ("Procesando", summary.processing),
+            (cx.lang().get("dashboard.downloading"), summary.downloading),
+            (cx.lang().get("dashboard.queued"), summary.queued),
+            (cx.lang().get("dashboard.processing"), summary.processing),
         ];
         let hidden_count = summary.active.len().saturating_sub(ACTIVITY_LIMIT);
         Self::panel(theme)
@@ -265,7 +281,7 @@ impl DashboardView {
             .justify_between()
             .gap_3()
             .p_4()
-            .child(Self::label("TAREAS ACTIVAS", theme))
+            .child(Self::label(cx.lang().get("dashboard.active_tasks"), theme))
             .child(Self::value(summary.active.len().to_string()))
             .child(div().flex().gap_3().children(counts.map(|(label, count)| {
                 div()
@@ -294,54 +310,53 @@ impl DashboardView {
                                 .active
                                 .iter()
                                 .take(ACTIVITY_LIMIT)
-                                .map(|task| Self::activity_row(task, theme)),
+                                .map(|task| Self::activity_row(task, theme, cx)),
                         )
                         .when(hidden_count > 0, |list| {
-                            list.child(
-                                div()
-                                    .py_2()
-                                    .text_xs()
-                                    .text_color(theme.text_muted())
-                                    .child(format!("+{hidden_count} en Descargas")),
-                            )
+                            list.child(div().py_2().text_xs().text_color(theme.text_muted()).child(
+                                cx.lang().get_with(
+                                    "dashboard.hidden_tasks",
+                                    &[("count", &hidden_count.to_string())],
+                                ),
+                            ))
                         }),
                 )
             })
     }
 
-    fn transfer_panel(summary: &DashboardSummary<'_>, theme: &dyn Theme) -> Div {
+    fn transfer_panel(summary: &DashboardSummary<'_>, theme: &dyn Theme, cx: &App) -> Div {
         Self::panel(theme)
             .flex_1()
             .min_w(px(265.0))
             .justify_between()
             .gap_3()
             .p_4()
-            .child(Self::label("TRANSFERENCIA", theme))
+            .child(Self::label(cx.lang().get("dashboard.transfer"), theme))
             .child(Self::value(format_bytes(summary.transferred)))
             .child(
                 div()
                     .text_xs()
                     .text_color(theme.text_muted())
-                    .child("Datos descargados en las tareas del historial"),
+                    .child(cx.lang().get("dashboard.transferred_hint")),
             )
     }
 
-    fn history_panel(history: Option<&DownloadHistory>, theme: &dyn Theme) -> Div {
+    fn history_panel(history: Option<&DownloadHistory>, theme: &dyn Theme, cx: &App) -> Div {
         Self::panel(theme)
             .flex_shrink_0()
             .px_4()
             .py_3()
             .when_some(history, |panel, history| {
-                panel.child(download_calendar(history, theme))
+                panel.child(download_calendar(history, theme, cx.lang()))
             })
     }
 
-    fn activity_row(task: &TaskSnapshot, theme: &dyn Theme) -> Div {
+    fn activity_row(task: &TaskSnapshot, theme: &dyn Theme, cx: &App) -> Div {
         let muted = theme.text_muted();
         let progress = task_progress_percent(task);
         let status = match task.status {
-            TaskStatus::Connecting => "Conectando".to_owned(),
-            TaskStatus::Processing { .. } => "Procesando".to_owned(),
+            TaskStatus::Connecting => cx.lang().get("dashboard.connecting").to_string(),
+            TaskStatus::Processing { .. } => cx.lang().get("dashboard.processing").to_string(),
             _ => format!("{}/s", format_bytes(task.speed_bytes_per_sec)),
         };
         let show_percent = task.total_size > 0 && matches!(task.status, TaskStatus::Downloading);

@@ -3,6 +3,7 @@ use gpui::*;
 
 use crate::{
     components::IconButton,
+    lang::ActiveLang,
     layout::toggle_sidebar,
     state::{CoreContext, UpdaterStatus},
     theme::ActiveTheme,
@@ -43,9 +44,11 @@ impl RenderOnce for Titlebar {
 
         let updater_status = cx.tasks_model().read(cx).updater_status().clone();
         let update_badge = match updater_status {
-            UpdaterStatus::Available(info) => {
-                Some((format!("v{} disponible", info.version), false))
-            }
+            UpdaterStatus::Available(info) => Some((
+                cx.lang()
+                    .get_with("titlebar.update_available", &[("version", &info.version)]),
+                false,
+            )),
             UpdaterStatus::Downloading {
                 downloaded_bytes,
                 total_bytes,
@@ -56,7 +59,11 @@ impl RenderOnce for Titlebar {
                 } else {
                     0
                 };
-                Some((format!("Actualizando... {pct}%"), true))
+                Some((
+                    cx.lang()
+                        .get_with("titlebar.updating", &[("percent", &pct.to_string())]),
+                    true,
+                ))
             }
             _ => None,
         };
@@ -81,14 +88,14 @@ impl RenderOnce for Titlebar {
                     .flex_shrink_0()
                     .children(self.show_sidebar_toggle.then(|| {
                         IconButton::new("btn-collapse-sidebar", "icons/panel-left.svg")
-                            .tooltip("Alternar barra lateral")
+                            .tooltip(cx.lang().get("titlebar.toggle_sidebar"))
                             .shortcut("Ctrl+B")
                             .on_click(|_, window, cx| toggle_sidebar(window, cx))
                     }))
                     .child(
                         IconButton::new("btn-new-download", "icons/plus.svg")
                             .rounded(px(24.0))
-                            .tooltip("Nueva descarga")
+                            .tooltip(cx.lang().get("titlebar.new_download"))
                             .shortcut("Ctrl+N")
                             .on_click(|_, window, cx| NewDownloadModal::open(None, window, cx)),
                     ),

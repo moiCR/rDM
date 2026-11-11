@@ -12,9 +12,14 @@ fn default_auto_check_updates() -> bool {
     true
 }
 
+fn default_language() -> String {
+    "es".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct UIConfig {
+    pub language: String,
     #[serde(default = "default_theme")]
     pub theme: String,
     #[serde(default = "default_sidebar_style")]
@@ -28,6 +33,7 @@ pub struct UIConfig {
 impl Default for UIConfig {
     fn default() -> Self {
         Self {
+            language: default_language(),
             theme: default_theme(),
             sidebar_style: default_sidebar_style(),
             accent_color: String::new(),
@@ -48,6 +54,16 @@ impl UIConfig {
 #[cfg(test)]
 mod tests {
     use super::UIConfig;
+
+    #[test]
+    fn language_defaults_to_spanish_and_preserves_saved_choice() -> Result<(), serde_json::Error> {
+        let legacy: UIConfig = serde_json::from_str(r#"{"theme":"light"}"#)?;
+        assert_eq!(legacy.language, "es");
+        let saved: UIConfig = serde_json::from_str(r#"{"language":"en"}"#)?;
+        let round_trip: UIConfig = serde_json::from_str(&serde_json::to_string(&saved)?)?;
+        assert_eq!(round_trip.language, "en");
+        Ok(())
+    }
 
     #[test]
     fn close_to_tray_defaults_on_and_respects_saved_choice() -> Result<(), serde_json::Error> {

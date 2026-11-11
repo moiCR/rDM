@@ -3,17 +3,29 @@ use gpui::*;
 
 use crate::{
     components::ActionTooltip,
+    lang::Lang,
     state::{DownloadHistory, HISTORY_WEEKDAYS, HISTORY_WEEKS},
     theme::Theme,
 };
 
 const MONTHS: [&str; 12] = [
-    "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic",
+    "calendar.jan",
+    "calendar.feb",
+    "calendar.mar",
+    "calendar.apr",
+    "calendar.may",
+    "calendar.jun",
+    "calendar.jul",
+    "calendar.aug",
+    "calendar.sep",
+    "calendar.oct",
+    "calendar.nov",
+    "calendar.dec",
 ];
 const WEEKDAY_WIDTH: Pixels = px(30.0);
 const DAY_STRIDE: f32 = 14.0;
 
-pub(super) fn download_calendar(history: &DownloadHistory, theme: &dyn Theme) -> Div {
+pub(super) fn download_calendar(history: &DownloadHistory, theme: &dyn Theme, lang: &Lang) -> Div {
     let muted = theme.text_muted();
     let accent = theme.accent();
     let colors = [
@@ -24,11 +36,14 @@ pub(super) fn download_calendar(history: &DownloadHistory, theme: &dyn Theme) ->
         accent,
     ];
     let count = history.total;
-    let title = if count == 1 {
-        "1 descarga completada".to_owned()
-    } else {
-        format!("{count} descargas completadas")
-    };
+    let title = lang.get_with(
+        if count == 1 {
+            "calendar.completed_one"
+        } else {
+            "calendar.completed_many"
+        },
+        &[("count", &count.to_string())],
+    );
 
     div()
         .flex()
@@ -45,13 +60,13 @@ pub(super) fn download_calendar(history: &DownloadHistory, theme: &dyn Theme) ->
                         .text_xs()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(muted)
-                        .child("HISTORIAL DE DESCARGAS"),
+                        .child(lang.get("calendar.title")),
                 )
                 .child(
                     div()
                         .text_xs()
                         .text_color(muted)
-                        .child(format!("{title} · Últimos 365 días")),
+                        .child(lang.get_with("calendar.period", &[("title", &title)])),
                 ),
         )
         .child(
@@ -62,13 +77,13 @@ pub(super) fn download_calendar(history: &DownloadHistory, theme: &dyn Theme) ->
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(month_labels(history, muted))
+                    .child(month_labels(history, muted, lang))
                     .child(
                         div()
                             .h(px(DAY_STRIDE * HISTORY_WEEKDAYS as f32))
                             .flex()
-                            .child(weekday_labels(muted))
-                            .child(day_grid(history, colors)),
+                            .child(weekday_labels(muted, lang))
+                            .child(day_grid(history, colors, lang)),
                     ),
             ),
         )
@@ -82,23 +97,26 @@ pub(super) fn download_calendar(history: &DownloadHistory, theme: &dyn Theme) ->
                 .text_xs()
                 .text_color(muted)
                 .child(if history.undated > 0 {
-                    format!("Sin fecha registrada: {}", history.undated)
+                    lang.get_with(
+                        "calendar.undated",
+                        &[("count", &history.undated.to_string())],
+                    )
                 } else {
-                    String::new()
+                    SharedString::default()
                 })
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap_1()
-                        .child("Menos")
+                        .child(lang.get("common.less"))
                         .children(colors.map(|color| div().size_2p5().rounded(px(2.0)).bg(color)))
-                        .child("Más"),
+                        .child(lang.get("common.more")),
                 ),
         )
 }
 
-fn month_labels(history: &DownloadHistory, color: Rgba) -> Div {
+fn month_labels(history: &DownloadHistory, color: Rgba, lang: &Lang) -> Div {
     div().pl(WEEKDAY_WIDTH).child(
         div()
             .relative()
@@ -115,13 +133,13 @@ fn month_labels(history: &DownloadHistory, color: Rgba) -> Div {
                     div()
                         .absolute()
                         .left(relative(week as f32 / HISTORY_WEEKS as f32))
-                        .child(MONTHS[day.month0() as usize])
+                        .child(lang.get(MONTHS[day.month0() as usize]))
                 })
             })),
     )
 }
 
-fn weekday_labels(color: Rgba) -> Div {
+fn weekday_labels(color: Rgba, lang: &Lang) -> Div {
     div()
         .w(WEEKDAY_WIDTH)
         .flex_shrink_0()
@@ -130,12 +148,20 @@ fn weekday_labels(color: Rgba) -> Div {
         .text_xs()
         .text_color(color)
         .children(
-            ["Lun", "", "Mié", "", "Vie", "", ""]
-                .map(|label| div().flex_1().flex().items_center().child(label)),
+            [
+                "calendar.mon",
+                "",
+                "calendar.wed",
+                "",
+                "calendar.fri",
+                "",
+                "",
+            ]
+            .map(|label| div().flex_1().flex().items_center().child(lang.get(label))),
         )
 }
 
-fn day_grid(history: &DownloadHistory, colors: [Rgba; 5]) -> Div {
+fn day_grid(history: &DownloadHistory, colors: [Rgba; 5], lang: &Lang) -> Div {
     let counts = history.counts;
     let days = history.first_cell..=history.last_cell;
     let painted_days = days.clone();
@@ -183,14 +209,19 @@ fn day_grid(history: &DownloadHistory, colors: [Rgba; 5]) -> Div {
             let date = history
                 .first_week
                 .checked_add_days(Days::new(index as u64))?;
-            let label = SharedString::from(format!(
-                "{} {} {} · {} {}",
-                date.day(),
-                MONTHS[date.month0() as usize],
-                date.year(),
-                count,
-                if count == 1 { "descarga" } else { "descargas" },
-            ));
+            let label = lang.get_with(
+                if count == 1 {
+                    "calendar.day_one"
+                } else {
+                    "calendar.day_many"
+                },
+                &[
+                    ("day", &date.day().to_string()),
+                    ("month", &lang.get(MONTHS[date.month0() as usize])),
+                    ("year", &date.year().to_string()),
+                    ("count", &count.to_string()),
+                ],
+            );
             Some(
                 div()
                     .id(("download-history-day", date.num_days_from_ce() as u64))

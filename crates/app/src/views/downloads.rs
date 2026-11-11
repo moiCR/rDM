@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     components::{ActionTooltip, IconButton, Modal, PillButton, ProgressBar},
+    lang::ActiveLang,
     state::{CoreContext, TaskSnapshot, TasksModel},
     theme::ActiveTheme,
     views::NewDownloadModal,
@@ -55,15 +56,17 @@ impl ViewPalette {
 
     fn status(self, status: &TaskStatus) -> (&'static str, Rgba) {
         match status {
-            TaskStatus::Downloading => ("Descargando", self.downloading),
-            TaskStatus::Paused => ("Pausado", self.paused),
-            TaskStatus::Completed => ("Completado", self.completed),
-            TaskStatus::Failed(_) => ("Error", self.error),
-            TaskStatus::ConversionFailed(_) => ("Error de conversión", self.error),
-            TaskStatus::Processing { .. } => ("Procesando", self.downloading),
-            TaskStatus::Connecting => ("Conectando", self.downloading),
-            TaskStatus::Pending | TaskStatus::ConversionQueued => ("En cola", self.text_muted),
-            TaskStatus::Cancelled => ("Cancelado", self.text_muted),
+            TaskStatus::Downloading => ("status.downloading", self.downloading),
+            TaskStatus::Paused => ("status.paused", self.paused),
+            TaskStatus::Completed => ("status.completed", self.completed),
+            TaskStatus::Failed(_) => ("status.failed", self.error),
+            TaskStatus::ConversionFailed(_) => ("status.conversion_failed", self.error),
+            TaskStatus::Processing { .. } => ("status.processing", self.downloading),
+            TaskStatus::Connecting => ("status.connecting", self.downloading),
+            TaskStatus::Pending | TaskStatus::ConversionQueued => {
+                ("status.queued", self.text_muted)
+            }
+            TaskStatus::Cancelled => ("status.cancelled", self.text_muted),
         }
     }
 }
@@ -123,11 +126,11 @@ pub(super) fn download_card_surface(surface: Rgba, raised: Rgba, border: Rgba) -
         .shadow_md()
 }
 
-fn format_remaining(task: &TaskSnapshot) -> SharedString {
+fn format_remaining(task: &TaskSnapshot, cx: &App) -> SharedString {
     let remaining = task.total_size.saturating_sub(task.downloaded_bytes);
     let speed = task.speed_bytes_per_sec;
     if remaining == 0 || speed == 0 {
-        return "Calculando...".into();
+        return cx.lang().get("downloads.calculating");
     }
 
     let seconds = remaining.div_ceil(speed);
@@ -163,6 +166,29 @@ impl RenderOnce for DownloadsView {
         let is_empty = tasks.is_empty();
         let transition = SpringAnimation::new(SpringConfig::new(300.0, 34.0, 1.0)).to(!is_empty);
 
+        let cards = (!is_empty).then(|| {
+            div()
+                .id("downloads-cards-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .p_5()
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_wrap()
+                        .content_start()
+                        .items_start()
+                        .gap_4()
+                        .children(
+                            tasks
+                                .iter()
+                                .map(|task| Self::render_card(task, &tasks_model, palette, cx)),
+                        ),
+                )
+        });
+        let empty = Self::render_empty(palette, is_empty, cx);
+
         div()
             .flex()
             .flex_col()
@@ -188,33 +214,9 @@ impl RenderOnce for DownloadsView {
                         let grid_opacity = phase.interpolate_clamped(0.0, 1.0);
 
                         panel
-                            .when(!is_empty, |panel| {
-                                panel.child(
-                                    div()
-                                        .id("downloads-cards-scroll")
-                                        .size_full()
-                                        .overflow_y_scroll()
-                                        .p_5()
-                                        .opacity(grid_opacity)
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .flex()
-                                                .flex_wrap()
-                                                .content_start()
-                                                .items_start()
-                                                .gap_4()
-                                                .children(tasks.iter().map(|task| {
-                                                    Self::render_card(task, &tasks_model, palette)
-                                                })),
-                                        ),
-                                )
-                            })
+                            .children(cards.map(|cards| cards.opacity(grid_opacity)))
                             .when(is_empty || grid_opacity < 0.99, |panel| {
-                                panel.child(
-                                    Self::render_empty(palette, is_empty)
-                                        .opacity(1.0 - grid_opacity),
-                                )
+                                panel.child(empty.opacity(1.0 - grid_opacity))
                             })
                     }),
             )
@@ -226,6 +228,7 @@ impl DownloadsView {
         task: &TaskSnapshot,
         tasks_model: &Entity<TasksModel>,
         palette: ViewPalette,
+        cx: &App,
     ) -> impl IntoElement {
         let task_id = task.id;
         let task_key = task_id.as_u64_pair().0;
@@ -241,9 +244,9 @@ impl DownloadsView {
         let percent_text = format!("{}%", percent as u32);
         let (bottom_left_text, bottom_left_color): (SharedString, Rgba) =
             if task.status == TaskStatus::Downloading {
-                (format_remaining(task), palette.text_muted)
+                (format_remaining(task, cx), palette.text_muted)
             } else {
-                (status_label.into(), status_color)
+                (cx.lang().get(status_label), status_color)
             };
         let url_str = task.url.clone();
         let url_for_copy = task.url.clone();
@@ -257,7 +260,7 @@ impl DownloadsView {
             let model = tasks_model.clone();
             PillButton::new(
                 ("download-card-retry-conversion", task_key),
-                "Reintentar conversión",
+                cx.lang().get("downloads.retry_conversion"),
             )
             .on_click(move |_event, _window, cx| {
                 model.update(cx, |m, cx| m.retry_conversion(task_id, cx));
@@ -266,10 +269,10 @@ impl DownloadsView {
 
         let toggle_action = match task.status {
             TaskStatus::Downloading | TaskStatus::Connecting => {
-                Some((true, "icons/pause.svg", "Pausar descarga"))
+                Some((true, "icons/pause.svg", cx.lang().get("downloads.pause")))
             }
             TaskStatus::Paused | TaskStatus::Pending | TaskStatus::Failed(_) => {
-                Some((false, "icons/resume.svg", "Reanudar descarga"))
+                Some((false, "icons/resume.svg", cx.lang().get("downloads.resume")))
             }
             _ => None,
         };
@@ -308,8 +311,11 @@ impl DownloadsView {
                             .cursor_pointer()
                             .hover(move |s| s.text_color(palette.text_color).underline())
                             .tooltip(|_, cx| {
-                                cx.new(|_| ActionTooltip::new("Clic para copiar URL"))
-                                    .into()
+                                {
+                                    let label = cx.lang().get("downloads.copy_url");
+                                    cx.new(|_| ActionTooltip::new(label))
+                                }
+                                .into()
                             })
                             .on_click(move |_event, _window, cx| {
                                 cx.write_to_clipboard(ClipboardItem::new_string(
@@ -388,7 +394,7 @@ impl DownloadsView {
                                         file_button(
                                             "download-card-open-file",
                                             "icons/external-link.svg",
-                                            "Abrir archivo",
+                                            cx.lang().get("downloads.open_file"),
                                         )
                                         .on_click(
                                             move |_, _, cx| {
@@ -400,7 +406,7 @@ impl DownloadsView {
                                         file_button(
                                             "download-card-reveal-file",
                                             "icons/folder-open.svg",
-                                            "Mostrar en carpeta",
+                                            cx.lang().get("downloads.reveal_file"),
                                         )
                                         .on_click(
                                             move |_, _, cx| {
@@ -438,7 +444,7 @@ impl DownloadsView {
                                 .rounded(ButtonRounded::Size(px(99.0)))
                                 .color(palette.error)
                                 .hover_bg(palette.error.opacity(0.14))
-                                .tooltip("Eliminar descarga")
+                                .tooltip(cx.lang().get("downloads.delete"))
                                 .on_click(
                                     move |_event, window, cx| {
                                         cx.set_global(DeleteDownloadModalState {
@@ -455,7 +461,7 @@ impl DownloadsView {
             )
     }
 
-    fn render_empty(palette: ViewPalette, interactive: bool) -> Div {
+    fn render_empty(palette: ViewPalette, interactive: bool, cx: &App) -> Div {
         div()
             .absolute()
             .inset_0()
@@ -467,7 +473,7 @@ impl DownloadsView {
                 div()
                     .text_base()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("Aún no hay descargas"),
+                    .child(cx.lang().get("downloads.empty")),
             )
             .child(
                 div()
@@ -485,7 +491,7 @@ impl DownloadsView {
                                 NewDownloadModal::open(None, window, cx);
                             })
                     })
-                    .child("Pulsa + para añadir una"),
+                    .child(cx.lang().get("downloads.empty_hint")),
             )
     }
 
@@ -592,7 +598,7 @@ impl RenderOnce for DeleteDownloadModal {
                     .open(is_open)
                     .width(px(520.0))
                     .max_height(px(320.0))
-                    .title("Eliminar descarga")
+                    .title(cx.lang().get("downloads.delete"))
                     .on_close(move |window, cx| {
                         cx.set_global(DeleteDownloadModalState {
                             open: false,
@@ -610,9 +616,13 @@ impl RenderOnce for DeleteDownloadModal {
                             .gap_2p5()
                             .pt_2()
                             .child(
-                                PillButton::new("btn-cancel-delete-download", "Cancelar")
-                                    .selected(false)
-                                    .on_click(move |_event, window, cx| {
+                                PillButton::new(
+                                    "btn-cancel-delete-download",
+                                    cx.lang().get("common.cancel"),
+                                )
+                                .selected(false)
+                                .on_click(
+                                    move |_event, window, cx| {
                                         cx.set_global(DeleteDownloadModalState {
                                             open: false,
                                             task_id: None,
@@ -620,12 +630,17 @@ impl RenderOnce for DeleteDownloadModal {
                                             delete_file: false,
                                         });
                                         window.refresh();
-                                    }),
+                                    },
+                                ),
                             )
                             .child(
-                                PillButton::new("btn-confirm-delete-download", "Eliminar")
-                                    .selected(true)
-                                    .on_click(move |_event, window, cx| {
+                                PillButton::new(
+                                    "btn-confirm-delete-download",
+                                    cx.lang().get("common.delete"),
+                                )
+                                .selected(true)
+                                .on_click(
+                                    move |_event, window, cx| {
                                         if let Some(id) = task_id {
                                             let model = cx.tasks_model().clone();
                                             model.update(cx, |m, cx| {
@@ -639,7 +654,8 @@ impl RenderOnce for DeleteDownloadModal {
                                             delete_file: false,
                                         });
                                         window.refresh();
-                                    }),
+                                    },
+                                ),
                             ),
                     )
                     .child(
@@ -680,7 +696,7 @@ impl RenderOnce for DeleteDownloadModal {
                                             div()
                                                 .text_xs()
                                                 .text_color(palette.text_muted)
-                                                .child("Eliminar también el archivo del disco."),
+                                                .child(cx.lang().get("downloads.delete_file")),
                                         ),
                                 )
                                 .child(

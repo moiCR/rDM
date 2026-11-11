@@ -318,7 +318,7 @@ impl TasksModel {
             !name.contains(['/', '\\']) && !matches!(name.as_str(), "" | "." | "..")
         }) else {
             self.active_update_progress = None;
-            self.updater_status = UpdaterStatus::Error("El nombre del paquete no es válido".into());
+            self.updater_status = UpdaterStatus::Error("updater.invalid_package".into());
             cx.notify();
             return;
         };
@@ -429,9 +429,7 @@ impl TasksModel {
             if status.success() {
                 Ok(())
             } else {
-                Err(std::io::Error::other(
-                    "No se pudo abrir el paquete. Puedes instalarlo desde su carpeta.",
-                ))
+                Err(std::io::Error::other("updater.open_failed"))
             }
         });
         cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {

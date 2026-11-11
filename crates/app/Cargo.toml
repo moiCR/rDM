@@ -19,6 +19,8 @@ uuid.workspace = true
 anyhow = { workspace = true }
 smallvec = "1.16.4"
 chrono = "0.4.45"
+toml = "0.8"
+thiserror.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = "0.3.3"

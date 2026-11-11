@@ -14,6 +14,7 @@ use crate::{
         ActionTooltip, Button, ButtonVariants, IconButton, Input, InputState, Modal, PillButton,
         input::themed_input,
     },
+    lang::{ActiveLang, Lang},
     layout::NavigationStyle,
     state::{CoreContext, UpdaterStatus},
     theme::{ActiveTheme, PrimaryColors, ThemeManager, parse_hex_color},
@@ -156,6 +157,8 @@ pub struct SettingsInputs {
 
 #[derive(Clone)]
 pub struct SettingsFormState {
+    pub language_pending: bool,
+    pub language_error: Option<String>,
     pub theme: String,
     pub accent_color: String,
 }
@@ -163,6 +166,8 @@ pub struct SettingsFormState {
 impl SettingsFormState {
     pub fn from_ui_config(ui_config: &rdm_config::UIConfig) -> Self {
         Self {
+            language_pending: false,
+            language_error: None,
             theme: ui_config.theme.clone(),
             accent_color: ui_config.accent_override().unwrap_or_default().to_owned(),
         }
@@ -271,7 +276,8 @@ impl RenderOnce for SettingsModal {
             });
 
             let download_dir = cx.new(|cx| {
-                let mut s = InputState::new(window, cx).placeholder("C:\\Downloads");
+                let mut s = InputState::new(window, cx)
+                    .placeholder(cx.lang().get("settings.directory_placeholder"));
                 s.set_value(
                     current_cfg.download_dir.to_string_lossy().to_string(),
                     window,
@@ -281,7 +287,8 @@ impl RenderOnce for SettingsModal {
             });
 
             let user_agent = cx.new(|cx| {
-                let mut s = InputState::new(window, cx).placeholder("Escribe o pega User-Agent...");
+                let mut s = InputState::new(window, cx)
+                    .placeholder(cx.lang().get("settings.user_agent_placeholder"));
                 s.set_value(current_cfg.user_agent.clone(), window, cx);
                 s
             });
@@ -336,6 +343,17 @@ impl RenderOnce for SettingsModal {
                 }
             }));
 
+            let user_agent_placeholder = user_agent.clone();
+            let directory_placeholder = download_dir.clone();
+            subs.push(window.observe_global::<Lang>(cx, move |window, cx| {
+                let user_agent = cx.lang().get("settings.user_agent_placeholder");
+                let directory = cx.lang().get("settings.directory_placeholder");
+                user_agent_placeholder.update(cx, |input, cx| {
+                    input.set_placeholder(user_agent, window, cx)
+                });
+                directory_placeholder
+                    .update(cx, |input, cx| input.set_placeholder(directory, window, cx));
+            }));
             SettingsInputs {
                 speed,
                 connections,
@@ -376,6 +394,7 @@ impl RenderOnce for SettingsModal {
                 form_state,
                 palette,
                 config_manager,
+                cx,
             ),
             SettingsTab::Advanced => Self::render_advanced(
                 inputs,
@@ -423,9 +442,9 @@ impl SettingsModal {
             .child(
                 div().flex().flex_wrap().gap_1().children(
                     [
-                        (SettingsTab::Downloads, "Descargas"),
-                        (SettingsTab::Appearance, "Apariencia"),
-                        (SettingsTab::Advanced, "Avanzado"),
+                        (SettingsTab::Downloads, "settings.downloads"),
+                        (SettingsTab::Appearance, "settings.appearance"),
+                        (SettingsTab::Advanced, "settings.advanced"),
                     ]
                     .map(|(section, label)| {
                         let selected = section == tab;
@@ -441,7 +460,7 @@ impl SettingsModal {
                         };
 
                         Button::new(("settings-tab", section as usize))
-                            .label(label)
+                            .label(cx.lang().get(label))
                             .toggled(selected)
                             .rounded(px(24.0))
                             .custom(
@@ -469,7 +488,7 @@ impl SettingsModal {
                         .rounded(px(99.0))
                         .color(palette.text_muted)
                         .hover_bg(palette.surface_hover)
-                        .tooltip("Cerrar")
+                        .tooltip(cx.lang().get("common.close"))
                         .on_click(|_, window, cx| Self::close(window, cx)),
                 ),
             )
@@ -531,13 +550,13 @@ impl SettingsModal {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_size(px(14.0))
                                     .text_color(palette.text_color)
-                                    .child("Límite de velocidad global"),
+                                    .child(cx.lang().get("settings.speed_limit")),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(palette.text_muted)
-                                    .child("Usa 0 para velocidad sin límites."),
+                                    .child(cx.lang().get("settings.speed_limit_hint")),
                             ),
                     )
                     .child(
@@ -621,13 +640,13 @@ impl SettingsModal {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_size(px(14.0))
                                     .text_color(palette.text_color)
-                                    .child("Conexiones simultáneas"),
+                                    .child(cx.lang().get("settings.connections")),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(palette.text_muted)
-                                    .child("Segmentos concurrentes por descarga (1 a 32)."),
+                                    .child(cx.lang().get("settings.connections_hint")),
                             ),
                     )
                     .child(
@@ -704,13 +723,13 @@ impl SettingsModal {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_size(px(14.0))
                                     .text_color(palette.text_color)
-                                    .child("Descargas simultáneas"),
+                                    .child(cx.lang().get("settings.concurrent_downloads")),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(palette.text_muted)
-                                    .child("Descargas activas al mismo tiempo (1 a 16)."),
+                                    .child(cx.lang().get("settings.concurrent_downloads_hint")),
                             ),
                     )
                     .child(
@@ -783,11 +802,14 @@ impl SettingsModal {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_size(px(14.0))
                                     .text_color(palette.text_color)
-                                    .child("Carpeta de descargas"),
+                                    .child(cx.lang().get("settings.directory")),
                             )
-                            .child(div().text_xs().text_color(palette.text_muted).child(
-                                "Directorio predeterminado donde se guardarán los archivos.",
-                            )),
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(palette.text_muted)
+                                    .child(cx.lang().get("settings.directory_hint")),
+                            ),
                     )
                     .child(
                         div()
@@ -827,7 +849,7 @@ impl SettingsModal {
                                             directories: true,
                                             multiple: false,
                                             prompt: Some(
-                                                "Selecciona la carpeta de descargas".into(),
+                                                cx.lang().get("new_download.select_directory"),
                                             ),
                                         });
                                         let dir_target = dir_entity.clone();
@@ -886,7 +908,7 @@ impl SettingsModal {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_size(px(14.0))
                                     .text_color(palette.text_color)
-                                    .child("User-Agent"),
+                                    .child(cx.lang().get("settings.user_agent")),
                             )
                             .child({
                                 let ua_entity = inputs.user_agent.clone();
@@ -907,7 +929,7 @@ impl SettingsModal {
                                         });
                                         window.refresh();
                                     })
-                                    .child("Restaurar por defecto")
+                                    .child(cx.lang().get("settings.restore_default"))
                             }),
                     )
                     .child(
@@ -950,63 +972,111 @@ impl SettingsModal {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_size(px(14.0))
                                     .text_color(palette.text_color)
-                                    .child(format!(
-                                        "Actualizaciones (v{})",
-                                        rdm_core::updater::current_version()
+                                    .child(cx.lang().get_with(
+                                        "updater.title",
+                                        &[("version", rdm_core::updater::current_version())],
                                     )),
                             )
                             .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(palette.text_muted)
-                                    .child(match &updater_status {
+                                div().text_xs().text_color(palette.text_muted).child(
+                                    match &updater_status {
                                         UpdaterStatus::Idle => {
-                                            "Comprueba si hay nuevas versiones de rDM disponibles.".to_string()
+                                            cx.lang().get("updater.idle").to_string()
                                         }
                                         UpdaterStatus::Checking => {
-                                            "Buscando actualizaciones en GitHub...".to_string()
+                                            cx.lang().get("updater.checking").to_string()
                                         }
                                         UpdaterStatus::UpToDate => {
-                                            "rDM está actualizado a la versión más reciente.".to_string()
+                                            cx.lang().get("updater.up_to_date").to_string()
                                         }
-                                        UpdaterStatus::Available(info) => {
-                                            format!("Versión v{} disponible.", info.version)
-                                        }
+                                        UpdaterStatus::Available(info) => cx
+                                            .lang()
+                                            .get_with(
+                                                "updater.available",
+                                                &[("version", &info.version)],
+                                            )
+                                            .to_string(),
                                         UpdaterStatus::Downloading {
                                             downloaded_bytes,
                                             total_bytes,
                                             ..
                                         } => {
                                             if *total_bytes > 0 {
-                                                format!(
-                                                    "Descargando instalador: {:.1} MB / {:.1} MB ({:.0}%)",
-                                                    *downloaded_bytes as f64 / 1048576.0,
-                                                    *total_bytes as f64 / 1048576.0,
-                                                    (*downloaded_bytes as f64 / *total_bytes as f64) * 100.0
-                                                )
+                                                cx.lang()
+                                                    .get_with(
+                                                        "updater.progress",
+                                                        &[
+                                                            (
+                                                                "downloaded",
+                                                                &format!(
+                                                                    "{:.1}",
+                                                                    *downloaded_bytes as f64
+                                                                        / 1048576.0
+                                                                ),
+                                                            ),
+                                                            (
+                                                                "total",
+                                                                &format!(
+                                                                    "{:.1}",
+                                                                    *total_bytes as f64 / 1048576.0
+                                                                ),
+                                                            ),
+                                                            (
+                                                                "percent",
+                                                                &format!(
+                                                                    "{:.0}",
+                                                                    (*downloaded_bytes as f64
+                                                                        / *total_bytes as f64)
+                                                                        * 100.0
+                                                                ),
+                                                            ),
+                                                        ],
+                                                    )
+                                                    .to_string()
                                             } else {
-                                                format!(
-                                                    "Descargando instalador: {:.1} MB...",
-                                                    *downloaded_bytes as f64 / 1048576.0
-                                                )
+                                                cx.lang()
+                                                    .get_with(
+                                                        "updater.progress_unknown",
+                                                        &[(
+                                                            "downloaded",
+                                                            &format!(
+                                                                "{:.1}",
+                                                                *downloaded_bytes as f64
+                                                                    / 1048576.0
+                                                            ),
+                                                        )],
+                                                    )
+                                                    .to_string()
                                             }
                                         }
-                                        UpdaterStatus::Downloaded { package, error, .. } => {
-                                            error.clone().unwrap_or_else(|| {
-                                                if *package == rdm_core::updater::PackageKind::AppImage {
-                                                    "AppImage descargada. Cierra rDM y sustituye el archivo anterior por el nuevo.".into()
+                                        UpdaterStatus::Downloaded { package, error, .. } => error
+                                            .as_ref()
+                                            .map(|error| cx.lang().get(error).to_string())
+                                            .unwrap_or_else(|| {
+                                                if *package
+                                                    == rdm_core::updater::PackageKind::AppImage
+                                                {
+                                                    cx.lang()
+                                                        .get("updater.appimage_downloaded")
+                                                        .into()
                                                 } else {
-                                                    "Paquete descargado. Ábrelo para instalarlo con las herramientas del sistema.".into()
+                                                    cx.lang()
+                                                        .get("updater.package_downloaded")
+                                                        .into()
                                                 }
-                                            })
-                                        }
+                                            }),
                                         UpdaterStatus::Installing => {
-                                            "Instalando actualización y reiniciando rDM...".to_string()
+                                            cx.lang().get("updater.installing").to_string()
                                         }
-                                        UpdaterStatus::Error(e) => {
-                                            format!("Error de actualización: {e}")
-                                        }
-                                    }),
+                                        UpdaterStatus::Error(e) => cx
+                                            .lang()
+                                            .get_with(
+                                                "updater.error",
+                                                &[("error", &cx.lang().get(e))],
+                                            )
+                                            .to_string(),
+                                    },
+                                ),
                             ),
                     )
                     .child(
@@ -1016,7 +1086,13 @@ impl SettingsModal {
                             .gap_2()
                             .child(match &updater_status {
                                 UpdaterStatus::Available(info) => {
-                                    let label = if info.installer_url.is_none() { "Ver versión" } else if cfg!(target_os = "linux") { "Descargar actualización" } else { "Actualizar ahora" };
+                                    let label = if info.installer_url.is_none() {
+                                        cx.lang().get("updater.view_release")
+                                    } else if cfg!(target_os = "linux") {
+                                        cx.lang().get("updater.download")
+                                    } else {
+                                        cx.lang().get("updater.install")
+                                    };
                                     let tasks_model = cx.tasks_model().clone();
                                     PillButton::new("btn-install-update", label)
                                         .selected(true)
@@ -1029,39 +1105,79 @@ impl SettingsModal {
                                 }
                                 UpdaterStatus::Downloaded { package, .. } => {
                                     let tasks_model = cx.tasks_model().clone();
-                                    let label = if matches!(package, rdm_core::updater::PackageKind::Deb | rdm_core::updater::PackageKind::Rpm) { "Abrir paquete" } else { "Ver archivo" };
-                                    PillButton::new("btn-open-update", label).on_click(move |_, _, cx| {
-                                        tasks_model.update(cx, |model, cx| model.open_downloaded_update(cx));
-                                    })
+                                    let label = if matches!(
+                                        package,
+                                        rdm_core::updater::PackageKind::Deb
+                                            | rdm_core::updater::PackageKind::Rpm
+                                    ) {
+                                        cx.lang().get("updater.open_package")
+                                    } else {
+                                        cx.lang().get("updater.view_file")
+                                    };
+                                    PillButton::new("btn-open-update", label).on_click(
+                                        move |_, _, cx| {
+                                            tasks_model.update(cx, |model, cx| {
+                                                model.open_downloaded_update(cx)
+                                            });
+                                        },
+                                    )
                                 }
                                 UpdaterStatus::Checking
                                 | UpdaterStatus::Downloading { .. }
-                                | UpdaterStatus::Installing => {
-                                    PillButton::new("btn-checking-update", "Comprobando...")
-                                        .selected(false)
-                                }
+                                | UpdaterStatus::Installing => PillButton::new(
+                                    "btn-checking-update",
+                                    cx.lang().get("updater.busy"),
+                                )
+                                .selected(false),
                                 _ => {
                                     let tasks_model = cx.tasks_model().clone();
-                                    PillButton::new("btn-check-updates", "Buscar actualizaciones")
-                                        .selected(false)
-                                        .on_click(move |_, window, cx| {
+                                    PillButton::new(
+                                        "btn-check-updates",
+                                        cx.lang().get("updater.check"),
+                                    )
+                                    .selected(false)
+                                    .on_click(
+                                        move |_, window, cx| {
                                             tasks_model.update(cx, |model, cx| {
                                                 model.check_for_updates(cx);
                                             });
                                             window.refresh();
-                                        })
+                                        },
+                                    )
                                 }
                             })
-                            .children(if let UpdaterStatus::Downloaded { path, .. } = &updater_status {
-                                let path = path.clone();
-                                Some(PillButton::new("btn-update-folder", "Abrir carpeta").on_click(move |_, _, cx| cx.reveal_path(&path)))
-                            } else { None })
-                            .children(matches!(&updater_status, UpdaterStatus::Downloaded { .. }).then(|| {
-                                let tasks_model = cx.tasks_model().clone();
-                                PillButton::new("btn-update-recheck", "Buscar actualizaciones").on_click(move |_, _, cx| {
-                                    tasks_model.update(cx, |model, cx| model.check_for_updates(cx));
-                                })
-                            })),
+                            .children(
+                                if let UpdaterStatus::Downloaded { path, .. } = &updater_status {
+                                    let path = path.clone();
+                                    Some(
+                                        PillButton::new(
+                                            "btn-update-folder",
+                                            cx.lang().get("updater.folder"),
+                                        )
+                                        .on_click(move |_, _, cx| cx.reveal_path(&path)),
+                                    )
+                                } else {
+                                    None
+                                },
+                            )
+                            .children(
+                                matches!(&updater_status, UpdaterStatus::Downloaded { .. }).then(
+                                    || {
+                                        let tasks_model = cx.tasks_model().clone();
+                                        PillButton::new(
+                                            "btn-update-recheck",
+                                            cx.lang().get("updater.check"),
+                                        )
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                tasks_model.update(cx, |model, cx| {
+                                                    model.check_for_updates(cx)
+                                                });
+                                            },
+                                        )
+                                    },
+                                ),
+                            ),
                     )
             })
             .child({
@@ -1086,19 +1202,23 @@ impl SettingsModal {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_size(px(14.0))
                                     .text_color(palette.text_color)
-                                    .child("Búsqueda automática"),
+                                    .child(cx.lang().get("settings.auto_updates")),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(palette.text_muted)
-                                    .child("Comprobar nuevas versiones automáticamente al iniciar la app."),
+                                    .child(cx.lang().get("settings.auto_updates_hint")),
                             ),
                     )
                     .child(
                         PillButton::new(
                             "btn-toggle-auto-check",
-                            if auto_check { "Activado" } else { "Desactivado" },
+                            if auto_check {
+                                cx.lang().get("common.enabled")
+                            } else {
+                                cx.lang().get("common.disabled")
+                            },
                         )
                         .selected(auto_check)
                         .on_click(move |_, window, _cx| {
@@ -1127,29 +1247,33 @@ impl SettingsModal {
                 &preferences.startup,
                 "startup",
                 if cfg!(windows) {
-                    "Iniciar con Windows"
+                    cx.lang().get("settings.startup_windows")
                 } else {
-                    "Iniciar al iniciar sesión"
+                    cx.lang().get("settings.startup")
                 },
-                "Abrir en la bandeja al iniciar sesión; sin bandeja, abrir la ventana.",
+                cx.lang().get("settings.startup_hint"),
             ),
             (
                 DesktopPreference::CloseToTray,
                 &preferences.close_to_tray,
                 "close-to-tray",
-                "Cerrar a la bandeja",
-                "Mantener rDM y las descargas activos al cerrar la ventana.",
+                cx.lang().get("settings.close_to_tray"),
+                cx.lang().get("settings.close_to_tray_hint"),
             ),
         ];
         let content =
             div().flex().flex_col().gap_2().children(rows.map(
                 |(setting, preference, id, title, description)| {
                     let label = match (preference.value, preference.pending, setting) {
-                        (_, true, _) => "Procesando…",
-                        (Some(true), false, DesktopPreference::Startup) => "Registrado",
-                        (Some(true), false, DesktopPreference::CloseToTray) => "Activado",
-                        (Some(false), false, _) => "Desactivado",
-                        (None, false, _) => "Reintentar",
+                        (_, true, _) => cx.lang().get("common.processing"),
+                        (Some(true), false, DesktopPreference::Startup) => {
+                            cx.lang().get("common.registered")
+                        }
+                        (Some(true), false, DesktopPreference::CloseToTray) => {
+                            cx.lang().get("common.enabled")
+                        }
+                        (Some(false), false, _) => cx.lang().get("common.disabled"),
+                        (None, false, _) => cx.lang().get("common.retry"),
                     };
                     let mut button =
                         PillButton::new(id, label).selected(preference.value == Some(true));
@@ -1199,7 +1323,12 @@ impl SettingsModal {
             ));
         #[cfg(target_os = "linux")]
         let content = if !crate::linux_desktop::available(cx) {
-            content.child(div().text_xs().text_color(palette.text_muted).child("Bandeja no disponible en esta sesión. Cerrar termina rDM; el inicio automático abre la ventana."))
+            content.child(
+                div()
+                    .text_xs()
+                    .text_color(palette.text_muted)
+                    .child(cx.lang().get("settings.tray_unavailable")),
+            )
         } else {
             content
         };
@@ -1213,6 +1342,7 @@ impl SettingsModal {
         state: Entity<SettingsFormState>,
         palette: ModalPalette,
         config: Arc<rdm_config::ConfigManager>,
+        cx: &App,
     ) -> Div {
         let row1 = ["#9e9e9e", "#1e1e1e", "#ef4444", "#f97316", "#10b981"];
         let row2 = ["", "#4422ff", "#9900ff", "#ff0099", "#e07070"];
@@ -1221,6 +1351,12 @@ impl SettingsModal {
             .flex()
             .flex_col()
             .gap_3p5()
+            .child(Self::render_language(
+                state.clone(),
+                config.clone(),
+                palette,
+                cx,
+            ))
             .child(
                 div()
                     .flex()
@@ -1273,7 +1409,7 @@ impl SettingsModal {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.text_color)
-                            .child("Navegación"),
+                            .child(cx.lang().get("settings.navigation")),
                     )
                     .child(
                         div()
@@ -1282,13 +1418,13 @@ impl SettingsModal {
                             .gap_2()
                             .child(Self::navigation_button(
                                 NavigationStyle::Normal,
-                                "Normal",
+                                cx.lang().get("settings.normal"),
                                 navigation_style,
                                 config.clone(),
                             ))
                             .child(Self::navigation_button(
                                 NavigationStyle::Dock,
-                                "Dock",
+                                cx.lang().get("settings.dock"),
                                 navigation_style,
                                 config.clone(),
                             )),
@@ -1304,7 +1440,7 @@ impl SettingsModal {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.text_color)
-                            .child("Tema"),
+                            .child(cx.lang().get("settings.theme")),
                     )
                     .child(
                         div()
@@ -1329,6 +1465,113 @@ impl SettingsModal {
                             )),
                     ),
             )
+    }
+
+    fn render_language(
+        state: Entity<SettingsFormState>,
+        config: Arc<rdm_config::ConfigManager>,
+        palette: ModalPalette,
+        cx: &App,
+    ) -> Div {
+        let pending = state.read(cx).language_pending;
+        let error = state.read(cx).language_error.clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(palette.text_color)
+                            .child(cx.lang().get("settings.language")),
+                    )
+                    .child(div().flex().items_center().gap_2().children(
+                        cx.lang().languages().map(|(code, name)| {
+                            let code = code.to_owned();
+                            let mut button = PillButton::new(
+                                SharedString::from(format!("language-{code}")),
+                                name.to_owned(),
+                            )
+                            .selected(cx.lang().code() == code);
+                            if !pending {
+                                let state = state.clone();
+                                let config = config.clone();
+                                button = button.on_click(move |_, _, cx| {
+                                    Self::change_language(&code, state.clone(), config.clone(), cx)
+                                });
+                            }
+                            button
+                        }),
+                    )),
+            )
+            .children(pending.then(|| {
+                div()
+                    .text_xs()
+                    .text_color(palette.text_muted)
+                    .child(cx.lang().get("settings.saving_language"))
+            }))
+            .children(error.map(|error| {
+                div().text_xs().text_color(cx.theme().error()).child(
+                    cx.lang()
+                        .get_with("settings.language_error", &[("error", &error)]),
+                )
+            }))
+    }
+
+    fn change_language(
+        code: &str,
+        state: Entity<SettingsFormState>,
+        config: Arc<rdm_config::ConfigManager>,
+        cx: &mut App,
+    ) {
+        if state.read(cx).language_pending || cx.lang().code() == code {
+            return;
+        }
+        let code = code.to_owned();
+        state.update(cx, |state, _| {
+            state.language_pending = true;
+            state.language_error = None;
+        });
+        let work = cx
+            .tasks_model()
+            .read(cx)
+            .tokio_handle()
+            .spawn_blocking(move || {
+                let previous = config.ui_config().language;
+                if let Err(error) = config.update_ui_config(|ui| ui.language = code.clone()) {
+                    config.update_ui_config_in_memory(|ui| ui.language = previous);
+                    return Err(error.to_string());
+                }
+                Ok(code)
+            });
+        cx.refresh_windows();
+        cx.spawn(async move |cx| {
+            let result = work
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| result);
+            state.update(cx, |state, cx| {
+                state.language_pending = false;
+                state.language_error = match result {
+                    Ok(code) => cx
+                        .global_mut::<Lang>()
+                        .set_language(&code)
+                        .err()
+                        .map(|error| error.to_string()),
+                    Err(error) => Some(error),
+                };
+                cx.refresh_windows();
+            });
+        })
+        .detach();
     }
 
     fn accent_swatch(
@@ -1391,7 +1634,10 @@ impl SettingsModal {
             );
 
         if is_default {
-            swatch.tooltip(|_, cx| cx.new(|_| ActionTooltip::new("Color del tema")).into())
+            swatch.tooltip(|_, cx| {
+                let label = cx.lang().get("settings.theme_color");
+                cx.new(|_| ActionTooltip::new(label)).into()
+            })
         } else {
             swatch
         }
@@ -1399,7 +1645,7 @@ impl SettingsModal {
 
     fn navigation_button(
         style: NavigationStyle,
-        label: &'static str,
+        label: SharedString,
         current: NavigationStyle,
         config: Arc<rdm_config::ConfigManager>,
     ) -> impl IntoElement {

@@ -1,7 +1,9 @@
 use gpui::{prelude::FluentBuilder as _, *};
 use gpui_kit::base::Button;
 
-use crate::{components::ActionTooltip, theme::ActiveTheme, views::SettingsModalState};
+use crate::{
+    components::ActionTooltip, lang::ActiveLang, theme::ActiveTheme, views::SettingsModalState,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum NavigationItem {
@@ -13,11 +15,11 @@ pub(super) enum NavigationItem {
 impl NavigationItem {
     pub(super) const ALL: [Self; 3] = [Self::Dashboard, Self::Downloads, Self::Settings];
 
-    fn label(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
-            Self::Dashboard => "Inicio",
-            Self::Downloads => "Descargas",
-            Self::Settings => "Ajustes",
+            Self::Dashboard => "navigation.dashboard",
+            Self::Downloads => "navigation.downloads",
+            Self::Settings => "navigation.settings",
         }
     }
 
@@ -27,6 +29,10 @@ impl NavigationItem {
             Self::Downloads => "icons/download.svg",
             Self::Settings => "icons/settings.svg",
         }
+    }
+
+    pub(super) fn label(self, cx: &App) -> SharedString {
+        cx.lang().get(self.key())
     }
 
     pub(super) fn active(cx: &App) -> Option<Self> {
@@ -68,9 +74,9 @@ impl NavigationItem {
         let text = theme.text_color();
         let color = if active { text } else { theme.text_muted() };
 
-        Button::new(self.label())
-            .group(self.label())
-            .accessibility_label(self.label())
+        Button::new(self.key())
+            .group(self.key())
+            .accessibility_label(cx.lang().get(self.key()))
             .w_full()
             .justify_start()
             .gap_2p5()
@@ -93,9 +99,9 @@ impl NavigationItem {
                     .size_4()
                     .flex_shrink_0()
                     .text_color(color)
-                    .group_hover(self.label(), move |style| style.text_color(text)),
+                    .group_hover(self.key(), move |style| style.text_color(text)),
             )
-            .child(self.label())
+            .child(cx.lang().get(self.key()))
     }
 
     pub(super) fn dock_button(
@@ -103,15 +109,19 @@ impl NavigationItem {
         size: Pixels,
         color: Rgba,
         hover_color: Option<Rgba>,
+        label: SharedString,
     ) -> Button {
-        Button::new(self.label())
-            .group(self.label())
-            .accessibility_label(self.label())
+        Button::new(self.key())
+            .group(self.key())
+            .accessibility_label(label)
             .size(size)
             .flex_shrink_0()
             .rounded(px(12.0))
             .cursor_pointer()
-            .tooltip(move |_, cx| cx.new(|_| ActionTooltip::new(self.label())).into())
+            .tooltip(move |_, cx| {
+                let label = cx.lang().get(self.key());
+                cx.new(|_| ActionTooltip::new(label)).into()
+            })
             .on_click(move |_, window, cx| self.activate(window, cx))
             .child(
                 svg()
@@ -119,7 +129,7 @@ impl NavigationItem {
                     .size(px(19.0))
                     .text_color(color)
                     .when_some(hover_color, |icon, hover_color| {
-                        icon.group_hover(self.label(), move |style| style.text_color(hover_color))
+                        icon.group_hover(self.key(), move |style| style.text_color(hover_color))
                     }),
             )
     }

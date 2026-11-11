@@ -7,6 +7,7 @@ use gpui_kit::{
 use super::{DownloadForm, validate_connections, validate_file_name, validate_url};
 use crate::{
     components::{Button, IconButton, Modal, input::themed_input},
+    lang::ActiveLang,
     theme::ActiveTheme,
 };
 
@@ -75,7 +76,7 @@ impl Render for DownloadForm {
 .gap_3()
                                             .child(
                                                 Textarea::new(&self.url)
-                                                    .aria_label("URL de descarga")
+                                                    .aria_label(cx.lang().get("new_download.url_label"))
                                                     .h(px(125.0))
                                                     .w_full()
                                                     .rounded(px(24.0))
@@ -90,7 +91,7 @@ impl Render for DownloadForm {
                                                 div()
 .text_xs()
 .text_color(error_color)
-.child(error)
+.child(cx.lang().get(error))
                                             }))
                                             .child(
                                                 div()
@@ -105,7 +106,7 @@ impl Render for DownloadForm {
 .flex_none()
 .text_xs()
 .text_color(muted)
-.child("Guardar en"))
+.child(cx.lang().get("new_download.save_to")))
                                                     .child(div()
 .flex_1()
 .min_w_0()
@@ -117,7 +118,7 @@ impl Render for DownloadForm {
                                                     .child(IconButton::new("new-download-directory", "icons/folder-open.svg")
                                                         .rounded(px(24.0))
 .disabled(locked)
-.tooltip("Elegir carpeta")
+.tooltip(cx.lang().get("new_download.choose_directory"))
                                                         .on_click(cx.listener(|this, _, window, cx| this.choose_directory(window, cx)))),
                                             )
                                             .child(
@@ -126,7 +127,7 @@ impl Render for DownloadForm {
 .child(Button::new("new-download-advanced")
                                                     .ghost()
 .rounded(px(24.0))
-.accessibility_label("Avanzado")
+.accessibility_label(cx.lang().get("new_download.advanced"))
                                                     .toggled(self.advanced)
                                                     .child(div()
 .flex()
@@ -135,7 +136,7 @@ impl Render for DownloadForm {
                                                         .child(svg()
 .path(if self.advanced { "icons/chevron-down.svg" } else { "icons/chevron-right.svg" })
 .size_3())
-                                                        .child("Avanzado"))
+                                                        .child(cx.lang().get("new_download.advanced")))
                                                     .on_click(cx.listener(|this, _, _, cx| { this.advanced = !this.advanced; cx.notify(); }))),
                                             )
                                             .when(self.advanced, |content| content.child(
@@ -146,10 +147,10 @@ impl Render for DownloadForm {
                                                     .child(div()
 .text_sm()
 .text_color(muted)
-.child("Nombre de archivo"))
+.child(cx.lang().get("new_download.file_name")))
                                                     .child(themed_input(&self.file_name, cx)
                                                         .id("new-download-name")
-.aria_label("Nombre de archivo opcional")
+.aria_label(cx.lang().get("new_download.optional_name"))
                                                         .rounded(px(24.0))
 .h(px(36.0))
 .w_full()
@@ -157,7 +158,7 @@ impl Render for DownloadForm {
                                                     .children(name_error.map(|error| div()
 .text_xs()
 .text_color(error_color)
-.child(error)))
+.child(cx.lang().get(error))))
                                                     .child(div()
 .flex()
 .items_center()
@@ -166,12 +167,12 @@ impl Render for DownloadForm {
                                                         .child(div()
 .text_sm()
 .text_color(muted)
-.child("Conexiones por descarga"))
+.child(cx.lang().get("new_download.connections")))
                                                         .child(div()
 .w(px(72.0))
 .child(themed_input(&self.connections, cx)
                                                             .id("new-download-connections")
-.aria_label("Conexiones por descarga, entre 1 y 32")
+.aria_label(cx.lang().get("new_download.connections_label"))
                                                             .rounded(px(24.0))
 .h(px(36.0))
 .text_align(TextAlign::Center)
@@ -179,7 +180,7 @@ impl Render for DownloadForm {
                                                     .children(connections_error.map(|error| div()
 .text_xs()
 .text_color(error_color)
-.child(error)))
+.child(cx.lang().get(error))))
                                             ))
                                             .children((!self.advanced)
 .then_some(name_error.or(connections_error))
@@ -187,12 +188,12 @@ impl Render for DownloadForm {
                                                 .map(|error| div()
 .text_xs()
 .text_color(error_color)
-.child(error)))
-                                            .children(self.error.clone()
+.child(cx.lang().get(error))))
+                                            .children(self.error.as_deref()
 .map(|error| div()
 .text_sm()
 .text_color(error_color)
-.child(error))),
+.child(cx.lang().get(error)))),
                                     ),
                             )
                             .child(Scrollbar::vertical(&self.scroll)
@@ -206,12 +207,12 @@ impl Render for DownloadForm {
 .justify_end()
 .gap_2()
                             .child(Button::new("new-download-cancel")
-.label("Cancelar")
+.label(cx.lang().get("common.cancel"))
 .rounded(px(24.0))
                                 .disabled(self.submitting)
                                 .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))))
                             .child(Button::new("new-download-submit")
-                                .label(if self.submitting { "Añadiendo…" } else if self.created_task.is_some() { "Reintentar" } else { "Descargar" })
+                                .label(if self.submitting { cx.lang().get("new_download.adding") } else if self.created_task.is_some() { cx.lang().get("common.retry") } else { cx.lang().get("new_download.download") })
                                 .primary()
 .rounded(px(24.0))
 .disabled(invalid || self.submitting)
