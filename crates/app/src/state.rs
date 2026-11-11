@@ -157,8 +157,11 @@ impl TasksModel {
                             cx.activate(true);
                             if let Some(handle) = cx.windows().into_iter().next() {
                                 let _ = handle.update(cx, |_, window, cx| {
-                                    NewDownloadModal::open(Some(intercepted), window, cx);
+                                    #[cfg(windows)]
+                                    crate::windows_desktop::restore_window(window);
+                                    #[cfg(not(windows))]
                                     window.activate_window();
+                                    NewDownloadModal::open(Some(intercepted), window, cx);
                                     window.refresh();
                                 });
                             }

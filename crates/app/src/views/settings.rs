@@ -31,6 +31,107 @@ pub struct SettingsModalState {
 
 impl Global for SettingsModalState {}
 
+#[cfg(windows)]
+struct WindowsPreferences(Entity<WindowsPreferencesState>);
+
+#[cfg(windows)]
+impl Global for WindowsPreferences {}
+
+#[cfg(windows)]
+struct WindowsPreferencesState {
+    startup: Preference,
+    close_to_tray: Preference,
+}
+
+#[cfg(windows)]
+struct Preference {
+    value: Option<bool>,
+    pending: bool,
+    error: Option<String>,
+}
+
+#[cfg(windows)]
+impl Preference {
+    fn new(value: Option<bool>) -> Self {
+        Self {
+            value,
+            pending: false,
+            error: None,
+        }
+    }
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+enum WindowsPreference {
+    Startup,
+    CloseToTray,
+}
+
+#[cfg(windows)]
+impl WindowsPreference {
+    fn select(self, state: &mut WindowsPreferencesState) -> &mut Preference {
+        match self {
+            Self::Startup => &mut state.startup,
+            Self::CloseToTray => &mut state.close_to_tray,
+        }
+    }
+
+    fn change(self, cx: &mut App) {
+        let preferences = cx.global::<WindowsPreferences>().0.clone();
+        let Some(previous) = preferences.update(cx, |state, cx| {
+            let preference = self.select(state);
+            if preference.pending {
+                return None;
+            }
+            preference.pending = true;
+            preference.error = None;
+            cx.refresh_windows();
+            Some(preference.value)
+        }) else {
+            return;
+        };
+        let config = cx.core().config().clone();
+        let work = cx
+            .tasks_model()
+            .read(cx)
+            .tokio_handle()
+            .spawn_blocking(move || match self {
+                Self::Startup => match previous {
+                    Some(value) => crate::windows_desktop::set_startup_registered(!value)
+                        .map(|()| !value)
+                        .map_err(|error| error.to_string()),
+                    None => crate::windows_desktop::startup_registered()
+                        .map_err(|error| error.to_string()),
+                },
+                Self::CloseToTray => {
+                    let current = previous.unwrap_or(true);
+                    if let Err(error) = config.update_ui_config(|ui| ui.close_to_tray = !current) {
+                        config.update_ui_config_in_memory(|ui| ui.close_to_tray = current);
+                        return Err(error.to_string());
+                    }
+                    Ok(!current)
+                }
+            });
+        cx.spawn(async move |cx| {
+            let result = work
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| result);
+            preferences.update(cx, |state, cx| {
+                let preference = self.select(state);
+                preference.pending = false;
+                match result {
+                    Ok(value) => preference.value = Some(value),
+                    Err(error) => preference.error = Some(error),
+                }
+                cx.refresh_windows();
+            });
+        })
+        .detach();
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ModalPalette {
     surface_hover: Rgba,
@@ -71,6 +172,26 @@ pub struct SettingsModal;
 impl SettingsModal {
     pub fn new() -> Self {
         Self
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn initialize_windows_preferences(close_to_tray: bool, cx: &mut App) {
+        let preferences = cx.new(|_| WindowsPreferencesState {
+            startup: Preference::new(None),
+            close_to_tray: Preference::new(Some(close_to_tray)),
+        });
+        cx.set_global(WindowsPreferences(preferences));
+        WindowsPreference::Startup.change(cx);
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn close_to_tray(cx: &App) -> bool {
+        cx.global::<WindowsPreferences>()
+            .0
+            .read(cx)
+            .close_to_tray
+            .value
+            .unwrap_or(true)
     }
 }
 
@@ -741,7 +862,7 @@ impl SettingsModal {
         auto_check: bool,
         cx: &App,
     ) -> Div {
-        div()
+        let content = div()
             .flex()
             .flex_col()
             .gap_2()
@@ -958,7 +1079,91 @@ impl SettingsModal {
                             window.refresh();
                         }),
                     )
-            })
+            });
+
+        #[cfg(windows)]
+        let content = content.child(Self::render_windows_preferences(palette, cx));
+
+        content
+    }
+
+    #[cfg(windows)]
+    fn render_windows_preferences(palette: ModalPalette, cx: &App) -> Div {
+        let preferences = cx.global::<WindowsPreferences>().0.read(cx);
+        let error_color = cx.theme().error();
+        let rows = [
+            (
+                WindowsPreference::Startup,
+                &preferences.startup,
+                "startup",
+                "Iniciar con Windows",
+                "Abrir en la bandeja al iniciar sesión. Puedes gestionar el permiso en el Administrador de tareas.",
+            ),
+            (
+                WindowsPreference::CloseToTray,
+                &preferences.close_to_tray,
+                "close-to-tray",
+                "Cerrar a la bandeja",
+                "Mantener rDM y las descargas activos al cerrar la ventana.",
+            ),
+        ];
+        div().flex().flex_col().gap_2().children(rows.map(
+            |(setting, preference, id, title, description)| {
+                let label = match (preference.value, preference.pending, setting) {
+                    (_, true, _) => "Procesando…",
+                    (Some(true), false, WindowsPreference::Startup) => "Registrado",
+                    (Some(true), false, WindowsPreference::CloseToTray) => "Activado",
+                    (Some(false), false, _) => "Desactivado",
+                    (None, false, _) => "Reintentar",
+                };
+                let mut button =
+                    PillButton::new(id, label).selected(preference.value == Some(true));
+                if !preference.pending {
+                    button = button.on_click(move |_, _, cx| setting.change(cx));
+                }
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .py_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .flex_wrap()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .flex_basis(px(175.0))
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_size(px(14.0))
+                                            .text_color(palette.text_color)
+                                            .child(title),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(palette.text_muted)
+                                            .child(description),
+                                    ),
+                            )
+                            .child(button),
+                    )
+                    .children(
+                        preference.error.as_ref().map(|error| {
+                            div().text_xs().text_color(error_color).child(error.clone())
+                        }),
+                    )
+            },
+        ))
     }
 
     fn render_appearance(

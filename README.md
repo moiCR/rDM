@@ -80,3 +80,11 @@ rdm-cli --help
 ```
 
 Use `info` to inspect a URL before downloading and `list` to find the ID of a paused or interrupted transfer.
+
+## Third-party notices
+
+- rDM uses GPUI by Zed Industries under the Apache License 2.0. [GPUI source](https://github.com/zed-industries/zed/tree/main/crates/gpui)
+- Parts of rDM's desktop interface are based on Motrix by Dr_rOot. The Motrix MIT license is included in the [desktop notices](crates/app/public/THIRD_PARTY_NOTICES.txt). [Motrix source](https://github.com/agalwood/Motrix)
+- Desktop and command-line packages include [Rust dependency notices](crates/app/public/THIRD_PARTY_NOTICES.txt), the [Geist font license](crates/app/public/fonts/OFL.txt), and the [Lucide and Feather icon notices](crates/app/public/icons/LICENSE.txt).
+- The Chrome and Firefox packages include [notices for React, React DOM, and Scheduler](extension/THIRD_PARTY_NOTICES.txt), along with the font and icon notices.
+- The AppImage includes notices for its bundled Ubuntu libraries. Its launcher lists its own dependencies and license links under `--appimage-help`. [AppImage runtime source](https://github.com/AppImage/type2-runtime)

@@ -2,6 +2,7 @@ import { copyFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 const rootDir = import.meta.dir;
+const desktopAssetsDir = join(rootDir, "..", "crates", "app", "public");
 const targets = ["chrome", "firefox"];
 
 async function runBuild() {
@@ -43,6 +44,18 @@ async function runBuild() {
     copyFileSync(
       join(rootDir, "src", "popup", "popup.css"),
       join(popupOutDir, "popup.css")
+    );
+    copyFileSync(
+      join(rootDir, "THIRD_PARTY_NOTICES.txt"),
+      join(outDir, "THIRD_PARTY_NOTICES.txt")
+    );
+    copyFileSync(
+      join(desktopAssetsDir, "fonts", "OFL.txt"),
+      join(outDir, "fonts", "OFL.txt")
+    );
+    copyFileSync(
+      join(desktopAssetsDir, "icons", "LICENSE.txt"),
+      join(outDir, "icons", "LICENSE.txt")
     );
 
     console.log(`Built React extension for ${target}`);

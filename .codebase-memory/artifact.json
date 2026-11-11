@@ -1,12 +1,12 @@
 {
     "schema_version": 2,
-    "commit": "4e4d4b12e697c946cc38dd9776d4641d752aecef",
-    "indexed_at": "2026-11-10T23:19:21Z",
+    "commit": "9fc6bdc62162185549e0e5471e199d59f92059e9",
+    "indexed_at": "2026-11-10T23:51:11Z",
     "project": "rDM",
-    "nodes": 3124,
-    "edges": 14459,
-    "original_size": 13631488,
-    "compressed_size": 2785028,
+    "nodes": 3165,
+    "edges": 14500,
+    "original_size": 13697024,
+    "compressed_size": 2797452,
     "compression_level": 3,
     "reconcile_basis": "git-clean-head"
 }

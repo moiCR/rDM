@@ -20,6 +20,18 @@ anyhow = { workspace = true }
 smallvec = "1.16.4"
 chrono = "0.4.45"
 
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6.2"
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Security",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
 image = { version = "0.25", default-features = false, features = ["png", "ico"] }

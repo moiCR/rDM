@@ -190,6 +190,32 @@ jobs:
             --executable "$root/usr/lib/rdm/rdm-cli" \
             --desktop-file "$root/usr/share/applications/rdm.desktop" \
             --icon-file "$root/usr/share/icons/hicolor/256x256/apps/rdm.png"
+
+          notices="$appdir/usr/bin/public/appimage-notices"
+          mkdir -p "$notices"
+          while IFS= read -r library; do
+            packages="$(dpkg-query --search "*/$library" 2>/dev/null |
+              sed -E 's/: .*//; s/, /\n/g' | sort -u || true)"
+            if [[ -z "$packages" ]]; then
+              echo "::warning::No Ubuntu package matched the bundled library $library"
+              continue
+            fi
+            while IFS= read -r package; do
+              package="${package%%:*}"
+              copyright="/usr/share/doc/$package/copyright"
+              if [[ ! -r "$copyright" ]]; then
+                echo "::warning::No copyright file found for $package"
+                continue
+              fi
+              install -Dm644 "$copyright" "$notices/$package.txt"
+              while IFS= read -r license; do
+                if [[ -r "$license" ]]; then
+                  install -Dm644 "$license" "$notices/common-licenses/${license##*/}"
+                fi
+              done < <(grep -oE '/usr/share/common-licenses/[[:alnum:].+-]+' "$copyright" | sort -u)
+            done <<< "$packages"
+          done < <(find "$appdir/usr" -type f -name '*.so*' -printf '%f\n' | sort -u)
+
           target/appimagetool.AppImage --no-appstream "$appdir" "dist/rDM-${VERSION}-x86_64.AppImage"
 
       - name: Replace Linux release assets

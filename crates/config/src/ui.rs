@@ -22,6 +22,7 @@ pub struct UIConfig {
     pub accent_color: String,
     #[serde(default = "default_auto_check_updates")]
     pub auto_check_updates: bool,
+    pub close_to_tray: bool,
 }
 
 impl Default for UIConfig {
@@ -31,6 +32,7 @@ impl Default for UIConfig {
             sidebar_style: default_sidebar_style(),
             accent_color: String::new(),
             auto_check_updates: default_auto_check_updates(),
+            close_to_tray: true,
         }
     }
 }
@@ -46,6 +48,15 @@ impl UIConfig {
 #[cfg(test)]
 mod tests {
     use super::UIConfig;
+
+    #[test]
+    fn close_to_tray_defaults_on_and_respects_saved_choice() -> Result<(), serde_json::Error> {
+        let legacy: UIConfig = serde_json::from_str(r#"{"theme":"light"}"#)?;
+        let disabled: UIConfig = serde_json::from_str(r#"{"close_to_tray":false}"#)?;
+        assert!(legacy.close_to_tray);
+        assert!(!disabled.close_to_tray);
+        Ok(())
+    }
 
     #[test]
     fn accent_override_distinguishes_theme_defaults_from_custom_colors()

@@ -1,6 +1,6 @@
 #define MyAppName "rDM"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+#define MyAppVersion "1.0.0"
 #endif
 #define MyAppPublisher "moiCR"
 #define MyAppURL "https://github.com/moiCR/rDM"
@@ -50,3 +50,18 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\{#MyAppExeName}"; Flags: nowait skipifnotsilent
+
+[Code]
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  StartupCommand: String;
+  RunKey: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    RunKey := 'Software\Microsoft\Windows\CurrentVersion\Run';
+    if RegQueryStringValue(HKCU, RunKey, '{#MyAppName}', StartupCommand) and
+       (CompareText(StartupCommand, '"' + ExpandConstant('{app}\{#MyAppExeName}') + '" --startup') = 0) then
+      RegDeleteValue(HKCU, RunKey, '{#MyAppName}');
+  end;
+end;

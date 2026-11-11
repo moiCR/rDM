@@ -5041,11 +5041,13 @@ dependencies = [
  "gpui-pre",
  "gpui-router",
  "image",
+ "raw-window-handle",
  "rdm-config",
  "rdm-core",
  "smallvec",
  "tokio",
  "uuid",
+ "windows-sys 0.61.2",
  "winres",
 ]
 
