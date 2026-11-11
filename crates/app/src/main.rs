@@ -9,8 +9,13 @@ pub mod state;
 pub mod theme;
 pub mod views;
 
+#[cfg(target_os = "linux")]
+mod linux_desktop;
 #[cfg(windows)]
 mod windows_desktop;
+
+#[cfg(not(target_os = "linux"))]
+use crate::router::RootRouter;
 
 use std::sync::Arc;
 
@@ -19,18 +24,24 @@ use rdm_core::Core;
 
 use crate::{
     assets::Assets,
-    router::RootRouter,
     state::{AppState, TasksModel},
     theme::ThemeManager,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     let startup = std::env::args_os().any(|arg| arg == "--startup");
     #[cfg(windows)]
     let Some(_instance) = windows_desktop::Instance::acquire(startup)? else {
         return Ok(());
     };
+
+    #[cfg(target_os = "linux")]
+    let Some(mut _instance) = linux_desktop::Instance::acquire(startup)? else {
+        return Ok(());
+    };
+    #[cfg(target_os = "linux")]
+    let activation_listener = _instance.take_listener()?;
 
     let runtime = Arc::new(tokio::runtime::Runtime::new()?);
     let _guard = runtime.enter();
@@ -66,45 +77,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cx.set_global(AppState::new(core, tasks_model));
 
         #[cfg(windows)]
-        views::SettingsModal::initialize_windows_preferences(ui_config.close_to_tray, cx);
+        views::SettingsModal::initialize_desktop_preferences(ui_config.close_to_tray, cx);
 
-        let bounds = Bounds::centered(None, size(px(1024.0), px(680.0)), cx);
-        #[cfg(windows)]
-        let show = !(startup && windows_desktop::Desktop::available(cx));
-        #[cfg(not(windows))]
-        let show = true;
-
-        let window_options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            show,
-            focus: show,
-            titlebar: Some(TitlebarOptions {
-                title: Some("rDM".into()),
-                appears_transparent: true,
-                traffic_light_position: None,
-            }),
-            ..Default::default()
-        };
-
-        match gpui_kit::open_window(window_options, cx, |_window, cx| {
-            #[cfg(windows)]
-            _window.on_window_should_close(cx, |window, cx| {
-                !(views::SettingsModal::close_to_tray(cx)
-                    && windows_desktop::Desktop::available(cx)
-                    && windows_desktop::hide_window(window))
-            });
-            cx.new(RootRouter::new)
-        }) {
-            Ok((_window, _)) =>
+        #[cfg(target_os = "linux")]
+        {
+            views::SettingsModal::initialize_desktop_preferences(ui_config.close_to_tray, cx);
+            if let Err(error) =
+                linux_desktop::install(activation_listener, runtime.handle(), startup, cx)
             {
-                #[cfg(windows)]
-                if let Some(events) = desktop_events {
-                    events.listen(_window, cx);
-                }
-            }
-            Err(error) => {
-                eprintln!("No se pudo abrir la ventana de rDM: {error}");
+                eprintln!("No se pudo iniciar la integración Linux: {error}");
                 cx.quit();
+            }
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let bounds = Bounds::centered(None, size(px(1024.0), px(680.0)), cx);
+            #[cfg(windows)]
+            let show = !(startup && windows_desktop::Desktop::available(cx));
+            #[cfg(not(windows))]
+            let show = true;
+
+            let window_options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                show,
+                focus: show,
+                titlebar: Some(TitlebarOptions {
+                    title: Some("rDM".into()),
+                    appears_transparent: true,
+                    traffic_light_position: None,
+                }),
+                ..Default::default()
+            };
+
+            match gpui_kit::open_window(window_options, cx, |_window, cx| {
+                #[cfg(windows)]
+                _window.on_window_should_close(cx, |window, cx| {
+                    !(views::SettingsModal::close_to_tray(cx)
+                        && windows_desktop::Desktop::available(cx)
+                        && windows_desktop::hide_window(window))
+                });
+                cx.new(RootRouter::new)
+            }) {
+                Ok((_window, _)) =>
+                {
+                    #[cfg(windows)]
+                    if let Some(events) = desktop_events {
+                        events.listen(_window, cx);
+                    }
+                }
+                Err(error) => {
+                    eprintln!("No se pudo abrir la ventana de rDM: {error}");
+                    cx.quit();
+                }
             }
         }
     });

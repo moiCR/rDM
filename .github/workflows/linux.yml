@@ -66,12 +66,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
-            build-essential clang cmake desktop-file-utils dpkg-dev imagemagick pkg-config rpm \
-            libasound2-dev libfontconfig-dev libglib2.0-dev \
+            build-essential clang cmake dbus-daemon desktop-file-utils dpkg-dev imagemagick pkg-config rpm \
+            libasound2-dev libfontconfig-dev libglib2.0-dev libglib2.0-bin \
             libvulkan-dev libwayland-dev libx11-dev libx11-xcb-dev \
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxcb-randr0-dev libxcb-icccm4-dev libxcb-image0-dev \
             libxcb-keysyms1-dev libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev
+
+      - name: Validate Linux implementation
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace
 
       - name: Build release binaries
         run: cargo build --release --locked --workspace
@@ -123,11 +129,12 @@ jobs:
           Version: $deb_version
           Architecture: amd64
           Maintainer: moiCR
-          Depends: $dependencies
+          Depends: $dependencies, xdg-utils
           Recommends: libvulkan1
           Homepage: https://github.com/moiCR/rDM
           Description: Internet download manager
           EOF
+          printf 'deb\n' > "$root/usr/lib/rdm/package-format"
           dpkg-deb --root-owner-group --build "$root" "dist/rdm_${VERSION}_amd64.deb"
 
       - name: Package RPM installer
@@ -144,6 +151,7 @@ jobs:
           License: Unspecified
           URL: https://github.com/moiCR/rDM
           BuildArch: x86_64
+          Requires: xdg-utils
 
           %description
           rDM desktop application and command-line client.
@@ -159,6 +167,7 @@ jobs:
           /usr/share/applications/rdm.desktop
           /usr/share/icons/hicolor/256x256/apps/rdm.png
           EOF
+          printf 'rpm\n' > target/linux-package/usr/lib/rdm/package-format
           rpmbuild -bb --define "_topdir $PWD/target/rpm" target/rdm.spec
           cp "target/rpm/RPMS/x86_64/rdm-${rpm_version}-1.x86_64.rpm" \
             "dist/rdm-${VERSION}-1.x86_64.rpm"

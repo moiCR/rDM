@@ -58,6 +58,10 @@ The Linux release workflow builds a `.deb`, an `.rpm`, and an AppImage and uploa
 
 The `.deb` and `.rpm` add rDM to the application menu and install `rdm-cli` on `PATH`. The desktop app runs in a Wayland or X11 session with a working Vulkan driver. [GPUI Kit's Linux requirements](https://gpui-kit.com/docs/installation/#platform-requirements)
 
+Linux uses a single desktop instance: launching rDM again opens the running app. Settings include login startup and closing to the tray while downloads continue. Tray support requires a StatusNotifierItem host in the desktop session. Without one, closing exits rDM and login startup opens a visible window.
+
+Linux updates download the matching DEB, RPM, or AppImage for assisted installation. Open DEB/RPM packages with the system installer; replace an AppImage after closing rDM. Source builds and unrecognized installations open the release page instead.
+
 ## Browser Integration
 
 Download `rdm-chrome.zip` or `rdm-firefox.zip` from the release assets. [GitHub Releases](https://github.com/moiCR/rDM/releases)

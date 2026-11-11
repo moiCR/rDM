@@ -1,3 +1,4 @@
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use crate::{
@@ -96,6 +97,44 @@ impl RenderOnce for Titlebar {
                 div()
                     .id("titlebar-drag")
                     .window_control_area(WindowControlArea::Drag)
+                    .when(cfg!(target_os = "linux"), |element| {
+                        let should_move = _window.use_state(cx, |_, _| false);
+                        element
+                            .on_mouse_down_out(
+                                _window.listener_for(&should_move, |should_move, _, _, _| {
+                                    *should_move = false
+                                }),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                _window.listener_for(
+                                    &should_move,
+                                    |should_move, event: &MouseDownEvent, window, _| {
+                                        *should_move = event.click_count == 1;
+                                        if event.click_count == 2 {
+                                            window.zoom_window();
+                                        }
+                                    },
+                                ),
+                            )
+                            .on_mouse_up(
+                                MouseButton::Left,
+                                _window.listener_for(&should_move, |should_move, _, _, _| {
+                                    *should_move = false;
+                                }),
+                            )
+                            .on_mouse_move(_window.listener_for(
+                                &should_move,
+                                |should_move, event: &MouseMoveEvent, window, _| {
+                                    if *should_move {
+                                        *should_move = false;
+                                        if event.pressed_button == Some(MouseButton::Left) {
+                                            window.start_window_move();
+                                        }
+                                    }
+                                },
+                            ))
+                    })
                     .flex()
                     .items_center()
                     .flex_1()
@@ -148,6 +187,9 @@ impl RenderOnce for Titlebar {
                             .id("window-min")
                             .group("window-min")
                             .window_control_area(WindowControlArea::Min)
+                            .when(cfg!(target_os = "linux"), |element| {
+                                element.on_click(|_, window, _| window.minimize_window())
+                            })
                             .flex()
                             .items_center()
                             .justify_center()
@@ -169,6 +211,9 @@ impl RenderOnce for Titlebar {
                             .id("window-max")
                             .group("window-max")
                             .window_control_area(WindowControlArea::Max)
+                            .when(cfg!(target_os = "linux"), |element| {
+                                element.on_click(|_, window, _| window.zoom_window())
+                            })
                             .flex()
                             .items_center()
                             .justify_center()
@@ -190,6 +235,9 @@ impl RenderOnce for Titlebar {
                             .id("window-close")
                             .group("window-close")
                             .window_control_area(WindowControlArea::Close)
+                            .when(cfg!(target_os = "linux"), |element| {
+                                element.on_click(|_, window, _| window.remove_window())
+                            })
                             .flex()
                             .items_center()
                             .justify_center()

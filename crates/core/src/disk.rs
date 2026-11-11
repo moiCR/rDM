@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
 
 use tokio::{
     fs::{File, OpenOptions, create_dir_all},
@@ -73,7 +75,25 @@ impl DiskManager {
             }
         }
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        {
+            let mut target = path.to_path_buf();
+            loop {
+                match rustix::fs::statvfs(&target) {
+                    Ok(space) => {
+                        return Ok(space.f_bavail.saturating_mul(space.f_frsize));
+                    }
+                    Err(rustix::io::Errno::NOENT) => {
+                        if !target.pop() || target.as_os_str().is_empty() {
+                            target = std::env::current_dir()?;
+                        }
+                    }
+                    Err(error) => return Err(std::io::Error::from(error).into()),
+                }
+            }
+        }
+
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
             let _ = path;
             Ok(u64::MAX)
@@ -104,7 +124,11 @@ impl DiskManager {
 
         let additional_required = size.saturating_sub(existing_len);
         if additional_required > 0 {
-            Self::check_available_space(path, additional_required)?;
+            let target = path.to_path_buf();
+            tokio::task::spawn_blocking(move || {
+                Self::check_available_space(&target, additional_required)
+            })
+            .await??;
         }
 
         let file = OpenOptions::new()
@@ -211,5 +235,22 @@ mod tests {
         let space = DiskManager::get_available_space(&temp_dir);
         assert!(space.is_ok());
         assert!(space.unwrap() > 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn missing_destination_uses_existing_ancestor() -> Result<(), EngineError> {
+        let parent = std::env::temp_dir();
+        let destination = parent
+            .join(uuid::Uuid::new_v4().to_string())
+            .join("download.bin");
+        let available = DiskManager::get_available_space(&destination)?;
+        assert!(available > 0);
+        assert!(available < u64::MAX);
+        assert!(matches!(
+            DiskManager::check_available_space(&destination, u64::MAX),
+            Err(EngineError::InsufficientDiskSpace { .. })
+        ));
+        Ok(())
     }
 }

@@ -9,7 +9,7 @@ use gpui::{App, AsyncApp, Context, Entity, Global, WeakEntity};
 use rdm_core::{
     Core, Engine,
     task::{Task, TaskStatus},
-    updater::{ReleaseInfo, UpdateProgress},
+    updater::{PackageKind, ReleaseInfo, UpdateProgress},
 };
 use uuid::Uuid;
 
@@ -25,6 +25,11 @@ pub enum UpdaterStatus {
         info: ReleaseInfo,
         downloaded_bytes: u64,
         total_bytes: u64,
+    },
+    Downloaded {
+        path: PathBuf,
+        package: PackageKind,
+        error: Option<String>,
     },
     Installing,
     Error(String),
@@ -154,6 +159,11 @@ impl TasksModel {
                 match intercept_rx.recv().await {
                     Ok(intercepted) => {
                         let res = entity.update(cx, |_, cx| {
+                            #[cfg(target_os = "linux")]
+                            if let Err(error) = crate::linux_desktop::open_window(cx) {
+                                eprintln!("No se pudo abrir la descarga interceptada: {error}");
+                                return;
+                            }
                             cx.activate(true);
                             if let Some(handle) = cx.windows().into_iter().next() {
                                 let _ = handle.update(cx, |_, window, cx| {
@@ -290,10 +300,7 @@ impl TasksModel {
             return;
         };
         let Some(installer_url) = info.installer_url.clone() else {
-            self.updater_status =
-                UpdaterStatus::Error("No se encontró instalador en los adjuntos".into());
-            cx.notify();
-            cx.refresh_windows();
+            cx.open_url(&info.html_url);
             return;
         };
 
@@ -307,11 +314,20 @@ impl TasksModel {
         cx.notify();
         cx.refresh_windows();
 
-        let installer_name = info
-            .installer_name
-            .clone()
-            .unwrap_or_else(|| "rDM-Setup.exe".into());
-        let temp_target = std::env::temp_dir().join(installer_name);
+        let Some(installer_name) = info.installer_name.clone().filter(|name| {
+            !name.contains(['/', '\\']) && !matches!(name.as_str(), "" | "." | "..")
+        }) else {
+            self.active_update_progress = None;
+            self.updater_status = UpdaterStatus::Error("El nombre del paquete no es válido".into());
+            cx.notify();
+            return;
+        };
+        let temp_target = std::env::temp_dir()
+            .join(format!("rdm-update-{}", Uuid::new_v4()))
+            .join(installer_name);
+        let expected_size = info.installer_size;
+        #[cfg(target_os = "linux")]
+        let package = info.package;
 
         let runtime = Arc::clone(&self.runtime);
         let progress_download = Arc::clone(&progress);
@@ -324,6 +340,7 @@ impl TasksModel {
                         &installer_url,
                         &target_download,
                         progress_download,
+                        expected_size,
                     )
                     .await
                 })
@@ -331,23 +348,34 @@ impl TasksModel {
 
             match download_res {
                 Ok(Ok(())) => {
+                    #[cfg(target_os = "linux")]
                     let _ = entity.update(cx, |this, cx| {
-                        this.updater_status = UpdaterStatus::Installing;
+                        this.active_update_progress = None;
+                        this.updater_status = UpdaterStatus::Downloaded {
+                            path: temp_target,
+                            package,
+                            error: None,
+                        };
                         cx.notify();
                         cx.refresh_windows();
                     });
-
-                    if let Err(e) = rdm_core::updater::launch_installer(&temp_target) {
+                    #[cfg(not(target_os = "linux"))]
+                    {
                         let _ = entity.update(cx, |this, cx| {
-                            this.updater_status = UpdaterStatus::Error(e.to_string());
-                            this.active_update_progress = None;
+                            this.updater_status = UpdaterStatus::Installing;
                             cx.notify();
                             cx.refresh_windows();
                         });
-                    } else {
-                        let _ = entity.update(cx, |_, cx| {
-                            cx.quit();
-                        });
+                        if let Err(error) = rdm_core::updater::launch_installer(&temp_target) {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.active_update_progress = None;
+                                this.updater_status = UpdaterStatus::Error(error.to_string());
+                                cx.notify();
+                                cx.refresh_windows();
+                            });
+                        } else {
+                            let _ = entity.update(cx, |_, cx| cx.quit());
+                        }
                     }
                 }
                 Ok(Err(e)) => {
@@ -367,6 +395,59 @@ impl TasksModel {
                     });
                 }
             }
+        })
+        .detach();
+    }
+
+    pub fn open_downloaded_update(&mut self, cx: &mut Context<Self>) {
+        let UpdaterStatus::Downloaded {
+            path,
+            package,
+            error,
+        } = &mut self.updater_status
+        else {
+            return;
+        };
+        if !matches!(package, PackageKind::Deb | PackageKind::Rpm) {
+            cx.reveal_path(path);
+            return;
+        }
+        *error = None;
+        let child = match std::process::Command::new("xdg-open").arg(&path).spawn() {
+            Ok(child) => child,
+            Err(failure) => {
+                *error = Some(failure.to_string());
+                cx.notify();
+                cx.refresh_windows();
+                return;
+            }
+        };
+        let target = path.clone();
+        let work = self.runtime.spawn_blocking(move || {
+            let mut child = child;
+            let status = child.wait()?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(
+                    "No se pudo abrir el paquete. Puedes instalarlo desde su carpeta.",
+                ))
+            }
+        });
+        cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = work
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| result.map_err(|error| error.to_string()));
+            let _ = entity.update(cx, |this, cx| {
+                if let UpdaterStatus::Downloaded { path, error, .. } = &mut this.updater_status
+                    && *path == target
+                {
+                    *error = result.err();
+                    cx.notify();
+                    cx.refresh_windows();
+                }
+            });
         })
         .detach();
     }

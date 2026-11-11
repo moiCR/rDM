@@ -1,3 +1,7 @@
+#[cfg(target_os = "linux")]
+use crate::linux_desktop as desktop;
+#[cfg(windows)]
+use crate::windows_desktop as desktop;
 use gpui::*;
 use gpui_kit::{
     base::{Scrollbar, ScrollbarMode},
@@ -31,26 +35,26 @@ pub struct SettingsModalState {
 
 impl Global for SettingsModalState {}
 
-#[cfg(windows)]
-struct WindowsPreferences(Entity<WindowsPreferencesState>);
+#[cfg(any(windows, target_os = "linux"))]
+struct DesktopPreferences(Entity<DesktopPreferencesState>);
 
-#[cfg(windows)]
-impl Global for WindowsPreferences {}
+#[cfg(any(windows, target_os = "linux"))]
+impl Global for DesktopPreferences {}
 
-#[cfg(windows)]
-struct WindowsPreferencesState {
+#[cfg(any(windows, target_os = "linux"))]
+struct DesktopPreferencesState {
     startup: Preference,
     close_to_tray: Preference,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 struct Preference {
     value: Option<bool>,
     pending: bool,
     error: Option<String>,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 impl Preference {
     fn new(value: Option<bool>) -> Self {
         Self {
@@ -61,16 +65,16 @@ impl Preference {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 #[derive(Clone, Copy)]
-enum WindowsPreference {
+enum DesktopPreference {
     Startup,
     CloseToTray,
 }
 
-#[cfg(windows)]
-impl WindowsPreference {
-    fn select(self, state: &mut WindowsPreferencesState) -> &mut Preference {
+#[cfg(any(windows, target_os = "linux"))]
+impl DesktopPreference {
+    fn select(self, state: &mut DesktopPreferencesState) -> &mut Preference {
         match self {
             Self::Startup => &mut state.startup,
             Self::CloseToTray => &mut state.close_to_tray,
@@ -78,7 +82,7 @@ impl WindowsPreference {
     }
 
     fn change(self, cx: &mut App) {
-        let preferences = cx.global::<WindowsPreferences>().0.clone();
+        let preferences = cx.global::<DesktopPreferences>().0.clone();
         let Some(previous) = preferences.update(cx, |state, cx| {
             let preference = self.select(state);
             if preference.pending {
@@ -98,11 +102,10 @@ impl WindowsPreference {
             .tokio_handle()
             .spawn_blocking(move || match self {
                 Self::Startup => match previous {
-                    Some(value) => crate::windows_desktop::set_startup_registered(!value)
+                    Some(value) => desktop::set_startup_registered(!value)
                         .map(|()| !value)
                         .map_err(|error| error.to_string()),
-                    None => crate::windows_desktop::startup_registered()
-                        .map_err(|error| error.to_string()),
+                    None => desktop::startup_registered().map_err(|error| error.to_string()),
                 },
                 Self::CloseToTray => {
                     let current = previous.unwrap_or(true);
@@ -174,19 +177,19 @@ impl SettingsModal {
         Self
     }
 
-    #[cfg(windows)]
-    pub(crate) fn initialize_windows_preferences(close_to_tray: bool, cx: &mut App) {
-        let preferences = cx.new(|_| WindowsPreferencesState {
+    #[cfg(any(windows, target_os = "linux"))]
+    pub(crate) fn initialize_desktop_preferences(close_to_tray: bool, cx: &mut App) {
+        let preferences = cx.new(|_| DesktopPreferencesState {
             startup: Preference::new(None),
             close_to_tray: Preference::new(Some(close_to_tray)),
         });
-        cx.set_global(WindowsPreferences(preferences));
-        WindowsPreference::Startup.change(cx);
+        cx.set_global(DesktopPreferences(preferences));
+        DesktopPreference::Startup.change(cx);
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     pub(crate) fn close_to_tray(cx: &App) -> bool {
-        cx.global::<WindowsPreferences>()
+        cx.global::<DesktopPreferences>()
             .0
             .read(cx)
             .close_to_tray
@@ -967,7 +970,7 @@ impl SettingsModal {
                                             "rDM está actualizado a la versión más reciente.".to_string()
                                         }
                                         UpdaterStatus::Available(info) => {
-                                            format!("¡Versión v{} disponible para instalar!", info.version)
+                                            format!("Versión v{} disponible.", info.version)
                                         }
                                         UpdaterStatus::Downloading {
                                             downloaded_bytes,
@@ -988,6 +991,15 @@ impl SettingsModal {
                                                 )
                                             }
                                         }
+                                        UpdaterStatus::Downloaded { package, error, .. } => {
+                                            error.clone().unwrap_or_else(|| {
+                                                if *package == rdm_core::updater::PackageKind::AppImage {
+                                                    "AppImage descargada. Cierra rDM y sustituye el archivo anterior por el nuevo.".into()
+                                                } else {
+                                                    "Paquete descargado. Ábrelo para instalarlo con las herramientas del sistema.".into()
+                                                }
+                                            })
+                                        }
                                         UpdaterStatus::Installing => {
                                             "Instalando actualización y reiniciando rDM...".to_string()
                                         }
@@ -1003,9 +1015,10 @@ impl SettingsModal {
                             .items_center()
                             .gap_2()
                             .child(match &updater_status {
-                                UpdaterStatus::Available(_) => {
+                                UpdaterStatus::Available(info) => {
+                                    let label = if info.installer_url.is_none() { "Ver versión" } else if cfg!(target_os = "linux") { "Descargar actualización" } else { "Actualizar ahora" };
                                     let tasks_model = cx.tasks_model().clone();
-                                    PillButton::new("btn-install-update", "Actualizar ahora")
+                                    PillButton::new("btn-install-update", label)
                                         .selected(true)
                                         .on_click(move |_, window, cx| {
                                             tasks_model.update(cx, |model, cx| {
@@ -1013,6 +1026,13 @@ impl SettingsModal {
                                             });
                                             window.refresh();
                                         })
+                                }
+                                UpdaterStatus::Downloaded { package, .. } => {
+                                    let tasks_model = cx.tasks_model().clone();
+                                    let label = if matches!(package, rdm_core::updater::PackageKind::Deb | rdm_core::updater::PackageKind::Rpm) { "Abrir paquete" } else { "Ver archivo" };
+                                    PillButton::new("btn-open-update", label).on_click(move |_, _, cx| {
+                                        tasks_model.update(cx, |model, cx| model.open_downloaded_update(cx));
+                                    })
                                 }
                                 UpdaterStatus::Checking
                                 | UpdaterStatus::Downloading { .. }
@@ -1031,7 +1051,17 @@ impl SettingsModal {
                                             window.refresh();
                                         })
                                 }
-                            }),
+                            })
+                            .children(if let UpdaterStatus::Downloaded { path, .. } = &updater_status {
+                                let path = path.clone();
+                                Some(PillButton::new("btn-update-folder", "Abrir carpeta").on_click(move |_, _, cx| cx.reveal_path(&path)))
+                            } else { None })
+                            .children(matches!(&updater_status, UpdaterStatus::Downloaded { .. }).then(|| {
+                                let tasks_model = cx.tasks_model().clone();
+                                PillButton::new("btn-update-recheck", "Buscar actualizaciones").on_click(move |_, _, cx| {
+                                    tasks_model.update(cx, |model, cx| model.check_for_updates(cx));
+                                })
+                            })),
                     )
             })
             .child({
@@ -1081,89 +1111,99 @@ impl SettingsModal {
                     )
             });
 
-        #[cfg(windows)]
-        let content = content.child(Self::render_windows_preferences(palette, cx));
+        #[cfg(any(windows, target_os = "linux"))]
+        let content = content.child(Self::render_desktop_preferences(palette, cx));
 
         content
     }
 
-    #[cfg(windows)]
-    fn render_windows_preferences(palette: ModalPalette, cx: &App) -> Div {
-        let preferences = cx.global::<WindowsPreferences>().0.read(cx);
+    #[cfg(any(windows, target_os = "linux"))]
+    fn render_desktop_preferences(palette: ModalPalette, cx: &App) -> Div {
+        let preferences = cx.global::<DesktopPreferences>().0.read(cx);
         let error_color = cx.theme().error();
         let rows = [
             (
-                WindowsPreference::Startup,
+                DesktopPreference::Startup,
                 &preferences.startup,
                 "startup",
-                "Iniciar con Windows",
-                "Abrir en la bandeja al iniciar sesión. Puedes gestionar el permiso en el Administrador de tareas.",
+                if cfg!(windows) {
+                    "Iniciar con Windows"
+                } else {
+                    "Iniciar al iniciar sesión"
+                },
+                "Abrir en la bandeja al iniciar sesión; sin bandeja, abrir la ventana.",
             ),
             (
-                WindowsPreference::CloseToTray,
+                DesktopPreference::CloseToTray,
                 &preferences.close_to_tray,
                 "close-to-tray",
                 "Cerrar a la bandeja",
                 "Mantener rDM y las descargas activos al cerrar la ventana.",
             ),
         ];
-        div().flex().flex_col().gap_2().children(rows.map(
-            |(setting, preference, id, title, description)| {
-                let label = match (preference.value, preference.pending, setting) {
-                    (_, true, _) => "Procesando…",
-                    (Some(true), false, WindowsPreference::Startup) => "Registrado",
-                    (Some(true), false, WindowsPreference::CloseToTray) => "Activado",
-                    (Some(false), false, _) => "Desactivado",
-                    (None, false, _) => "Reintentar",
-                };
-                let mut button =
-                    PillButton::new(id, label).selected(preference.value == Some(true));
-                if !preference.pending {
-                    button = button.on_click(move |_, _, cx| setting.change(cx));
-                }
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .py_1()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .flex_wrap()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .flex_basis(px(175.0))
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_size(px(14.0))
-                                            .text_color(palette.text_color)
-                                            .child(title),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(palette.text_muted)
-                                            .child(description),
-                                    ),
-                            )
-                            .child(button),
-                    )
-                    .children(
-                        preference.error.as_ref().map(|error| {
+        let content =
+            div().flex().flex_col().gap_2().children(rows.map(
+                |(setting, preference, id, title, description)| {
+                    let label = match (preference.value, preference.pending, setting) {
+                        (_, true, _) => "Procesando…",
+                        (Some(true), false, DesktopPreference::Startup) => "Registrado",
+                        (Some(true), false, DesktopPreference::CloseToTray) => "Activado",
+                        (Some(false), false, _) => "Desactivado",
+                        (None, false, _) => "Reintentar",
+                    };
+                    let mut button =
+                        PillButton::new(id, label).selected(preference.value == Some(true));
+                    if !preference.pending {
+                        button = button.on_click(move |_, _, cx| setting.change(cx));
+                    }
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .py_1()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .flex_wrap()
+                                .gap_3()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .flex_basis(px(175.0))
+                                        .min_w_0()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_size(px(14.0))
+                                                .text_color(palette.text_color)
+                                                .child(title),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(palette.text_muted)
+                                                .child(description),
+                                        ),
+                                )
+                                .child(button),
+                        )
+                        .children(preference.error.as_ref().map(|error| {
                             div().text_xs().text_color(error_color).child(error.clone())
-                        }),
-                    )
-            },
-        ))
+                        }))
+                },
+            ));
+        #[cfg(target_os = "linux")]
+        let content = if !crate::linux_desktop::available(cx) {
+            content.child(div().text_xs().text_color(palette.text_muted).child("Bandeja no disponible en esta sesión. Cerrar termina rDM; el inicio automático abre la ventana."))
+        } else {
+            content
+        };
+        content
     }
 
     fn render_appearance(

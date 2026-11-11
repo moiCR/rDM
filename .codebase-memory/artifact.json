@@ -1,12 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "9fc6bdc62162185549e0e5471e199d59f92059e9",
-    "indexed_at": "2026-11-10T23:51:11Z",
-    "project": "rDM",
-    "nodes": 3165,
-    "edges": 14500,
-    "original_size": 13697024,
-    "compressed_size": 2797452,
-    "compression_level": 3,
-    "reconcile_basis": "git-clean-head"
+    "commit": "dfe530bf5a71e09926b27e7b1ac5b1c07591bbf9",
+    "indexed_at": "2026-11-11T11:07:04Z",
+    "project": "home-moi-pro-rDM",
+    "nodes": 3304,
+    "edges": 15032,
+    "original_size": 15925248,
+    "compressed_size": 2932139,
+    "compression_level": 3
 }
