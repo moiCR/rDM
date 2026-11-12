@@ -1,5 +1,73 @@
+// src/i18n.ts
+function resolveLanguage(value) {
+  return value === "es" ? "es" : "en";
+}
+var translations = {
+  en: {
+    settings: "Settings",
+    save: "Save",
+    saved: "Saved",
+    detectedVideo: "Video detected",
+    analyzing: "Checking available qualities...",
+    video: "Video MP4",
+    audio: "Audio MP3",
+    sent: "Sent",
+    error: "Error",
+    download: "Download",
+    noVideos: "No videos detected in this tab.",
+    connected: "Connected",
+    disconnected: "Disconnected",
+    back: "Back to qualities",
+    intercept: "Intercept downloads",
+    interceptDescription: "Automatically capture browser downloads",
+    notifications: "Notifications",
+    notificationsDescription: "Notify when a download starts",
+    port: "Connection port",
+    portDescription: "Local rDM server",
+    language: "Language",
+    downloadWith: "Download with rDM",
+    captured: "Download captured:",
+    file: "file",
+    unavailable: "rDM unavailable",
+    connectionError: "Could not connect to rDM. Is the app running?",
+    extensionName: "rDM - Download Manager Integration",
+    extensionDescription: "Official rDM integration to capture and accelerate browser downloads."
+  },
+  es: {
+    settings: "Ajustes",
+    save: "Guardar",
+    saved: "Guardado",
+    detectedVideo: "Video detectado",
+    analyzing: "Analizando calidades disponibles...",
+    video: "Video MP4",
+    audio: "Audio MP3",
+    sent: "Enviado",
+    error: "Error",
+    download: "Descargar",
+    noVideos: "No se detectaron videos en esta pestaña.",
+    connected: "Conectado",
+    disconnected: "Desconectado",
+    back: "Volver a calidades",
+    intercept: "Interceptar descargas",
+    interceptDescription: "Captura automática del navegador",
+    notifications: "Notificaciones",
+    notificationsDescription: "Avisar al iniciar descarga",
+    port: "Puerto de enlace",
+    portDescription: "Servidor local de rDM",
+    language: "Idioma",
+    downloadWith: "Descargar con rDM",
+    captured: "Descarga capturada:",
+    file: "archivo",
+    unavailable: "rDM no disponible",
+    connectionError: "No se pudo conectar con rDM. ¿Está la aplicación abierta?",
+    extensionName: "rDM - Integración del gestor de descargas",
+    extensionDescription: "Integración oficial de rDM para interceptar y acelerar descargas desde el navegador."
+  }
+};
+
 // src/background.ts
 var DEFAULT_SETTINGS = {
+  language: "en",
   interceptDownloads: true,
   serverHost: "127.0.0.1",
   serverPort: 9654,
@@ -9,7 +77,7 @@ var cachedSettings = { ...DEFAULT_SETTINGS };
 var tabMediaMap = new Map;
 async function refreshSettingsCache() {
   const result = await chrome.storage.local.get(DEFAULT_SETTINGS);
-  cachedSettings = { ...DEFAULT_SETTINGS, ...result };
+  cachedSettings = { ...DEFAULT_SETTINGS, ...result, language: resolveLanguage(result.language) };
   return cachedSettings;
 }
 refreshSettingsCache();
@@ -20,8 +88,19 @@ chrome.storage.onChanged.addListener((changes, area) => {
         cachedSettings[key] = change.newValue;
       }
     }
+    if (changes.language) {
+      cachedSettings.language = resolveLanguage(changes.language.newValue);
+      updateContextMenu();
+    }
   }
 });
+function updateContextMenu() {
+  chrome.contextMenus.update("rdm-download-link", {
+    title: translations[cachedSettings.language].downloadWith
+  }, () => {
+    chrome.runtime.lastError;
+  });
+}
 function getServerUrl(settings, endpoint) {
   return `http://${settings.serverHost}:${settings.serverPort}${endpoint}`;
 }
@@ -69,7 +148,7 @@ async function sendDownloadToRdm(options) {
         type: "basic",
         iconUrl: "icons/icon128.png",
         title: "rDM",
-        message: `Descarga capturada: ${data.file_name || options.filename || "archivo"}`
+        message: `${translations[settings.language].captured} ${data.file_name || options.filename || translations[settings.language].file}`
       });
     }
     return { success: true, data };
@@ -245,11 +324,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabMediaMap.delete(tabId);
 });
-chrome.runtime.onInstalled.addListener(() => {
-  refreshSettingsCache();
+chrome.runtime.onInstalled.addListener(async () => {
+  await refreshSettingsCache();
   chrome.contextMenus.create({
     id: "rdm-download-link",
-    title: "Descargar con rDM",
+    title: translations[cachedSettings.language].downloadWith,
     contexts: ["link", "image", "video", "audio"]
   });
 });
@@ -267,8 +346,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         chrome.notifications.create({
           type: "basic",
           iconUrl: "icons/icon128.png",
-          title: "rDM no disponible",
-          message: "No se pudo conectar con rDM. ¿Está la aplicación abierta?"
+          title: translations[cachedSettings.language].unavailable,
+          message: translations[cachedSettings.language].connectionError
         });
       }
     }
@@ -358,7 +437,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message.type === "SAVE_SETTINGS") {
     (async () => {
-      cachedSettings = { ...cachedSettings, ...message.settings };
+      cachedSettings = { ...cachedSettings, ...message.settings, language: resolveLanguage(message.settings?.language) };
       await chrome.storage.local.set(message.settings);
       sendResponse({ success: true });
     })();

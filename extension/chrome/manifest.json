@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "rDM - Download Manager Integration",
+  "name": "__MSG_extensionName__",
   "version": "1.0.0",
-  "description": "Integración oficial de rDM para interceptar y acelerar descargas desde el navegador.",
+  "description": "__MSG_extensionDescription__",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
@@ -33,5 +33,6 @@
     "http://127.0.0.1/*",
     "http://localhost/*",
     "<all_urls>"
-  ]
+  ],
+  "default_locale": "en"
 }

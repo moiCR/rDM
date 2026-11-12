@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from "react";
 
+import { resolveLanguage, translations, type Language } from "../i18n";
+
 interface Settings {
+  language: Language;
   interceptDownloads: boolean;
   serverHost: string;
   serverPort: number;
@@ -68,13 +71,19 @@ export function App() {
   const [formatTab, setFormatTab] = useState<"video" | "audio">("video");
   const [connected, setConnected] = useState<boolean>(false);
   const [settings, setSettings] = useState<Settings>({
+    language: "en",
     interceptDownloads: true,
     serverHost: "127.0.0.1",
     serverPort: 9654,
     showNotifications: true,
   });
   const [portInput, setPortInput] = useState<string>("9654");
-  const [saveLabel, setSaveLabel] = useState<string>("Guardar");
+  const [saveState, setSaveState] = useState<"save" | "saving" | "saved">("save");
+  const text = translations[settings.language];
+
+  useEffect(() => {
+    document.documentElement.lang = settings.language;
+  }, [settings.language]);
 
   const [tabUrl, setTabUrl] = useState<string | null>(null);
   const [tabTitle, setTabTitle] = useState<string | null>(null);
@@ -91,6 +100,7 @@ export function App() {
       }
       setConnected(Boolean(response.connected));
       const loadedSettings: Settings = {
+        language: resolveLanguage(response.settings?.language),
         interceptDownloads: response.settings?.interceptDownloads ?? true,
         serverHost: response.settings?.serverHost ?? "127.0.0.1",
         serverPort: response.settings?.serverPort ?? 9654,
@@ -199,12 +209,12 @@ export function App() {
     };
     setSettings(updated);
     setPortInput(String(validPort));
-    setSaveLabel("...");
+    setSaveState("saving");
     chrome.runtime.sendMessage({ type: "SAVE_SETTINGS", settings: updated }, () => {
       chrome.runtime.sendMessage({ type: "CHECK_STATUS" }, (res) => {
         setConnected(Boolean(res?.connected));
-        setSaveLabel("Guardado");
-        setTimeout(() => setSaveLabel("Guardar"), 1100);
+        setSaveState("saved");
+        setTimeout(() => setSaveState("save"), 1100);
       });
     });
   };
@@ -215,7 +225,7 @@ export function App() {
   const videoDisplayTitle =
     (ytFormats[0]?.filename
       ? ytFormats[0].filename.replace(/\.(mp4|mp3)$/i, "")
-      : tabTitle) || "Video detectado";
+      : tabTitle) || text.detectedVideo;
 
   return (
     <>
@@ -231,7 +241,7 @@ export function App() {
               </div>
               <button
                 className="icon-btn"
-                title="Ajustes"
+                title={text.settings}
                 onClick={() => setView("settings")}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -242,7 +252,7 @@ export function App() {
             </div>
 
             {loadingMedia ? (
-              <div className="empty-state">Analizando calidades disponibles...</div>
+              <div className="empty-state">{text.analyzing}</div>
             ) : ytFormats.length > 0 ? (
               <>
                 <div className="pill-tabs">
@@ -250,13 +260,13 @@ export function App() {
                     className={`pill-tab ${formatTab === "video" ? "active" : ""}`}
                     onClick={() => setFormatTab("video")}
                   >
-                    Video MP4
+                    {text.video}
                   </button>
                   <button
                     className={`pill-tab ${formatTab === "audio" ? "active" : ""}`}
                     onClick={() => setFormatTab("audio")}
                   >
-                    Audio MP3
+                    {text.audio}
                   </button>
                 </div>
 
@@ -289,10 +299,10 @@ export function App() {
                           {isSending
                             ? "..."
                             : isDone
-                              ? "Enviado"
+                              ? text.sent
                               : isErr
-                                ? "Error"
-                                : "Descargar"}
+                                ? text.error
+                                : text.download}
                         </button>
                       </div>
                     );
@@ -330,10 +340,10 @@ export function App() {
                         {isSending
                           ? "..."
                           : isDone
-                            ? "Enviado"
+                            ? text.sent
                             : isErr
-                              ? "Error"
-                              : "Descargar"}
+                              ? text.error
+                              : text.download}
                       </button>
                     </div>
                   );
@@ -341,7 +351,7 @@ export function App() {
               </div>
             ) : (
               <div className="empty-state">
-                No se detectaron videos en esta pestaña.
+                {text.noVideos}
               </div>
             )}
 
@@ -349,7 +359,7 @@ export function App() {
             <div className="footer-row">
               <div className={`status-indicator ${connected ? "online" : "offline"}`}>
                 <span className="status-dot" />
-                <span>{connected ? "Conectado" : "Desconectado"}</span>
+                <span>{connected ? text.connected : text.disconnected}</span>
               </div>
             </div>
           </>
@@ -360,7 +370,7 @@ export function App() {
                 {hasAnyMedia && (
                   <button
                     className="icon-btn"
-                    title="Volver a calidades"
+                    title={text.back}
                     onClick={() => setView("home")}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -368,14 +378,33 @@ export function App() {
                     </svg>
                   </button>
                 )}
-                <span className="top-title">Ajustes</span>
+                <span className="top-title">{text.settings}</span>
               </div>
             </div>
 
             <div className="setting-row">
+              <label className="setting-title" htmlFor="language">{text.language}</label>
+              <select
+                id="language"
+                className="language-select"
+                value={settings.language}
+                onChange={(event) => {
+                  const updated = { ...settings, language: resolveLanguage(event.target.value) };
+                  setSettings(updated);
+                  chrome.runtime.sendMessage({ type: "SAVE_SETTINGS", settings: updated });
+                }}
+              >
+                <option value="en">English</option>
+                <option value="es">Español</option>
+              </select>
+            </div>
+
+            <div className="divider" />
+
+            <div className="setting-row">
               <div className="setting-info">
-                <span className="setting-title">Interceptar descargas</span>
-                <span className="setting-desc">Captura automática del navegador</span>
+                <span className="setting-title">{text.intercept}</span>
+                <span className="setting-desc">{text.interceptDescription}</span>
               </div>
               <label className="switch">
                 <input
@@ -393,8 +422,8 @@ export function App() {
 
             <div className="setting-row">
               <div className="setting-info">
-                <span className="setting-title">Notificaciones</span>
-                <span className="setting-desc">Avisar al iniciar descarga</span>
+                <span className="setting-title">{text.notifications}</span>
+                <span className="setting-desc">{text.notificationsDescription}</span>
               </div>
               <label className="switch">
                 <input
@@ -412,8 +441,8 @@ export function App() {
 
             <div className="setting-row">
               <div className="setting-info">
-                <span className="setting-title">Puerto de enlace</span>
-                <span className="setting-desc">Servidor local Tokio en rDM</span>
+                <span className="setting-title">{text.port}</span>
+                <span className="setting-desc">{text.portDescription}</span>
               </div>
               <div className="port-box">
                 <span className="port-prefix">:</span>
@@ -432,10 +461,10 @@ export function App() {
             <div className="footer-row">
               <div className={`status-indicator ${connected ? "online" : "offline"}`}>
                 <span className="status-dot" />
-                <span>{connected ? "Conectado" : "Desconectado"}</span>
+                <span>{connected ? text.connected : text.disconnected}</span>
               </div>
               <button className="action-btn" onClick={handleSaveSettings}>
-                {saveLabel}
+                {saveState === "saving" ? "..." : text[saveState]}
               </button>
             </div>
           </>

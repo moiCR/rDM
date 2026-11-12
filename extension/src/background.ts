@@ -1,4 +1,7 @@
+import { resolveLanguage, translations, type Language } from "./i18n";
+
 interface Settings {
+  language: Language;
   interceptDownloads: boolean;
   serverHost: string;
   serverPort: number;
@@ -28,6 +31,7 @@ interface DownloadOptions {
 }
 
 const DEFAULT_SETTINGS: Settings = {
+  language: "en",
   interceptDownloads: true,
   serverHost: "127.0.0.1",
   serverPort: 9654,
@@ -39,7 +43,7 @@ const tabMediaMap = new Map<number, MediaInfo[]>();
 
 async function refreshSettingsCache(): Promise<Settings> {
   const result = await chrome.storage.local.get(DEFAULT_SETTINGS);
-  cachedSettings = { ...DEFAULT_SETTINGS, ...result };
+  cachedSettings = { ...DEFAULT_SETTINGS, ...result, language: resolveLanguage(result.language) };
   return cachedSettings;
 }
 
@@ -49,11 +53,21 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local") {
     for (const [key, change] of Object.entries(changes)) {
       if (key in DEFAULT_SETTINGS && change.newValue !== undefined) {
-        (cachedSettings as Record<string, unknown>)[key] = change.newValue;
+        (cachedSettings as unknown as Record<string, unknown>)[key] = change.newValue;
       }
+    }
+    if (changes.language) {
+      cachedSettings.language = resolveLanguage(changes.language.newValue);
+      updateContextMenu();
     }
   }
 });
+
+function updateContextMenu() {
+  chrome.contextMenus.update("rdm-download-link", {
+    title: translations[cachedSettings.language].downloadWith,
+  }, () => { void chrome.runtime.lastError; });
+}
 
 function getServerUrl(settings: Settings, endpoint: string): string {
   return `http://${settings.serverHost}:${settings.serverPort}${endpoint}`;
@@ -110,7 +124,7 @@ async function sendDownloadToRdm(options: DownloadOptions): Promise<{
         type: "basic",
         iconUrl: "icons/icon128.png",
         title: "rDM",
-        message: `Descarga capturada: ${data.file_name || options.filename || "archivo"}`,
+        message: `${translations[settings.language].captured} ${data.file_name || options.filename || translations[settings.language].file}`,
       });
     }
     return { success: true, data };
@@ -331,11 +345,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   tabMediaMap.delete(tabId);
 });
 
-chrome.runtime.onInstalled.addListener(() => {
-  void refreshSettingsCache();
+chrome.runtime.onInstalled.addListener(async () => {
+  await refreshSettingsCache();
   chrome.contextMenus.create({
     id: "rdm-download-link",
-    title: "Descargar con rDM",
+    title: translations[cachedSettings.language].downloadWith,
     contexts: ["link", "image", "video", "audio"],
   });
 });
@@ -354,8 +368,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
         chrome.notifications.create({
           type: "basic",
           iconUrl: "icons/icon128.png",
-          title: "rDM no disponible",
-          message: "No se pudo conectar con rDM. ¿Está la aplicación abierta?",
+          title: translations[cachedSettings.language].unavailable,
+          message: translations[cachedSettings.language].connectionError,
         });
       }
     }
@@ -454,7 +468,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message.type === "SAVE_SETTINGS") {
     (async () => {
-      cachedSettings = { ...cachedSettings, ...message.settings };
+      cachedSettings = { ...cachedSettings, ...message.settings, language: resolveLanguage(message.settings?.language) };
       await chrome.storage.local.set(message.settings);
       sendResponse({ success: true });
     })();

@@ -1,0 +1,8 @@
+{
+  "extensionName": {
+    "message": "rDM - Integración del gestor de descargas"
+  },
+  "extensionDescription": {
+    "message": "Integración oficial de rDM para interceptar y acelerar descargas desde el navegador."
+  }
+}

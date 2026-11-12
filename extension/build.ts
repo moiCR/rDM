@@ -1,4 +1,5 @@
-import { copyFileSync, mkdirSync } from "node:fs";
+import { translations } from "./src/i18n";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const rootDir = import.meta.dir;
@@ -8,6 +9,14 @@ const targets = ["chrome", "firefox"];
 async function runBuild() {
   for (const target of targets) {
     const outDir = join(rootDir, target);
+    for (const [language, messages] of Object.entries(translations)) {
+      const localeDir = join(outDir, "_locales", language);
+      mkdirSync(localeDir, { recursive: true });
+      writeFileSync(join(localeDir, "messages.json"), JSON.stringify({
+        extensionName: { message: messages.extensionName },
+        extensionDescription: { message: messages.extensionDescription },
+      }, null, 2) + "\n");
+    }
     const popupOutDir = join(outDir, "popup");
     mkdirSync(popupOutDir, { recursive: true });
 
