@@ -23,10 +23,9 @@ export function detectSystem(userAgent: string, platform: string, touchPoints: n
 function configurePrimaryDownload() {
   const system = detectSystem(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
   const primary = document.querySelector<HTMLAnchorElement>('#primary-download');
-  const label = document.getElementById('primary-label');
-  if (!system || !primary || !label) return;
+  if (!system || !primary) return;
   primary.dataset.format = system === 'Windows' ? 'installer' : 'appimage';
-  label.textContent = `Download ${system}`;
+  primary.setAttribute('aria-label', `Download for ${system}`);
   for (const icon of document.querySelectorAll<HTMLElement>('[data-primary-icon]')) {
     icon.hidden = icon.dataset.primaryIcon !== system;
   }

@@ -10,9 +10,9 @@ import PlatformIcon from './PlatformIcon.astro';
     <p class="mb-5 text-[clamp(25px,2.2vw,34px)] leading-[1.15] tracking-[-.035em] text-primary-text">A download manager.<br />Built to keep up.</p>
     <p class="mb-6 text-sm leading-relaxed md:text-base">Your files. Your browser.<br />One uninterrupted flow.</p>
     <a class="inline-flex items-center gap-3 rounded-full border border-primary-border bg-primary-fill px-5 py-3.5 text-sm text-primary-text transition-colors hover:bg-surface-hover" id="primary-download" href="#download">
+      <span>Download</span>
       <span data-primary-icon="Windows" hidden><PlatformIcon name="windows" class="size-5" /></span>
       <span data-primary-icon="Linux" hidden><PlatformIcon name="linux" class="size-5" /></span>
-      <span id="primary-label">Download rDM</span><span aria-hidden="true">↗</span>
     </a>
     <a class="mt-4 ml-5 block w-fit text-xs text-muted transition-colors hover:text-accent" href="#download">All downloads ↓</a>
   </div>
