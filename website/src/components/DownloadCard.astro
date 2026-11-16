@@ -1,0 +1,19 @@
+---
+import PlatformIcon from './PlatformIcon.astro';
+
+interface Props {
+  label: string;
+  detail: string;
+  icon: string;
+  href: string;
+  format?: string;
+}
+
+const { label, detail, icon, href, format } = Astro.props;
+---
+
+<a class="flex items-center gap-4 rounded-xl border border-border bg-surface p-5 transition-colors hover:border-primary-border hover:bg-surface-hover md:p-6" href={href} data-format={format}>
+  <PlatformIcon name={icon} class="size-7" />
+  <span class="grid gap-1.5"><strong class="text-sm font-normal text-primary-text">{label}</strong><small class="text-xs text-muted">{detail}</small></span>
+  <span class="ml-auto text-xl text-accent" aria-hidden="true">↗</span>
+</a>

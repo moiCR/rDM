@@ -1,0 +1,15 @@
+{
+  "name": "rdm-website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --bun astro dev",
+    "build": "bun --bun astro build",
+    "preview": "bun --bun astro preview"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "astro": "^7.4.12",
+    "tailwindcss": "^4.3.5"
+  }
+}

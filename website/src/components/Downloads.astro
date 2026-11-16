@@ -1,0 +1,12 @@
+---
+import DownloadCard from './DownloadCard.astro';
+import { applications, releasePage } from '../data/downloads';
+---
+
+<section id="download" aria-labelledby="app-title" class="scroll-mt-10">
+  <div class="mb-6 flex flex-wrap items-baseline justify-between gap-3"><h2 id="app-title" class="text-3xl tracking-tight text-primary-text">Download</h2><span class="text-xs text-muted">Rust Download Manager · Windows & Linux</span></div>
+  <div class="grid gap-2.5 sm:grid-cols-2">
+    {applications.map((application) => <DownloadCard {...application} href={releasePage} />)}
+  </div>
+  <p class="mt-4 text-xs leading-relaxed text-muted" id="release-status" aria-live="polite">Choose your platform. Get the latest release from GitHub.</p>
+</section>

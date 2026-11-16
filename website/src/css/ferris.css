@@ -1,0 +1,50 @@
+.ferris-scene {
+  position: absolute;
+  top: 15%;
+  left: 23%;
+  width: 62%;
+  height: 58%;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.ferris {
+  position: relative;
+  width: 85%;
+  height: auto;
+  filter: drop-shadow(0 20px 50px color-mix(in srgb, var(--color-primary-fill) 30%, transparent));
+  animation: ferris-float 5s ease-in-out infinite;
+  will-change: transform;
+}
+
+.ferris-orbit {
+  position: absolute;
+  width: 95%;
+  height: 78%;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 18%, transparent);
+  border-radius: 50%;
+  transform: rotate(-24deg);
+}
+
+.ferris-orbit-secondary { width: 106%; height: 61%; transform: rotate(18deg); opacity: .5; }
+.ferris-shadow { position: absolute; bottom: 7%; width: 52%; height: 7%; border-radius: 50%; background: var(--color-primary-fill); filter: blur(24px); opacity: .45; animation: ferris-shadow 5s ease-in-out infinite; }
+
+@keyframes ferris-float {
+  0%, 100% { transform: translateY(4px) rotate(-4deg); }
+  50% { transform: translateY(-22px) rotate(3deg); }
+}
+
+@keyframes ferris-shadow {
+  0%, 100% { transform: scaleX(1); opacity: .45; }
+  50% { transform: scaleX(.8); opacity: .25; }
+}
+
+@media (width < 1000px) {
+  .ferris-scene { top: 22%; left: 10%; width: 85%; height: 45%; }
+}
+
+@media (width < 640px) {
+  .ferris-scene { top: 170px; left: -5%; width: 110%; height: 340px; }
+  .ferris { width: 90%; }
+}

@@ -1,0 +1,24 @@
+---
+import Ferris from './Ferris.astro';
+import PlatformIcon from './PlatformIcon.astro';
+---
+
+<section class="hero page-width" aria-labelledby="hero-title">
+  <h1 id="hero-title" class="hero-title text-primary-text">Rust<br />Download Manager<span class="text-accent">.</span></h1>
+  <Ferris />
+  <div class="hero-copy">
+    <p class="mb-5 text-[clamp(25px,2.2vw,34px)] leading-[1.15] tracking-[-.035em] text-primary-text">A download manager.<br />Built to keep up.</p>
+    <p class="mb-6 text-sm leading-relaxed md:text-base">Your files. Your browser.<br />One uninterrupted flow.</p>
+    <a class="inline-flex items-center gap-3 rounded-full border border-primary-border bg-primary-fill px-5 py-3.5 text-sm text-primary-text transition-colors hover:bg-surface-hover" id="primary-download" href="#download">
+      <span data-primary-icon="Windows" hidden><PlatformIcon name="windows" class="size-5" /></span>
+      <span data-primary-icon="Linux" hidden><PlatformIcon name="linux" class="size-5" /></span>
+      <span id="primary-label">Download rDM</span><span aria-hidden="true">↗</span>
+    </a>
+    <a class="mt-4 ml-5 block w-fit text-xs text-muted transition-colors hover:text-accent" href="#download">All downloads ↓</a>
+  </div>
+  <div class="hero-caption text-primary-text">
+    <span class="text-[9px] tracking-[.18em] text-muted md:text-[10px]">BUILT WITH RUST. MADE FOR YOU.</span>
+    <p><em>Keep it</em><br />flowing.</p>
+  </div>
+  <span class="absolute bottom-5 text-[8px] tracking-[.15em] text-muted md:text-[9px]" aria-hidden="true">01 / DOWNLOAD WITHOUT THE DRAG</span>
+</section>

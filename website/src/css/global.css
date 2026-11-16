@@ -1,0 +1,47 @@
+@import 'tailwindcss';
+@import './hero.css';
+@import './ferris.css';
+@import './showcase.css';
+
+@font-face {
+  font-family: 'Geist';
+  src: url('../../public/fonts/Geist-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: 'Geist', Arial, sans-serif;
+  --color-background: #070708;
+  --color-surface: #0d0d11;
+  --color-input-background: #15151a;
+  --color-surface-hover: #1c1c21;
+  --color-border: #27272c;
+  --color-body: #a0a0a8;
+  --color-muted: #777780;
+  --color-accent: #91add4;
+  --color-primary-fill: #223c61;
+  --color-primary-border: #536f94;
+  --color-primary-text: #f2f6fc;
+  --color-downloading: #4e909c;
+  --color-paused: #f4bc64;
+  --color-completed: #6ed9ad;
+  --color-error: #ff9c9c;
+}
+
+@layer base {
+  html { color-scheme: dark; scroll-behavior: smooth; }
+  a:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 6px; }
+  ::selection { background: var(--color-primary-fill); color: var(--color-primary-text); }
+  [hidden] { display: none !important; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+}
+
+@utility page-width {
+  width: min(1400px, calc(100% - 96px));
+  margin-inline: auto;
+  @media (width < 800px) { width: calc(100% - 48px); }
+}

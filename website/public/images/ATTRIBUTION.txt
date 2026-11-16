@@ -1,0 +1,10 @@
+Ferris, the Rust community mascot
+Source: https://rustacean.net/assets/rustacean-flat-happy.svg
+Website: https://rustacean.net/
+Author: Karen Rustad Tolva
+License: CC0 (public domain)
+
+Platform and browser icons
+Source: https://github.com/devicons/devicon
+License: MIT, included in DEVICON-LICENSE
+Brand names and logos remain the property of their respective owners.

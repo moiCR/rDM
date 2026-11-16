@@ -1,0 +1,61 @@
+.showcase-viewport {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  border-radius: 16px;
+}
+
+.showcase-viewport::-webkit-scrollbar { display: none; }
+.showcase-viewport:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 6px; }
+
+.showcase-slide {
+  position: relative;
+  flex: 0 0 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 1px 1px 100px;
+  scroll-snap-align: start;
+}
+
+.showcase-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1.86;
+  object-fit: contain;
+  background: var(--color-background);
+  border-radius: 16px;
+}
+
+.showcase-caption {
+  position: absolute;
+  bottom: 12px;
+  left: 20px;
+  width: min(340px, calc(100% - 40px));
+  box-shadow: 0 16px 40px color-mix(in srgb, var(--color-background) 55%, transparent);
+}
+
+.showcase-control {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  color: var(--color-body);
+  cursor: pointer;
+}
+
+.showcase-control:hover { border-color: var(--color-primary-border); color: var(--color-primary-text); }
+.showcase-dot { display: grid; place-items: center; width: 28px; height: 32px; cursor: pointer; }
+.showcase-dot span { width: 7px; height: 7px; border-radius: 50%; background: var(--color-border); transition: background 150ms, transform 150ms; }
+.showcase-dot[aria-pressed='true'] span { background: var(--color-accent); transform: scale(1.25); }
+.showcase-dot:hover span { background: var(--color-body); }
+.showcase button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+
+@media (width < 640px) {
+  .showcase-slide { padding-bottom: 0; }
+  .showcase-caption { position: relative; left: auto; bottom: auto; width: auto; margin-top: 12px; min-height: 140px; }
+}

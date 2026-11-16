@@ -1,0 +1,41 @@
+---
+import { Image } from 'astro:assets';
+import { showcaseSlides } from '../data/showcase';
+---
+
+<section class="showcase border-y border-border bg-surface" aria-labelledby="showcase-title">
+  <div class="page-width grid items-center gap-12 py-20 lg:grid-cols-[.8fr_1.2fr] lg:gap-20 lg:py-32">
+    <div class="max-w-md">
+      <span class="inline-flex items-center gap-2 rounded-full border border-border bg-input-background px-3 py-1.5 text-xs text-body"><span class="text-accent" aria-hidden="true">✧</span> Meet Rust Download Manager</span>
+      <h2 id="showcase-title" class="mt-7 text-[clamp(36px,3.4vw,54px)] leading-[1.08] tracking-[-.045em] text-primary-text">Your downloads,<br /><em class="font-serif font-normal">a little simpler.</em></h2>
+      <p class="mt-7 max-w-xs text-sm leading-relaxed text-body md:text-base">A clear view of your downloads, from the first URL to your download history.</p>
+      <a class="mt-9 inline-flex items-center gap-5 rounded-full border border-primary-border bg-primary-fill px-5 py-3 text-sm text-primary-text transition-colors hover:bg-surface-hover" href="#download">Download rDM <span aria-hidden="true">↗</span></a>
+    </div>
+    <div class="min-w-0" data-carousel role="region" aria-roledescription="carousel" aria-label="Rust Download Manager screenshots">
+      <div class="showcase-viewport" data-carousel-viewport tabindex="0" aria-label="Screenshots. Use the left and right arrow keys to browse.">
+        {showcaseSlides.map((slide, index) => (
+          <figure class="showcase-slide" data-carousel-slide role="group" aria-roledescription="slide" aria-label={`${index + 1} of ${showcaseSlides.length}: ${slide.label}`}>
+            <Image src={slide.image} alt={slide.alt} widths={[480, 800, 1200, 1600]} sizes="(min-width: 1024px) 55vw, 90vw" format="webp" quality={85} loading="lazy" class="showcase-image" />
+            <figcaption class="showcase-caption rounded-xl border border-border bg-background p-5 md:p-6">
+              <span class="rounded-full bg-surface-hover px-2.5 py-1 text-[10px] text-body">{slide.label}</span>
+              <h3 class="mt-3 text-sm text-primary-text md:text-base">{slide.title}</h3>
+              <p class="mt-1.5 text-xs leading-relaxed text-body">{slide.description}</p>
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+      <div class="mt-5 flex items-center justify-center gap-5" data-carousel-controls hidden>
+        <button type="button" class="showcase-control" data-carousel-previous aria-label="Previous screenshot">←</button>
+        <div class="flex items-center gap-1" aria-label="Choose a screenshot">
+          {showcaseSlides.map((slide, index) => <button type="button" class="showcase-dot" data-carousel-dot={index} aria-label={`Show ${slide.label}`} aria-pressed={index === 0 ? 'true' : 'false'}><span></span></button>)}
+        </div>
+        <button type="button" class="showcase-control" data-carousel-next aria-label="Next screenshot">→</button>
+      </div>
+      <p class="sr-only" data-carousel-status aria-live="polite" aria-atomic="true">Screenshot 1 of {showcaseSlides.length}: {showcaseSlides[0].label}</p>
+    </div>
+  </div>
+</section>
+
+<script>
+  import '../scripts/carousel';
+</script>
