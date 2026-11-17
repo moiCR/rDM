@@ -4,7 +4,9 @@ use gpui_kit::{
     component::{button::ButtonVariants, input::Textarea},
 };
 
-use super::{DownloadForm, validate_connections, validate_file_name, validate_url};
+use super::{
+    DownloadForm, parse_network_options, validate_connections, validate_file_name, validate_url,
+};
 use crate::{
     components::{Button, IconButton, Modal, input::themed_input},
     lang::ActiveLang,
@@ -27,7 +29,15 @@ impl Render for DownloadForm {
         let url_error = validate_url(&url).err();
         let name_error = validate_file_name(&name).err();
         let connections_error = validate_connections(&connections).err();
-        let invalid = url_error.is_some()
+        let network_error = parse_network_options(
+            &self.speed_limit.read(cx).value(),
+            &self.checksum.read(cx).value(),
+            &self.headers.read(cx).value(),
+            &self.cookies.read(cx).value(),
+        )
+        .err();
+        let invalid = network_error.is_some()
+            || url_error.is_some()
             || name_error.is_some()
             || connections_error.is_some()
             || self.directory.as_os_str().is_empty();
@@ -36,13 +46,20 @@ impl Render for DownloadForm {
         let form = cx.entity().downgrade();
         let advanced_animation =
             SpringAnimation::new(SpringConfig::new(300.0, 34.0, 1.0)).to(self.advanced);
-        let advanced_height = px(96.0
+        let advanced_height = px(224.0
+            + if self.network_expanded { 200.0 } else { 0.0 }
             + if name_error.is_some() { 24.0 } else { 0.0 }
             + if connections_error.is_some() {
                 24.0
             } else {
                 0.0
             });
+
+        let section_height = if self.advanced {
+            f32::from(advanced_height)
+        } else {
+            0.0
+        };
 
         div()
             .size_full()
@@ -155,13 +172,13 @@ impl Render for DownloadForm {
                                             .child(
                                                 div()
 .overflow_hidden()
-.with_spring("new-download-advanced-height", advanced_animation, move |section, phase| {
-    section.h(phase.interpolate_clamped(px(0.0), advanced_height))
-        .opacity(phase.interpolate_clamped(0.0, 1.0))
+.with_spring("new-download-advanced-height", SpringAnimation::new(SpringConfig::new(300.0, 34.0, 1.0)).to(section_height).from(0.0), |section, phase| {
+    section.h(px(phase.max(0.0)))
 })
 .child(div()
 .flex()
 .flex_col()
+.flex_shrink_0()
 .gap_2()
 .line_height(px(16.0))
                                                     .child(div()
@@ -197,10 +214,29 @@ impl Render for DownloadForm {
 .h(px(32.0))
 .text_align(TextAlign::Center)
 .disabled(locked))))
+ .child(div().flex().items_center().gap_2().h(px(32.0))
+ .child(div().w(px(150.0)).flex_shrink_0().text_sm().text_color(muted).child(cx.lang().get("new_download.speed_limit")))
+ .child(themed_input(&self.speed_limit, cx).rounded(px(24.0)).id("new-download-speed_limit").aria_label(cx.lang().get("new_download.speed_limit")).h(px(32.0)).w_full().disabled(locked)))
+ .child(div().flex().items_center().gap_2().h(px(32.0))
+ .child(div().w(px(150.0)).flex_shrink_0().text_sm().text_color(muted).child(cx.lang().get("new_download.checksum")))
+ .child(themed_input(&self.checksum, cx).rounded(px(24.0)).id("new-download-checksum").aria_label(cx.lang().get("new_download.checksum")).h(px(32.0)).w_full().disabled(locked)))
                                                     .children(connections_error.map(|error| div()
 .text_xs()
 .text_color(error_color)
 .child(cx.lang().get(error))))
+ .child(Button::new("new-download-network").ghost().h(px(32.0)).disabled(locked)
+ .child(div().flex().items_center().gap_2()
+ .child(svg().path("icons/chevron-right.svg").size_3().text_color(muted)
+ .with_spring("new-download-network-chevron", SpringAnimation::new(SpringConfig::new(300.0,34.0,1.0)).to(self.network_expanded), |icon, phase| icon.with_transformation(Transformation::rotate(radians(phase.interpolate_clamped(0.0,std::f32::consts::FRAC_PI_2))))))
+ .child(cx.lang().get("new_download.network")))
+ .on_click(cx.listener(|this, _, _, cx| { this.network_expanded = !this.network_expanded; cx.notify(); })))
+ .child(div().overflow_hidden().h(px(200.0)).flex_shrink_0()
+ .child(div().flex().flex_col().gap_2().line_height(px(16.0))
+ .child(div().text_sm().text_color(muted).child(cx.lang().get("new_download.headers")))
+ .child(Textarea::new(&self.headers).rounded(px(24.0)).aria_label(cx.lang().get("new_download.headers")).h(px(112.0)).w_full().bg(field_background).border_color(border).text_color(foreground).disabled(locked))
+ .child(div().text_sm().text_color(muted).child(cx.lang().get("new_download.cookies")))
+ .child(themed_input(&self.cookies, cx).rounded(px(24.0)).id("new-download-cookies").aria_label(cx.lang().get("new_download.cookies")).h(px(32.0)).w_full().disabled(locked))))
+
                                             ))
                                             .children((!self.advanced)
 .then_some(name_error.or(connections_error))
@@ -209,6 +245,7 @@ impl Render for DownloadForm {
 .text_xs()
 .text_color(error_color)
 .child(cx.lang().get(error))))
+                                            .children(network_error.map(|error| div().text_xs().text_color(error_color).child(cx.lang().get(error))))
                                             .children(self.error.as_deref()
 .map(|error| div()
 .text_sm()

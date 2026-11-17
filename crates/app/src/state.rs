@@ -44,6 +44,7 @@ pub struct DownloadRequest {
     pub referer: Option<String>,
     pub post_process: Option<rdm_core::task::PostProcessAction>,
     pub retry_task: Option<Uuid>,
+    pub network_options: rdm_core::engine::TaskOptions,
 }
 
 pub struct DownloadStartResult {
@@ -587,12 +588,15 @@ impl TasksModel {
                             }
                             let task = core
                                 .engine()
-                                .create_task_with_options(
+                                .create_task_configured(
                                     &request.url,
-                                    request.output_path,
-                                    request.connections,
-                                    request.referer,
-                                    request.post_process,
+                                    rdm_core::engine::TaskOptions {
+                                        output_path: request.output_path,
+                                        connections: request.connections,
+                                        referer: request.referer,
+                                        post_process: request.post_process,
+                                        ..request.network_options
+                                    },
                                 )
                                 .await?;
                             task_id = Some(task.id);

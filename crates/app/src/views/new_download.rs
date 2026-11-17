@@ -25,6 +25,11 @@ struct DownloadForm {
     url: Entity<TextareaState>,
     file_name: Entity<InputState>,
     connections: Entity<InputState>,
+    speed_limit: Entity<InputState>,
+    checksum: Entity<InputState>,
+    headers: Entity<TextareaState>,
+    cookies: Entity<InputState>,
+    network_expanded: bool,
     directory: PathBuf,
     referer: Option<String>,
     post_process: Option<PostProcessAction>,
@@ -99,6 +104,61 @@ fn validate_connections(text: &str) -> Result<usize, &'static str> {
         .ok_or("validation.connections")
 }
 
+fn parse_network_options(
+    speed: &str,
+    checksum: &str,
+    headers: &str,
+    cookies: &str,
+) -> Result<rdm_core::engine::TaskOptions, &'static str> {
+    let max_speed_bytes_per_sec = if speed.trim().is_empty() {
+        None
+    } else {
+        Some(
+            speed
+                .trim()
+                .parse::<u64>()
+                .ok()
+                .and_then(|value| value.checked_mul(1024))
+                .ok_or("new_download.invalid_speed")?,
+        )
+    };
+    let checksum = if checksum.trim().is_empty() {
+        None
+    } else {
+        Some(
+            rdm_core::task::ExpectedChecksum::parse(checksum)
+                .map_err(|_| "new_download.invalid_checksum")?,
+        )
+    };
+    let mut parsed_headers = Vec::new();
+    for line in headers.lines().filter(|line| !line.trim().is_empty()) {
+        let (name, value) = line.split_once(':').ok_or("new_download.invalid_headers")?;
+        let name = name.trim();
+        let value = value.trim();
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+            || value
+                .bytes()
+                .any(|byte| byte < 32 && byte != b'\t' || byte == 127)
+        {
+            return Err("new_download.invalid_headers");
+        }
+        parsed_headers.push((name.to_owned(), value.to_owned()));
+    }
+    if cookies.bytes().any(|byte| byte < 32 || byte == 127) {
+        return Err("new_download.invalid_cookies");
+    }
+    Ok(rdm_core::engine::TaskOptions {
+        max_speed_bytes_per_sec,
+        checksum,
+        headers: parsed_headers,
+        cookies: (!cookies.trim().is_empty()).then(|| cookies.trim().to_owned()),
+        ..Default::default()
+    })
+}
+
 impl DownloadForm {
     fn new(item: Option<InterceptedDownload>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let config = cx.core().config().config();
@@ -130,7 +190,11 @@ impl DownloadForm {
             );
             input
         });
-        let subscriptions = vec![
+        let speed_limit = cx.new(|cx| InputState::new(window, cx));
+        let checksum = cx.new(|cx| InputState::new(window, cx));
+        let headers = cx.new(|cx| TextareaState::new(window, cx));
+        let cookies = cx.new(|cx| InputState::new(window, cx));
+        let mut subscriptions = vec![
             cx.observe_global_in::<Lang>(window, |this, window, cx| {
                 let url = cx.lang().get("new_download.url_placeholder");
                 let name = cx.lang().get("new_download.automatic_name");
@@ -158,7 +222,26 @@ impl DownloadForm {
                 }
             }),
         ];
+        for input in [&speed_limit, &checksum, &cookies] {
+            subscriptions.push(cx.subscribe(input, |this, _, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.error = None;
+                    cx.notify();
+                }
+            }));
+        }
+        subscriptions.push(cx.subscribe(&headers, |this, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.error = None;
+                cx.notify();
+            }
+        }));
         Self {
+            speed_limit,
+            checksum,
+            headers,
+            cookies,
+            network_expanded: false,
             url,
             file_name,
             connections,
@@ -250,6 +333,14 @@ impl DownloadForm {
         if self.directory.as_os_str().is_empty() {
             return;
         }
+        let Ok(network_options) = parse_network_options(
+            &self.speed_limit.read(cx).value(),
+            &self.checksum.read(cx).value(),
+            &self.headers.read(cx).value(),
+            &self.cookies.read(cx).value(),
+        ) else {
+            return;
+        };
         self.submitting = true;
         self.error = None;
         let request = DownloadRequest {
@@ -264,6 +355,7 @@ impl DownloadForm {
             referer: self.referer.clone(),
             post_process: self.post_process.clone(),
             retry_task: self.created_task,
+            network_options,
         };
         let task = cx
             .tasks_model()
@@ -365,6 +457,31 @@ impl RenderOnce for NewDownloadView {
 #[cfg(test)]
 mod tests {
     use super::{validate_connections, validate_file_name, validate_url};
+
+    #[test]
+    fn parses_advanced_options_and_rejects_invalid_values() {
+        let options = super::parse_network_options(
+            "128",
+            "d41d8cd98f00b204e9800998ecf8427e",
+            "Authorization: Bearer token\nX-Test: a:b",
+            "session=abc",
+        );
+        assert!(options.is_ok());
+        if let Ok(options) = options {
+            assert_eq!(options.max_speed_bytes_per_sec, Some(131072));
+            assert_eq!(options.headers.len(), 2);
+            assert_eq!(options.cookies.as_deref(), Some("session=abc"));
+            assert!(options.checksum.is_some());
+        }
+        assert!(super::parse_network_options("", "", "", "").is_ok());
+        assert!(super::parse_network_options("0", "", "", "").is_ok());
+        for speed in ["-1", "1.5", "18446744073709551615"] {
+            assert!(super::parse_network_options(speed, "", "", "").is_err());
+        }
+        assert!(super::parse_network_options("", "bad", "", "").is_err());
+        assert!(super::parse_network_options("", "", "Bad header: x", "").is_err());
+        assert!(super::parse_network_options("", "", "", "a=b\r\nx=y").is_err());
+    }
 
     #[test]
     fn accepts_one_http_url_and_preserves_encoded_path() {
