@@ -89,14 +89,18 @@ pub(super) fn format_bytes(bytes: u64) -> String {
 }
 
 fn truncate_file_name(name: &str, max_chars: usize) -> String {
-    let char_count = name.chars().count();
-    if char_count <= max_chars {
-        name.to_string()
-    } else {
-        let keep = max_chars.saturating_sub(3);
-        let prefix: String = name.chars().take(keep).collect();
-        format!("{prefix}...")
+    if name.chars().count() <= max_chars {
+        return name.to_string();
     }
+    let extension = name.rsplit_once('.').filter(|(stem, extension)| {
+        !stem.is_empty() && !extension.is_empty() && extension.chars().count() + 4 <= max_chars
+    });
+    let suffix = extension
+        .map(|(_, extension)| format!(".{extension}"))
+        .unwrap_or_default();
+    let keep = max_chars.saturating_sub(3 + suffix.chars().count());
+    let prefix: String = name.chars().take(keep).collect();
+    format!("{prefix}...{suffix}")
 }
 
 pub(super) fn task_progress_percent(task: &TaskSnapshot) -> f32 {
@@ -166,27 +170,30 @@ impl RenderOnce for DownloadsView {
         let is_empty = tasks.is_empty();
         let transition = SpringAnimation::new(SpringConfig::new(300.0, 34.0, 1.0)).to(!is_empty);
 
-        let cards = (!is_empty).then(|| {
-            div()
-                .id("downloads-cards-scroll")
-                .size_full()
-                .overflow_y_scroll()
-                .p_5()
-                .child(
+        let cards =
+            (!is_empty).then(|| {
+                container_query(move |size, _window, cx| {
+                    let columns =
+                        (((f32::from(size.width) - 42.0 + 16.0) / 312.0).floor() as u16).max(1);
                     div()
-                        .w_full()
-                        .flex()
-                        .flex_wrap()
-                        .content_start()
-                        .items_start()
-                        .gap_4()
-                        .children(
-                            tasks
-                                .iter()
-                                .map(|task| Self::render_card(task, &tasks_model, palette, cx)),
-                        ),
-                )
-        });
+                        .id("downloads-cards-scroll")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .p_5()
+                        .child(
+                            div()
+                                .w_full()
+                                .grid()
+                                .grid_cols(columns)
+                                .content_start()
+                                .items_start()
+                                .gap_4()
+                                .children(tasks.iter().map(|task| {
+                                    Self::render_card(task, &tasks_model, palette, cx)
+                                })),
+                        )
+                })
+            });
         let empty = Self::render_empty(palette, is_empty, cx);
 
         div()
@@ -232,13 +239,13 @@ impl DownloadsView {
     ) -> impl IntoElement {
         let task_id = task.id;
         let task_key = task_id.as_u64_pair().0;
-        let display_name = truncate_file_name(&task.file_name, 32);
+        let display_name = truncate_file_name(&task.file_name, 24);
         let size_text = if task.total_size > 0 {
             format_bytes(task.total_size)
         } else {
             format_bytes(task.downloaded_bytes)
         };
-        let header_line = format!("{display_name}  •  {size_text}");
+
         let (status_label, status_color) = palette.status(&task.status);
         let percent = task_progress_percent(task);
         let percent_text = format!("{}%", percent as u32);
@@ -279,7 +286,8 @@ impl DownloadsView {
 
         download_card_surface(palette.surface, palette.surface_hover, palette.border)
             .id(("download-card", task_key))
-            .w(px(296.0))
+            .w_full()
+            .min_w_0()
             .p_4()
             .flex()
             .flex_col()
@@ -298,8 +306,23 @@ impl DownloadsView {
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(palette.text_color)
-                            .truncate()
-                            .child(header_line),
+                            .flex()
+                            .gap_2()
+                            .child({
+                                let (prefix, suffix) = display_name
+                                    .split_once("...")
+                                    .map(|(prefix, suffix)| {
+                                        (prefix.to_string(), format!("...{suffix}"))
+                                    })
+                                    .unwrap_or_else(|| (display_name.clone(), String::new()));
+                                div()
+                                    .flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(div().min_w_0().truncate().child(prefix))
+                                    .child(div().flex_shrink_0().child(suffix))
+                            })
+                            .child(div().flex_shrink_0().child(format!("• {size_text}"))),
                     )
                     .child(
                         div()
@@ -728,5 +751,23 @@ impl RenderOnce for DeleteDownloadModal {
                         ),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod filename_tests {
+    use super::truncate_file_name;
+
+    #[test]
+    fn preserves_short_names_and_extensions() {
+        assert_eq!(truncate_file_name("rDM.AppImage", 24), "rDM.AppImage");
+        let name = truncate_file_name("rDM-1.0.0-x86_64-release.AppImage", 24);
+        assert_eq!(name.chars().count(), 24);
+        assert!(name.ends_with("...AppImage"));
+        assert!(truncate_file_name("á".repeat(30).as_str(), 24).ends_with("..."));
+        assert_eq!(
+            truncate_file_name("a".repeat(24).as_str(), 24),
+            "a".repeat(24)
+        );
     }
 }
