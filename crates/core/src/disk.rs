@@ -1,13 +1,18 @@
-use std::path::Path;
 #[cfg(windows)]
 use std::path::PathBuf;
+use std::{io::Read, path::Path};
 
+use md5::Md5;
+use sha2::{Digest, Sha256};
 use tokio::{
     fs::{File, OpenOptions, create_dir_all},
     io::{AsyncSeekExt, AsyncWriteExt, SeekFrom},
 };
 
-use crate::error::EngineError;
+use crate::{
+    error::EngineError,
+    task::{ChecksumAlgorithm, ExpectedChecksum},
+};
 
 #[derive(Default)]
 pub struct DiskManager {}
@@ -174,6 +179,51 @@ impl DiskManager {
         file.flush().await?;
         Ok(())
     }
+
+    pub async fn compute_checksum(
+        &self,
+        path: &Path,
+        algorithm: ChecksumAlgorithm,
+    ) -> Result<String, EngineError> {
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            let mut file = std::fs::File::open(&path)?;
+            match algorithm {
+                ChecksumAlgorithm::Sha256 => hash_file::<Sha256>(&mut file),
+                ChecksumAlgorithm::Md5 => hash_file::<Md5>(&mut file),
+            }
+        })
+        .await?
+    }
+
+    pub async fn verify_checksum(
+        &self,
+        path: &Path,
+        expected: &ExpectedChecksum,
+    ) -> Result<(), EngineError> {
+        let actual = self.compute_checksum(path, expected.algorithm).await?;
+        if actual != expected.value {
+            return Err(EngineError::ChecksumMismatch {
+                algorithm: expected.algorithm.as_str().to_string(),
+                expected: expected.value.clone(),
+                actual,
+            });
+        }
+        Ok(())
+    }
+}
+
+fn hash_file<D: Digest>(file: &mut std::fs::File) -> Result<String, EngineError> {
+    let mut hasher = D::new();
+    let mut buffer = [0u8; 65_536];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
 }
 
 #[cfg(test)]
@@ -251,6 +301,30 @@ mod tests {
             DiskManager::check_available_space(&destination, u64::MAX),
             Err(EngineError::InsufficientDiskSpace { .. })
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_checksum_validates_sha256_and_md5() -> Result<(), Box<dyn std::error::Error>> {
+        let disk_manager = DiskManager::new();
+        let temp_dir = std::env::temp_dir().join(format!("rdm_hash_test_{}", uuid::Uuid::new_v4()));
+        disk_manager.ensure_directory(&temp_dir).await?;
+        let file_path = temp_dir.join("payload.txt");
+        tokio::fs::write(&file_path, b"abc").await?;
+
+        let sha = ExpectedChecksum::parse(
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        )?;
+        disk_manager.verify_checksum(&file_path, &sha).await?;
+
+        let md5 = ExpectedChecksum::parse("md5:900150983cd24fb0d6963f7d28e17f72")?;
+        disk_manager.verify_checksum(&file_path, &md5).await?;
+
+        let wrong = ExpectedChecksum::parse("md5:00000000000000000000000000000000")?;
+        let err = disk_manager.verify_checksum(&file_path, &wrong).await;
+        assert!(matches!(err, Err(EngineError::ChecksumMismatch { .. })));
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
         Ok(())
     }
 }

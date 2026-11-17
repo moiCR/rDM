@@ -5,7 +5,7 @@ use std::{
 };
 use thiserror::Error;
 
-pub use crate::engine::{EngineConfig, get_user_agent};
+pub use crate::engine::{EngineConfig, ProxyConfig, get_user_agent};
 pub use crate::ui::UIConfig;
 
 pub mod engine;

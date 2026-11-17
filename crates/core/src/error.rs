@@ -45,9 +45,30 @@ pub enum EngineError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    #[error("Configuration error: {0}")]
+    Config(#[from] rdm_config::ConfigError),
+
     #[error("No update installer found in release assets")]
     NoUpdateInstaller,
 
     #[error("Update failed: {0}")]
     UpdateError(String),
+
+    #[error("Invalid task state: {0}")]
+    InvalidTaskState(String),
+
+    #[error(
+        "Refreshed URL points to a different file size: expected {expected} bytes, got {actual} bytes"
+    )]
+    UrlSizeMismatch { expected: u64, actual: u64 },
+
+    #[error("Invalid checksum specification: {0}")]
+    InvalidChecksum(String),
+
+    #[error("Checksum mismatch ({algorithm}): expected {expected}, got {actual}")]
+    ChecksumMismatch {
+        algorithm: String,
+        expected: String,
+        actual: String,
+    },
 }

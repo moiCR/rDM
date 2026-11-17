@@ -22,20 +22,20 @@ use crate::{
 };
 
 use super::{
-    EngineModule, ResourceProbe,
+    EngineModule, HttpClientProvider, ResourceProbe, TaskOptions,
     multimedia::{
         MultimediaModule, normalize_post_process, staging_path, stream_user_agent, track_paths,
     },
     transfer::{
-        decode_and_sanitize_filename, download_to_path, extract_file_name_from_url,
-        resolve_referer, stream_request,
+        apply_custom_headers, decode_and_sanitize_filename, download_to_path,
+        extract_file_name_from_url, resolve_referer, stream_request,
     },
 };
 
 pub(super) struct DownloadModule {
     config: Arc<ConfigManager>,
     disk_manager: Arc<DiskManager>,
-    client: reqwest::Client,
+    client_provider: HttpClientProvider,
     tasks: RwLock<HashMap<Uuid, Arc<Task>>>,
     queue: RwLock<VecDeque<Uuid>>,
     dispatch: Mutex<()>,
@@ -49,27 +49,39 @@ impl EngineModule for DownloadModule {
         url: &str,
         referer: Option<&str>,
     ) -> Result<Option<ResourceProbe>, EngineError> {
+        self.probe_with_headers(url, referer, &[], None).await
+    }
+}
+
+impl DownloadModule {
+    pub(super) async fn probe_with_headers(
+        &self,
+        url: &str,
+        referer: Option<&str>,
+        custom_headers: &[(String, String)],
+        cookies: Option<&str>,
+    ) -> Result<Option<ResourceProbe>, EngineError> {
+        let client = self.client_provider.client()?;
         let resolved_referer = resolve_referer(url, referer);
 
-        let mut head_builder = self.client.head(url);
+        let mut head_builder = client.head(url);
         if let Some(ref r) = resolved_referer
             && let Ok(val) = reqwest::header::HeaderValue::from_str(r)
         {
             head_builder = head_builder.header(reqwest::header::REFERER, val);
         }
+        head_builder = apply_custom_headers(head_builder, custom_headers, cookies);
 
         let response = match head_builder.send().await {
             Ok(res) if res.status().is_success() => res,
             _ => {
-                let mut get_builder = self
-                    .client
-                    .get(url)
-                    .header(reqwest::header::RANGE, "bytes=0-0");
+                let mut get_builder = client.get(url).header(reqwest::header::RANGE, "bytes=0-0");
                 if let Some(ref r) = resolved_referer
                     && let Ok(val) = reqwest::header::HeaderValue::from_str(r)
                 {
                     get_builder = get_builder.header(reqwest::header::REFERER, val);
                 }
+                get_builder = apply_custom_headers(get_builder, custom_headers, cookies);
                 get_builder.send().await?
             }
         };
@@ -128,7 +140,7 @@ impl DownloadModule {
     pub(super) fn new(
         config: Arc<ConfigManager>,
         disk_manager: Arc<DiskManager>,
-        client: reqwest::Client,
+        client_provider: HttpClientProvider,
         multimedia: Arc<MultimediaModule>,
     ) -> Self {
         let engine_config = config.config();
@@ -152,7 +164,7 @@ impl DownloadModule {
         Self {
             config,
             disk_manager,
-            client,
+            client_provider,
             tasks: RwLock::new(initial_tasks),
             queue: RwLock::new(initial_queue),
             dispatch: Mutex::new(()),
@@ -235,6 +247,7 @@ impl DownloadModule {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) async fn create_task(
         &self,
         probe: ResourceProbe,
@@ -243,9 +256,27 @@ impl DownloadModule {
         referer: Option<String>,
         explicit_post_process: Option<PostProcessAction>,
     ) -> Result<Arc<Task>, EngineError> {
+        self.create_task_configured(
+            probe,
+            TaskOptions {
+                output_path,
+                connections,
+                referer,
+                post_process: explicit_post_process,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    pub(super) async fn create_task_configured(
+        &self,
+        probe: ResourceProbe,
+        options: TaskOptions,
+    ) -> Result<Arc<Task>, EngineError> {
         let current_cfg = self.config.config();
 
-        let requested_path = match output_path {
+        let requested_path = match options.output_path {
             Some(path) => {
                 if tokio::fs::metadata(&path)
                     .await
@@ -261,11 +292,12 @@ impl DownloadModule {
 
         let (total_size, final_post_process) = normalize_post_process(
             probe.total_size,
-            explicit_post_process.or(probe.post_process),
+            options.post_process.or(probe.post_process),
         );
 
         let active_connections = if probe.supports_ranges && total_size > 0 {
-            connections
+            options
+                .connections
                 .unwrap_or(current_cfg.default_connections)
                 .max(1)
         } else {
@@ -293,14 +325,18 @@ impl DownloadModule {
             }
         })
         .await??;
-        let task = Arc::new(Task::new_with_post_process(
+        let task = Arc::new(Task::new_configured(
             task_id,
             probe.url,
             destination_path,
             total_size,
             active_connections,
-            referer,
+            options.referer,
             final_post_process,
+            options.checksum,
+            options.headers,
+            options.cookies,
+            options.max_speed_bytes_per_sec.unwrap_or(0),
         ));
 
         {
@@ -513,6 +549,7 @@ impl DownloadModule {
             .count()
             .max(1);
 
+        let client = self.client_provider.client()?;
         let mut worker_handles = Vec::with_capacity(segments.len() + 1);
 
         for segment in segments {
@@ -526,7 +563,7 @@ impl DownloadModule {
                 continue;
             }
 
-            let client = self.client.clone();
+            let client = client.clone();
             let disk_manager = Arc::clone(&self.disk_manager);
             let config_mgr = Arc::clone(&self.config);
             let task_ref = Arc::clone(&task);
@@ -559,7 +596,16 @@ impl DownloadModule {
         if task.post_process.is_none() && worker_handles.is_empty() {
             let downloaded = task.downloaded_bytes.load(Ordering::Relaxed);
             if task.total_size == 0 || downloaded >= task.total_size {
-                task.set_status(TaskStatus::Completed);
+                if let Some(ref expected) = task.checksum
+                    && let Err(err) = self
+                        .disk_manager
+                        .verify_checksum(&task.output_path, expected)
+                        .await
+                {
+                    task.set_status(TaskStatus::Failed(err.to_string()));
+                } else {
+                    task.set_status(TaskStatus::Completed);
+                }
                 let _ = self.save_state().await;
                 let download = Arc::clone(self);
                 tokio::spawn(async move {
@@ -613,7 +659,16 @@ impl DownloadModule {
                     download.spawn_conversion(monitor_task);
                     return;
                 }
-                monitor_task.set_status(TaskStatus::Completed);
+                if let Some(ref expected) = monitor_task.checksum
+                    && let Err(err) = download
+                        .disk_manager
+                        .verify_checksum(&monitor_task.output_path, expected)
+                        .await
+                {
+                    monitor_task.set_status(TaskStatus::Failed(err.to_string()));
+                } else {
+                    monitor_task.set_status(TaskStatus::Completed);
+                }
             } else {
                 let error_text = match failure_reason {
                     Some(reason) => reason,
@@ -646,7 +701,16 @@ impl DownloadModule {
                 let status = match result {
                     Ok(()) => {
                         download.multimedia.remove_parts(&task).await;
-                        TaskStatus::Completed
+                        if let Some(ref expected) = task.checksum
+                            && let Err(err) = download
+                                .disk_manager
+                                .verify_checksum(&task.output_path, expected)
+                                .await
+                        {
+                            TaskStatus::Failed(err.to_string())
+                        } else {
+                            TaskStatus::Completed
+                        }
                     }
                     Err(error) => {
                         if !was_staged {
@@ -753,6 +817,105 @@ impl DownloadModule {
         let tasks_guard = self.tasks.read().await;
         tasks_guard.values().cloned().collect()
     }
+
+    pub(super) async fn refresh_task_url(
+        &self,
+        task_id: Uuid,
+        new_url: &str,
+        new_referer: Option<String>,
+    ) -> Result<(), EngineError> {
+        let trimmed_url = new_url.trim();
+        let parsed = reqwest::Url::parse(trimmed_url)
+            .map_err(|_| EngineError::InvalidUrl(trimmed_url.to_string()))?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err(EngineError::InvalidUrl(trimmed_url.to_string()));
+        }
+
+        let (headers, cookies, effective_referer, expected_size) = {
+            let task = self.get_task(task_id).await?;
+            let status = task.status();
+            if is_active(&status)
+                || matches!(
+                    status,
+                    TaskStatus::Completed
+                        | TaskStatus::ConversionQueued
+                        | TaskStatus::ConversionFailed(_)
+                )
+            {
+                return Err(EngineError::InvalidTaskState(format!(
+                    "Cannot refresh URL while task {task_id} is in state {status:?}"
+                )));
+            }
+            (
+                task.headers.clone(),
+                task.cookies.clone(),
+                new_referer.clone().or_else(|| task.referer()),
+                task.total_size,
+            )
+        };
+
+        let probe = self
+            .probe_with_headers(
+                trimmed_url,
+                effective_referer.as_deref(),
+                &headers,
+                cookies.as_deref(),
+            )
+            .await?
+            .ok_or(EngineError::HttpStatus(reqwest::StatusCode::NOT_FOUND))?;
+
+        if expected_size > 0 && probe.total_size > 0 && probe.total_size != expected_size {
+            return Err(EngineError::UrlSizeMismatch {
+                expected: expected_size,
+                actual: probe.total_size,
+            });
+        }
+
+        let _dispatch = self.dispatch.lock().await;
+        let task = self.get_task(task_id).await?;
+        let status = task.status();
+        if is_active(&status)
+            || matches!(
+                status,
+                TaskStatus::Completed
+                    | TaskStatus::ConversionQueued
+                    | TaskStatus::ConversionFailed(_)
+            )
+        {
+            return Err(EngineError::InvalidTaskState(format!(
+                "Cannot refresh URL while task {task_id} is in state {status:?}"
+            )));
+        }
+
+        task.set_url(probe.url);
+        if let Some(referer) = new_referer {
+            task.set_referer(Some(referer));
+        }
+
+        for segment in task.segments() {
+            if segment.status() == SegmentStatus::Failed {
+                segment.set_status(SegmentStatus::Pending);
+            }
+        }
+
+        if matches!(status, TaskStatus::Failed(_) | TaskStatus::Cancelled) {
+            task.set_status(TaskStatus::Paused);
+        }
+
+        self.save_state().await?;
+        Ok(())
+    }
+
+    pub(super) async fn set_task_speed_limit(
+        &self,
+        task_id: Uuid,
+        bytes_per_sec: u64,
+    ) -> Result<(), EngineError> {
+        let task = self.get_task(task_id).await?;
+        task.set_max_speed_bytes_per_sec(bytes_per_sec);
+        self.save_state().await?;
+        Ok(())
+    }
 }
 
 fn is_active(status: &TaskStatus) -> bool {
@@ -819,11 +982,15 @@ async fn download_worker(
         }
 
         let bytes_before = segment.downloaded_bytes.load(Ordering::Relaxed);
+        let task_url = task.url();
+        let task_referer = task.referer();
         let request = stream_request(
             &client,
-            &task.url,
-            task.referer.as_deref(),
-            stream_user_agent(&task.url),
+            &task_url,
+            task_referer.as_deref(),
+            stream_user_agent(&task_url),
+            &task.headers,
+            task.cookies.as_deref(),
         );
         let result = download_to_path(
             request,
@@ -994,7 +1161,7 @@ mod conversion_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::Engine;
+    use crate::{engine::Engine, task::ExpectedChecksum};
     use rdm_config::EngineConfig;
 
     #[test]
@@ -1166,6 +1333,132 @@ mod tests {
         engine.pause_task(active_id).await?;
         assert_eq!(active_task.status(), TaskStatus::Paused);
         assert_eq!(queued_task.status(), TaskStatus::Completed);
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        Ok(())
+    }
+
+    async fn spawn_mock_http_server(
+        payload: &'static [u8],
+        required_header: Option<(&'static str, &'static str)>,
+    ) -> std::io::Result<std::net::SocketAddr> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let Ok(n) = socket.read(&mut buf).await else {
+                        return;
+                    };
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    if let Some((name, val)) = required_header {
+                        let expected_line = format!("{name}: {val}").to_ascii_lowercase();
+                        if !req.to_ascii_lowercase().contains(&expected_line) {
+                            let _ = socket
+                                .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+                                .await;
+                            return;
+                        }
+                    }
+
+                    let is_head = req.starts_with("HEAD ");
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n",
+                        payload.len()
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    if !is_head {
+                        let _ = socket.write_all(payload).await;
+                    }
+                });
+            }
+        });
+
+        Ok(addr)
+    }
+
+    #[tokio::test]
+    async fn download_verifies_checksum_sends_headers_and_refreshes_url()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("rdm_net_test_{}", Uuid::new_v4()));
+        let config_obj = EngineConfig::default()
+            .with_state_dir(temp_dir.clone())
+            .with_download_dir(temp_dir.clone());
+        let config = Arc::new(ConfigManager::from_config(config_obj));
+        let disk_manager = Arc::new(DiskManager::new());
+        let engine = Engine::new(Arc::clone(&config), Arc::clone(&disk_manager))?;
+
+        let addr = spawn_mock_http_server(b"abc", Some(("x-api-key", "secret123"))).await?;
+        let url = format!("http://{addr}/file.bin");
+
+        let task = engine
+            .create_task_configured(
+                &url,
+                TaskOptions {
+                    connections: Some(1),
+                    headers: vec![("X-Api-Key".to_string(), "secret123".to_string())],
+                    cookies: Some("session=ok".to_string()),
+                    checksum: Some(ExpectedChecksum::parse(
+                        "md5:900150983cd24fb0d6963f7d28e17f72",
+                    )?),
+                    max_speed_bytes_per_sec: Some(0),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        engine.set_task_speed_limit(task.id, 50_000).await?;
+        assert_eq!(task.max_speed_bytes_per_sec(), 50_000);
+
+        engine.start_task(task.id).await?;
+        for _ in 0..50 {
+            if task.status() == TaskStatus::Completed {
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(task.status(), TaskStatus::Completed);
+
+        let mismatch_task = engine
+            .create_task_configured(
+                &url,
+                TaskOptions {
+                    connections: Some(1),
+                    headers: vec![("X-Api-Key".to_string(), "secret123".to_string())],
+                    checksum: Some(ExpectedChecksum::parse(
+                        "md5:00000000000000000000000000000000",
+                    )?),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        engine.start_task(mismatch_task.id).await?;
+        for _ in 0..50 {
+            if matches!(mismatch_task.status(), TaskStatus::Failed(_)) {
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        }
+        assert!(matches!(mismatch_task.status(), TaskStatus::Failed(_)));
+
+        let addr2 = spawn_mock_http_server(b"abc", Some(("x-api-key", "secret123"))).await?;
+        let new_url = format!("http://{addr2}/refreshed.bin");
+        engine
+            .refresh_task_url(mismatch_task.id, &new_url, None)
+            .await?;
+        assert_eq!(mismatch_task.url(), new_url);
+        assert_eq!(mismatch_task.status(), TaskStatus::Paused);
+
+        let wrong_size_addr =
+            spawn_mock_http_server(b"abcdef", Some(("x-api-key", "secret123"))).await?;
+        let wrong_size_url = format!("http://{wrong_size_addr}/wrong.bin");
+        let err = engine
+            .refresh_task_url(mismatch_task.id, &wrong_size_url, None)
+            .await;
+        assert!(matches!(err, Err(EngineError::UrlSizeMismatch { .. })));
 
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
         Ok(())

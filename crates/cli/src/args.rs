@@ -10,6 +10,10 @@ pub enum CliCommand {
         output: Option<PathBuf>,
         connections: Option<usize>,
         referer: Option<String>,
+        checksum: Option<String>,
+        headers: Vec<(String, String)>,
+        cookies: Option<String>,
+        speed_limit: Option<u64>,
     },
     Info {
         url: String,
@@ -18,6 +22,15 @@ pub enum CliCommand {
     List,
     Resume {
         id: Uuid,
+    },
+    Refresh {
+        id: Uuid,
+        url: String,
+        referer: Option<String>,
+    },
+    Limit {
+        id: Uuid,
+        bytes_per_sec: u64,
     },
     Delete {
         id: Uuid,
@@ -99,6 +112,61 @@ impl CliArgs {
                     command: CliCommand::Resume { id },
                 }))
             }
+            "refresh" => {
+                if items.len() < 3 {
+                    return Err(CliError::InvalidArgument(
+                        "Usage: refresh <TASK_ID> <NEW_URL> [--referer <URL>]".to_string(),
+                    ));
+                }
+                let id = Uuid::parse_str(&items[1])
+                    .map_err(|e| CliError::InvalidArgument(format!("Invalid task UUID: {e}")))?;
+                let mut new_url = None;
+                let mut referer = None;
+                let mut iter = items[2..].iter();
+                while let Some(arg) = iter.next() {
+                    match arg.as_str() {
+                        "-r" | "--referer" => {
+                            let val = iter.next().ok_or_else(|| {
+                                CliError::InvalidArgument("Missing value for --referer".to_string())
+                            })?;
+                            referer = Some(val.clone());
+                        }
+                        other if other.starts_with('-') => {
+                            return Err(CliError::InvalidArgument(format!(
+                                "Unknown option: {other}"
+                            )));
+                        }
+                        positional => {
+                            if new_url.is_none() {
+                                new_url = Some(positional.to_string());
+                            } else {
+                                return Err(CliError::InvalidArgument(format!(
+                                    "Unexpected argument: {positional}"
+                                )));
+                            }
+                        }
+                    }
+                }
+                let url = new_url.ok_or(CliError::MissingUrl)?;
+                Ok(Some(Self {
+                    command: CliCommand::Refresh { id, url, referer },
+                }))
+            }
+            "limit" => {
+                if items.len() != 3 {
+                    return Err(CliError::InvalidArgument(
+                        "Usage: limit <TASK_ID> <BYTES_PER_SEC>".to_string(),
+                    ));
+                }
+                let id = Uuid::parse_str(&items[1])
+                    .map_err(|e| CliError::InvalidArgument(format!("Invalid task UUID: {e}")))?;
+                let bytes_per_sec: u64 = items[2].parse().map_err(|_| {
+                    CliError::InvalidArgument(format!("Invalid speed limit: {}", items[2]))
+                })?;
+                Ok(Some(Self {
+                    command: CliCommand::Limit { id, bytes_per_sec },
+                }))
+            }
             "delete" | "rm" => {
                 if items.len() < 2 {
                     return Err(CliError::InvalidArgument(
@@ -143,6 +211,10 @@ impl CliArgs {
         let mut output = None;
         let mut connections = None;
         let mut referer = None;
+        let mut checksum = None;
+        let mut headers = Vec::new();
+        let mut cookies = None;
+        let mut speed_limit = None;
 
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
@@ -177,6 +249,38 @@ impl CliArgs {
                     })?;
                     referer = Some(val.clone());
                 }
+                "--checksum" => {
+                    let val = iter.next().ok_or_else(|| {
+                        CliError::InvalidArgument("Missing value for --checksum".to_string())
+                    })?;
+                    checksum = Some(val.clone());
+                }
+                "-H" | "--header" => {
+                    let val = iter.next().ok_or_else(|| {
+                        CliError::InvalidArgument("Missing value for --header".to_string())
+                    })?;
+                    let Some((name, value)) = val.split_once(':') else {
+                        return Err(CliError::InvalidArgument(format!(
+                            "Invalid header format '{val}', expected 'Name: Value'"
+                        )));
+                    };
+                    headers.push((name.trim().to_string(), value.trim().to_string()));
+                }
+                "--cookie" => {
+                    let val = iter.next().ok_or_else(|| {
+                        CliError::InvalidArgument("Missing value for --cookie".to_string())
+                    })?;
+                    cookies = Some(val.clone());
+                }
+                "--speed-limit" => {
+                    let val = iter.next().ok_or_else(|| {
+                        CliError::InvalidArgument("Missing value for --speed-limit".to_string())
+                    })?;
+                    let parsed: u64 = val.parse().map_err(|_| {
+                        CliError::InvalidArgument(format!("Invalid speed limit: {val}"))
+                    })?;
+                    speed_limit = Some(parsed);
+                }
                 other if other.starts_with('-') => {
                     return Err(CliError::InvalidArgument(format!(
                         "Unknown option: {other}"
@@ -202,6 +306,10 @@ impl CliArgs {
                 output,
                 connections,
                 referer,
+                checksum,
+                headers,
+                cookies,
+                speed_limit,
             },
         }))
     }
@@ -215,6 +323,8 @@ impl CliArgs {
         println!("    info <URL> [OPTIONS]         Probe URL and inspect remote metadata");
         println!("    list                         List download history and tasks");
         println!("    resume <TASK_ID>             Resume a paused or interrupted download");
+        println!("    refresh <TASK_ID> <URL>      Update URL for a paused/failed download");
+        println!("    limit <TASK_ID> <BYTES/S>    Set per-task speed limit (0 = unlimited)");
         println!(
             "    delete <TASK_ID> [-f]        Remove download from history (-f to delete file)\n"
         );
@@ -222,6 +332,10 @@ impl CliArgs {
         println!("    -o, --output <PATH>          Target file or directory path");
         println!("    -c, --connections <NUM>      Number of concurrent segment connections");
         println!("    -r, --referer <URL>          Custom HTTP Referer header");
+        println!("    --checksum <HASH>            Verify SHA-256 or MD5 (e.g. sha256:...)");
+        println!("    -H, --header <NAME: VALUE>   Custom HTTP header (repeatable)");
+        println!("    --cookie <COOKIES>           Custom Cookie header");
+        println!("    --speed-limit <BYTES/S>      Per-task speed limit in bytes/sec");
         println!("    -h, --help                   Show this help message\n");
     }
 }
@@ -241,6 +355,10 @@ mod tests {
                 output: None,
                 connections: None,
                 referer: None,
+                checksum: None,
+                headers: Vec::new(),
+                cookies: None,
+                speed_limit: None,
             }
         );
     }
@@ -255,6 +373,14 @@ mod tests {
             "16",
             "-r",
             "https://example.com/",
+            "--checksum",
+            "md5:d41d8cd98f00b204e9800998ecf8427e",
+            "-H",
+            "Authorization: Bearer tok",
+            "--cookie",
+            "sid=123",
+            "--speed-limit",
+            "1048576",
         ];
         let parsed = CliArgs::parse_from(args).unwrap().unwrap();
         assert_eq!(
@@ -264,6 +390,10 @@ mod tests {
                 output: Some(PathBuf::from("downloads/my_file.zip")),
                 connections: Some(16),
                 referer: Some("https://example.com/".to_string()),
+                checksum: Some("md5:d41d8cd98f00b204e9800998ecf8427e".to_string()),
+                headers: vec![("Authorization".to_string(), "Bearer tok".to_string())],
+                cookies: Some("sid=123".to_string()),
+                speed_limit: Some(1_048_576),
             }
         );
     }

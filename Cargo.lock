@@ -5063,7 +5063,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rDM"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5283,7 +5283,7 @@ dependencies = [
 
 [[package]]
 name = "rdm-cli"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "rdm-config",
  "rdm-core",
@@ -5294,7 +5294,7 @@ dependencies = [
 
 [[package]]
 name = "rdm-config"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "dirs 7.0.0",
  "serde",
@@ -5304,16 +5304,19 @@ dependencies = [
 
 [[package]]
 name = "rdm-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "bytes",
  "futures-util",
+ "hex",
+ "md-5",
  "percent-encoding",
  "rdm-config",
  "reqwest",
  "rustix",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",

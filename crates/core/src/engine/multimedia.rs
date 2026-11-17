@@ -773,11 +773,14 @@ async fn download_companion_stream(
         }
 
         let bytes_before = seg.downloaded_bytes.load(Ordering::Relaxed);
+        let referer = task.referer();
         let request = stream_request(
             &client,
             &url,
-            task.referer.as_deref(),
+            referer.as_deref(),
             stream_user_agent(&url),
+            &task.headers,
+            task.cookies.as_deref(),
         );
         let result = download_to_path(
             request,

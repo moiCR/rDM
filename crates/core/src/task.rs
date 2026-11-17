@@ -10,6 +10,8 @@ use std::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::error::EngineError;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskStatus {
     Pending,
@@ -30,6 +32,73 @@ pub enum SegmentStatus {
     Downloading,
     Completed,
     Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ChecksumAlgorithm {
+    Sha256,
+    Md5,
+}
+
+impl ChecksumAlgorithm {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sha256 => "sha256",
+            Self::Md5 => "md5",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExpectedChecksum {
+    pub algorithm: ChecksumAlgorithm,
+    pub value: String,
+}
+
+impl ExpectedChecksum {
+    pub fn new(algorithm: ChecksumAlgorithm, value: impl AsRef<str>) -> Result<Self, EngineError> {
+        let normalized = value.as_ref().trim().to_ascii_lowercase();
+        let expected_len = match algorithm {
+            ChecksumAlgorithm::Sha256 => 64,
+            ChecksumAlgorithm::Md5 => 32,
+        };
+        if normalized.len() != expected_len || !normalized.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(EngineError::InvalidChecksum(format!(
+                "Expected {} hex characters for {}",
+                expected_len,
+                algorithm.as_str()
+            )));
+        }
+        Ok(Self {
+            algorithm,
+            value: normalized,
+        })
+    }
+
+    pub fn parse(input: &str) -> Result<Self, EngineError> {
+        let trimmed = input.trim();
+        if let Some((prefix, hash)) = trimmed.split_once(':') {
+            let algo = match prefix.trim().to_ascii_lowercase().as_str() {
+                "sha256" | "sha-256" => ChecksumAlgorithm::Sha256,
+                "md5" => ChecksumAlgorithm::Md5,
+                other => {
+                    return Err(EngineError::InvalidChecksum(format!(
+                        "Unsupported checksum algorithm: {other}"
+                    )));
+                }
+            };
+            return Self::new(algo, hash);
+        }
+
+        match trimmed.len() {
+            64 => Self::new(ChecksumAlgorithm::Sha256, trimmed),
+            32 => Self::new(ChecksumAlgorithm::Md5, trimmed),
+            _ => Err(EngineError::InvalidChecksum(
+                "Use sha256:<hex>, md5:<hex>, or a 32/64-char hex digest".to_string(),
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -140,18 +209,30 @@ pub struct PersistedTask {
     pub segments: Vec<PersistedSegment>,
     #[serde(default)]
     pub post_process: Option<PostProcessAction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<ExpectedChecksum>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cookies: Option<String>,
+    #[serde(default)]
+    pub max_speed_bytes_per_sec: u64,
 }
 
 #[derive(Debug)]
 pub struct Task {
     pub id: Uuid,
-    pub url: String,
+    url: RwLock<String>,
     pub output_path: PathBuf,
     pub total_size: u64,
     pub downloaded_bytes: AtomicU64,
     pub connections: usize,
-    pub referer: Option<String>,
+    referer: RwLock<Option<String>>,
     pub post_process: Option<PostProcessAction>,
+    pub checksum: Option<ExpectedChecksum>,
+    pub headers: Vec<(String, String)>,
+    pub cookies: Option<String>,
+    max_speed_bytes_per_sec: AtomicU64,
     state: RwLock<TaskState>,
     segments: RwLock<Vec<Arc<DownloadSegment>>>,
     cancellation_token: RwLock<CancellationToken>,
@@ -201,19 +282,91 @@ impl Task {
         referer: Option<String>,
         post_process: Option<PostProcessAction>,
     ) -> Self {
-        Self {
+        Self::new_configured(
             id,
             url,
             output_path,
             total_size,
-            downloaded_bytes: AtomicU64::new(0),
             connections,
             referer,
             post_process,
+            None,
+            Vec::new(),
+            None,
+            0,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_configured(
+        id: Uuid,
+        url: String,
+        output_path: PathBuf,
+        total_size: u64,
+        connections: usize,
+        referer: Option<String>,
+        post_process: Option<PostProcessAction>,
+        checksum: Option<ExpectedChecksum>,
+        headers: Vec<(String, String)>,
+        cookies: Option<String>,
+        max_speed_bytes_per_sec: u64,
+    ) -> Self {
+        Self {
+            id,
+            url: RwLock::new(url),
+            output_path,
+            total_size,
+            downloaded_bytes: AtomicU64::new(0),
+            connections,
+            referer: RwLock::new(referer),
+            post_process,
+            checksum,
+            headers,
+            cookies,
+            max_speed_bytes_per_sec: AtomicU64::new(max_speed_bytes_per_sec),
             state: RwLock::new(TaskState::new(TaskStatus::Pending)),
             segments: RwLock::new(Vec::new()),
             cancellation_token: RwLock::new(CancellationToken::new()),
         }
+    }
+
+    pub fn url(&self) -> String {
+        self.url
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub fn set_url(&self, new_url: String) {
+        let mut guard = self
+            .url
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = new_url;
+    }
+
+    pub fn referer(&self) -> Option<String> {
+        self.referer
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub fn set_referer(&self, new_referer: Option<String>) {
+        let mut guard = self
+            .referer
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = new_referer;
+    }
+
+    pub fn max_speed_bytes_per_sec(&self) -> u64 {
+        self.max_speed_bytes_per_sec.load(Ordering::Relaxed)
+    }
+
+    pub fn set_max_speed_bytes_per_sec(&self, bytes_per_sec: u64) {
+        self.max_speed_bytes_per_sec
+            .store(bytes_per_sec, Ordering::Relaxed);
     }
 
     pub fn status(&self) -> TaskStatus {
@@ -300,16 +453,20 @@ impl Task {
             .collect();
         PersistedTask {
             id: self.id,
-            url: self.url.clone(),
+            url: self.url(),
             output_path: self.output_path.clone(),
             total_size: self.total_size,
             downloaded_bytes: self.downloaded_bytes.load(Ordering::Relaxed),
             connections: self.connections,
-            referer: self.referer.clone(),
+            referer: self.referer(),
             status,
             completed_at,
             segments,
             post_process: self.post_process.clone(),
+            checksum: self.checksum.clone(),
+            headers: self.headers.clone(),
+            cookies: self.cookies.clone(),
+            max_speed_bytes_per_sec: self.max_speed_bytes_per_sec(),
         }
     }
 
@@ -332,13 +489,17 @@ impl Task {
 
         Self {
             id: persisted.id,
-            url: persisted.url,
+            url: RwLock::new(persisted.url),
             output_path: persisted.output_path,
             total_size: persisted.total_size,
             downloaded_bytes: AtomicU64::new(persisted.downloaded_bytes),
             connections: persisted.connections,
-            referer: persisted.referer,
+            referer: RwLock::new(persisted.referer),
             post_process: persisted.post_process,
+            checksum: persisted.checksum,
+            headers: persisted.headers,
+            cookies: persisted.cookies,
+            max_speed_bytes_per_sec: AtomicU64::new(persisted.max_speed_bytes_per_sec),
             state: RwLock::new(TaskState {
                 completed_at: (status == TaskStatus::Completed)
                     .then_some(persisted.completed_at)
@@ -453,5 +614,48 @@ mod tests {
                 .load(Ordering::Relaxed),
             200
         );
+    }
+
+    #[test]
+    fn checksum_parse_and_task_options_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let sha = ExpectedChecksum::parse(
+            "sha256:BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD",
+        )?;
+        assert_eq!(sha.algorithm, ChecksumAlgorithm::Sha256);
+        assert_eq!(
+            sha.value,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+
+        let md5 = ExpectedChecksum::parse("d41d8cd98f00b204e9800998ecf8427e")?;
+        assert_eq!(md5.algorithm, ChecksumAlgorithm::Md5);
+        assert!(ExpectedChecksum::parse("sha256:short").is_err());
+
+        let task = Task::new_configured(
+            Uuid::new_v4(),
+            "https://example.com/a.bin".to_string(),
+            PathBuf::from("a.bin"),
+            100,
+            2,
+            None,
+            None,
+            Some(sha.clone()),
+            vec![("X-Token".to_string(), "abc".to_string())],
+            Some("session=xyz".to_string()),
+            65_536,
+        );
+        task.set_url("https://example.com/b.bin".to_string());
+        task.set_max_speed_bytes_per_sec(131_072);
+
+        let restored = Task::from_persisted(task.to_persisted());
+        assert_eq!(restored.url(), "https://example.com/b.bin");
+        assert_eq!(restored.checksum, Some(sha));
+        assert_eq!(
+            restored.headers,
+            vec![("X-Token".to_string(), "abc".to_string())]
+        );
+        assert_eq!(restored.cookies.as_deref(), Some("session=xyz"));
+        assert_eq!(restored.max_speed_bytes_per_sec(), 131_072);
+        Ok(())
     }
 }

@@ -14,11 +14,39 @@ use crate::{
     task::{DownloadSegment, SegmentStatus, Task},
 };
 
+pub(super) fn apply_custom_headers(
+    mut request: reqwest::RequestBuilder,
+    headers: &[(String, String)],
+    cookies: Option<&str>,
+) -> reqwest::RequestBuilder {
+    for (name, value) in headers {
+        let trimmed_name = name.trim();
+        if trimmed_name.eq_ignore_ascii_case("range") || trimmed_name.eq_ignore_ascii_case("host") {
+            continue;
+        }
+        if let (Ok(header_name), Ok(header_value)) = (
+            reqwest::header::HeaderName::from_bytes(trimmed_name.as_bytes()),
+            reqwest::header::HeaderValue::from_str(value),
+        ) {
+            request = request.header(header_name, header_value);
+        }
+    }
+    if let Some(cookie_header) = cookies
+        && !cookie_header.trim().is_empty()
+        && let Ok(value) = reqwest::header::HeaderValue::from_str(cookie_header.trim())
+    {
+        request = request.header(reqwest::header::COOKIE, value);
+    }
+    request
+}
+
 pub(super) fn stream_request(
     client: &reqwest::Client,
     url: &str,
     referer: Option<&str>,
     user_agent: Option<&str>,
+    headers: &[(String, String)],
+    cookies: Option<&str>,
 ) -> reqwest::RequestBuilder {
     let mut request = client.get(url);
     if let Some(user_agent) = user_agent {
@@ -28,7 +56,7 @@ pub(super) fn stream_request(
     {
         request = request.header(reqwest::header::REFERER, value);
     }
-    request
+    apply_custom_headers(request, headers, cookies)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -112,10 +140,16 @@ pub(super) async fn download_to_path(
             .fetch_add(bytes_written, Ordering::Relaxed);
 
         let max_speed_global = config.config().max_speed_bytes_per_sec;
-        if max_speed_global > 0 {
+        let max_speed_task = task.max_speed_bytes_per_sec();
+        let effective_speed = match (max_speed_global, max_speed_task) {
+            (0, 0) => 0,
+            (0, task_limit) => task_limit,
+            (global_limit, 0) => global_limit,
+            (global_limit, task_limit) => global_limit.min(task_limit),
+        };
+        if effective_speed > 0 {
             rate_window_bytes += bytes_written;
-            let per_worker_speed =
-                (max_speed_global / active_segment_count.max(1) as u64).max(1024);
+            let per_worker_speed = (effective_speed / active_segment_count.max(1) as u64).max(1024);
             let elapsed = rate_window_start.elapsed();
             let expected_duration = std::time::Duration::from_secs_f64(
                 rate_window_bytes as f64 / per_worker_speed as f64,

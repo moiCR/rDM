@@ -5,7 +5,8 @@ use std::{
 
 use rdm_core::{
     Core, Engine, EngineError,
-    task::{Task, TaskStatus},
+    engine::TaskOptions,
+    task::{ExpectedChecksum, Task, TaskStatus},
 };
 
 use crate::{
@@ -35,10 +36,22 @@ impl CliRunner {
                 output,
                 connections,
                 referer,
+                checksum,
+                headers,
+                cookies,
+                speed_limit,
             } => {
+                let parsed_checksum = checksum
+                    .as_deref()
+                    .map(ExpectedChecksum::parse)
+                    .transpose()?;
+
                 self.reporter.info(&format!("Probing URL: {url}"));
 
-                let probe = self.engine.probe(&url, referer.as_deref()).await?;
+                let probe = self
+                    .engine
+                    .probe_with_headers(&url, referer.as_deref(), &headers, cookies.as_deref())
+                    .await?;
 
                 self.reporter.info(&format!("File: {}", probe.file_name));
                 self.reporter
@@ -62,7 +75,19 @@ impl CliRunner {
 
                 let task = self
                     .engine
-                    .create_task(&url, output, connections, referer)
+                    .create_task_configured(
+                        &url,
+                        TaskOptions {
+                            output_path: output,
+                            connections,
+                            referer,
+                            checksum: parsed_checksum,
+                            headers,
+                            cookies,
+                            max_speed_bytes_per_sec: speed_limit,
+                            ..Default::default()
+                        },
+                    )
                     .await?;
 
                 self.reporter
@@ -161,6 +186,24 @@ impl CliRunner {
                 ));
                 self.engine.resume_task(id).await?;
                 self.monitor_task(task).await
+            }
+            CliCommand::Refresh { id, url, referer } => {
+                self.engine.refresh_task_url(id, &url, referer).await?;
+                self.reporter.success(&format!("Updated URL for task {id}"));
+                Ok(())
+            }
+            CliCommand::Limit { id, bytes_per_sec } => {
+                self.engine.set_task_speed_limit(id, bytes_per_sec).await?;
+                if bytes_per_sec == 0 {
+                    self.reporter
+                        .success(&format!("Removed speed limit for task {id}"));
+                } else {
+                    self.reporter.success(&format!(
+                        "Set speed limit for task {id} to {}/s",
+                        format_bytes(bytes_per_sec)
+                    ));
+                }
+                Ok(())
             }
             CliCommand::Delete { id, delete_file } => {
                 self.engine.delete_task(id, delete_file).await?;

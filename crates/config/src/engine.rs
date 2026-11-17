@@ -35,6 +35,15 @@ fn default_server_port() -> u16 {
     9654
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct ProxyConfig {
+    pub enabled: bool,
+    pub url: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct EngineConfig {
@@ -58,6 +67,8 @@ pub struct EngineConfig {
     pub server_enabled: bool,
     #[serde(default = "default_server_port")]
     pub server_port: u16,
+    #[serde(default)]
+    pub proxy: ProxyConfig,
 }
 
 impl Default for EngineConfig {
@@ -73,6 +84,7 @@ impl Default for EngineConfig {
             theme: default_theme(),
             server_enabled: default_server_enabled(),
             server_port: default_server_port(),
+            proxy: ProxyConfig::default(),
         }
     }
 }
@@ -95,6 +107,7 @@ impl EngineConfig {
             theme: default_theme(),
             server_enabled: default_server_enabled(),
             server_port: default_server_port(),
+            proxy: ProxyConfig::default(),
         }
     }
 
@@ -147,6 +160,11 @@ impl EngineConfig {
         self.server_port = port;
         self
     }
+
+    pub fn with_proxy(mut self, proxy: ProxyConfig) -> Self {
+        self.proxy = proxy;
+        self
+    }
 }
 
 pub fn get_user_agent() -> String {
@@ -160,4 +178,26 @@ pub fn get_user_agent() -> String {
         "Mozilla/5.0 ({os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 rDM/{}",
         env!("CARGO_PKG_VERSION")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EngineConfig, ProxyConfig};
+
+    #[test]
+    fn proxy_config_defaults_disabled_for_legacy_json() -> Result<(), serde_json::Error> {
+        let legacy: EngineConfig = serde_json::from_str(r#"{"default_connections":4}"#)?;
+        assert!(!legacy.proxy.enabled);
+        assert!(legacy.proxy.url.is_empty());
+
+        let with_proxy = EngineConfig::default().with_proxy(ProxyConfig {
+            enabled: true,
+            url: "socks5://127.0.0.1:1080".to_string(),
+            username: Some("alice".to_string()),
+            password: Some("secret".to_string()),
+        });
+        let round_trip: EngineConfig = serde_json::from_str(&serde_json::to_string(&with_proxy)?)?;
+        assert_eq!(round_trip.proxy, with_proxy.proxy);
+        Ok(())
+    }
 }
