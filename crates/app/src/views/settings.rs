@@ -951,6 +951,91 @@ impl SettingsModal {
                     ),
             )
             .child({
+                use rdm_core::engine::FfmpegStatus;
+                let status = cx.tasks_model().read(cx).ffmpeg_status();
+                let message: SharedString = match status {
+                    FfmpegStatus::Idle => cx.lang().get("ffmpeg.hint"),
+                    FfmpegStatus::Checking => cx.lang().get("ffmpeg.checking"),
+                    FfmpegStatus::Ready => cx.lang().get("ffmpeg.ready"),
+                    FfmpegStatus::Error(error) => {
+                        format!("{} {error}", cx.lang().get("ffmpeg.error")).into()
+                    }
+                    FfmpegStatus::Downloading {
+                        downloaded_bytes,
+                        total_bytes,
+                    } => {
+                        if *total_bytes > 0 {
+                            format!(
+                                "{} {}%",
+                                cx.lang().get("ffmpeg.downloading"),
+                                downloaded_bytes.saturating_mul(100) / total_bytes
+                            )
+                            .into()
+                        } else {
+                            format!(
+                                "{} {} KiB",
+                                cx.lang().get("ffmpeg.downloading"),
+                                downloaded_bytes / 1024
+                            )
+                            .into()
+                        }
+                    }
+                };
+                let busy = matches!(
+                    status,
+                    FfmpegStatus::Checking | FfmpegStatus::Downloading { .. }
+                );
+                let ready = matches!(status, FfmpegStatus::Ready);
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .py_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(palette.text_color)
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("FFmpeg"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(palette.text_muted)
+                                    .child(message),
+                            ),
+                    )
+                    .child({
+                        let tasks_model = cx.tasks_model().clone();
+                        let button = PillButton::new(
+                            "settings-ffmpeg-download",
+                            cx.lang().get(if busy {
+                                "ffmpeg.checking"
+                            } else if ready {
+                                "ffmpeg.check"
+                            } else {
+                                "ffmpeg.download"
+                            }),
+                        );
+                        if busy {
+                            button
+                        } else {
+                            button.on_click(move |_, window, cx| {
+                                tasks_model.update(cx, |model, cx| model.prepare_ffmpeg(cx));
+                                window.refresh();
+                            })
+                        }
+                    })
+            })
+            .child({
                 let updater_status = cx.tasks_model().read(cx).updater_status().clone();
                 div()
                     .flex()

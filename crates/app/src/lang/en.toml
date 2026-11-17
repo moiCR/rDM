@@ -182,3 +182,13 @@ sep = "Sep"
 oct = "Oct"
 nov = "Nov"
 dec = "Dec"
+
+[ffmpeg]
+hint = "Downloads automatically when needed. Existing FFmpeg installations are reused."
+checking = "Checking…"
+ready = "FFmpeg is ready."
+error = "FFmpeg could not be prepared. Retry:"
+downloading = "Downloading FFmpeg…"
+check = "Check"
+download = "Download FFmpeg"
+preparing = "Preparing FFmpeg…"

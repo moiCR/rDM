@@ -37,7 +37,22 @@ pub struct YouTubeFormat {
     pub mp3_bitrate: Option<u32>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum FfmpegStatus {
+    #[default]
+    Idle,
+    Checking,
+    Downloading {
+        downloaded_bytes: u64,
+        total_bytes: u64,
+    },
+    Ready,
+    Error(String),
+}
+
 pub(super) struct MultimediaModule {
+    ffmpeg_install: tokio::sync::Mutex<()>,
+    ffmpeg_status: tokio::sync::watch::Sender<FfmpegStatus>,
     client: reqwest::Client,
     config: Arc<ConfigManager>,
     disk_manager: Arc<DiskManager>,
@@ -100,10 +115,157 @@ impl MultimediaModule {
         disk_manager: Arc<DiskManager>,
     ) -> Self {
         Self {
+            ffmpeg_install: tokio::sync::Mutex::new(()),
+            ffmpeg_status: tokio::sync::watch::channel(FfmpegStatus::Idle).0,
             client,
             config,
             disk_manager,
         }
+    }
+
+    pub(super) fn subscribe_ffmpeg_status(&self) -> tokio::sync::watch::Receiver<FfmpegStatus> {
+        self.ffmpeg_status.subscribe()
+    }
+
+    pub(super) async fn ensure_ffmpeg(self: &Arc<Self>) -> Result<PathBuf, String> {
+        let module = Arc::clone(self);
+        tokio::spawn(async move {
+            let _guard = module.ffmpeg_install.lock().await;
+            module.ffmpeg_status.send_replace(FfmpegStatus::Checking);
+            let result = module.find_or_install_ffmpeg().await;
+            module.ffmpeg_status.send_replace(match &result {
+                Ok(_) => FfmpegStatus::Ready,
+                Err(error) => FfmpegStatus::Error(error.clone()),
+            });
+            result
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+
+    async fn find_or_install_ffmpeg(&self) -> Result<PathBuf, String> {
+        let state_dir = self.config.config().state_dir;
+        let binary_name = if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        };
+        let local_binary = state_dir.join("bin").join(binary_name);
+        if tokio::fs::try_exists(&local_binary)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            check_ffmpeg_binary(&local_binary).await?;
+            return Ok(local_binary);
+        }
+        if check_ffmpeg_binary(Path::new(binary_name)).await.is_ok() {
+            return Ok(PathBuf::from(binary_name));
+        }
+        let (platform, checksum) = ffmpeg_asset(std::env::consts::OS, std::env::consts::ARCH)
+            .ok_or_else(|| "Automatic FFmpeg installation is unavailable for this platform. Install FFmpeg on PATH.".to_string())?;
+        tokio::fs::create_dir_all(state_dir.join("bin"))
+            .await
+            .map_err(|error| error.to_string())?;
+        let temporary = state_dir
+            .join("bin")
+            .join(format!("ffmpeg-{}.part", Uuid::new_v4()));
+        let result = self
+            .install_ffmpeg_binary(
+                "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1",
+                platform,
+                checksum,
+                &temporary,
+                &local_binary,
+            )
+            .await;
+        if result.is_err() {
+            let _ = tokio::fs::remove_file(&temporary).await;
+        }
+        result?;
+        Ok(local_binary)
+    }
+
+    async fn install_ffmpeg_binary(
+        &self,
+        base: &str,
+        platform: &str,
+        checksum: &str,
+        temporary: &Path,
+        destination: &Path,
+    ) -> Result<(), String> {
+        use futures_util::StreamExt;
+        use sha2::{Digest, Sha256};
+        use tokio::io::AsyncWriteExt;
+
+        let response = self
+            .client
+            .get(format!("{base}/ffmpeg-{platform}"))
+            .timeout(std::time::Duration::from_secs(600))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|error| error.to_string())?;
+        let total_bytes = response.content_length().unwrap_or(0);
+        let mut downloaded_bytes = 0_u64;
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(temporary)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut hasher = Sha256::new();
+        let mut stream = response.bytes_stream();
+        self.ffmpeg_status.send_replace(FfmpegStatus::Downloading {
+            downloaded_bytes,
+            total_bytes,
+        });
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| error.to_string())?;
+            downloaded_bytes = downloaded_bytes.saturating_add(chunk.len() as u64);
+            if downloaded_bytes > 200 * 1024 * 1024 {
+                return Err("FFmpeg download exceeds the size limit.".into());
+            }
+            file.write_all(&chunk)
+                .await
+                .map_err(|error| error.to_string())?;
+            hasher.update(&chunk);
+            self.ffmpeg_status.send_replace(FfmpegStatus::Downloading {
+                downloaded_bytes,
+                total_bytes,
+            });
+        }
+        file.sync_all().await.map_err(|error| error.to_string())?;
+        drop(file);
+        if hex::encode(hasher.finalize()) != checksum {
+            return Err("FFmpeg SHA-256 verification failed.".into());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tokio::fs::set_permissions(temporary, std::fs::Permissions::from_mode(0o755))
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        check_ffmpeg_binary(temporary).await?;
+        for suffix in ["LICENSE", "README"] {
+            let bytes = self
+                .client
+                .get(format!("{base}/{platform}.{suffix}"))
+                .timeout(std::time::Duration::from_secs(30))
+                .send()
+                .await
+                .and_then(reqwest::Response::error_for_status)
+                .map_err(|error| error.to_string())?
+                .bytes()
+                .await
+                .map_err(|error| error.to_string())?;
+            tokio::fs::write(destination.with_extension(suffix), bytes)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        tokio::fs::rename(temporary, destination)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     pub(super) async fn resolve_youtube_formats(
@@ -488,9 +650,8 @@ impl MultimediaModule {
         }))
     }
 
-    pub(super) async fn prepare_conversion(&self, task: &Task) -> Result<u64, String> {
+    pub(super) async fn prepare_conversion(self: &Arc<Self>, task: &Task) -> Result<u64, String> {
         self.discard_staging(task).await;
-        let state_dir = self.config.config().state_dir;
         let staged_path = staging_path(&task.output_path, task.id);
         for (path, expected_size) in track_paths(
             &task.output_path,
@@ -508,15 +669,16 @@ impl MultimediaModule {
             }
         }
 
+        let ffmpeg = self.ensure_ffmpeg().await?;
         match &task.post_process {
             Some(PostProcessAction::MuxVideoAudio { .. }) => {
                 let video = temp_part_path(&task.output_path, "video.part");
                 let audio = temp_part_path(&task.output_path, "audio.part");
-                run_ffmpeg_mux(&state_dir, &video, &audio, &staged_path).await?;
+                run_ffmpeg_mux(&ffmpeg, &video, &audio, &staged_path).await?;
             }
             Some(PostProcessAction::ConvertMp3 { bitrate_kbps }) => {
                 let audio = temp_part_path(&task.output_path, "audio.part");
-                run_ffmpeg_mp3(&state_dir, &audio, &staged_path, *bitrate_kbps).await?;
+                run_ffmpeg_mp3(&ffmpeg, &audio, &staged_path, *bitrate_kbps).await?;
             }
             None => return Err("La descarga no tiene una conversión pendiente.".into()),
         }
@@ -661,26 +823,58 @@ fn temp_part_path(output_path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(os)
 }
 
-fn resolve_ffmpeg_binary(state_dir: &Path) -> PathBuf {
-    let bin_name = if cfg!(target_os = "windows") {
-        "ffmpeg.exe"
-    } else {
-        "ffmpeg"
-    };
-    let local_bin = state_dir.join("bin").join(bin_name);
-    if local_bin.exists() {
-        return local_bin;
+fn ffmpeg_asset(os: &str, architecture: &str) -> Option<(&'static str, &'static str)> {
+    match (os, architecture) {
+        ("linux", "x86_64") => Some((
+            "linux-x64",
+            "e7e7fb30477f717e6f55f9180a70386c62677ef8a4d4d1a5d948f4098aa3eb99",
+        )),
+        ("linux", "aarch64") => Some((
+            "linux-arm64",
+            "6bb182d0d75d23028db82e9e4f723ca69b853d055698486e6984ddb2c06fb8ce",
+        )),
+        ("windows", "x86_64") => Some((
+            "win32-x64",
+            "04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00",
+        )),
+        ("macos", "x86_64") => Some((
+            "darwin-x64",
+            "ebdddc936f61e14049a2d4b549a412b8a40deeff6540e58a9f2a2da9e6b18894",
+        )),
+        ("macos", "aarch64") => Some((
+            "darwin-arm64",
+            "a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584",
+        )),
+        _ => None,
     }
-    PathBuf::from(bin_name)
+}
+
+async fn check_ffmpeg_binary(path: &Path) -> Result<(), String> {
+    let mut command = tokio::process::Command::new(path);
+    command
+        .arg("-version")
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let status = tokio::time::timeout(std::time::Duration::from_secs(10), command.status())
+        .await
+        .map_err(|_| "FFmpeg error: version check timed out.".to_string())?
+        .map_err(|error| format!("FFmpeg error: {error}"))?;
+    if !status.success() {
+        return Err("FFmpeg error: version check failed.".into());
+    }
+    Ok(())
 }
 
 async fn run_ffmpeg_mux(
-    state_dir: &Path,
+    ffmpeg: &Path,
     video_path: &Path,
     audio_path: &Path,
     output_path: &Path,
 ) -> Result<(), String> {
-    let ffmpeg = resolve_ffmpeg_binary(state_dir);
     let mut cmd = tokio::process::Command::new(ffmpeg);
     cmd.kill_on_drop(true)
         .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
@@ -710,12 +904,11 @@ async fn run_ffmpeg_mux(
 }
 
 async fn run_ffmpeg_mp3(
-    state_dir: &Path,
+    ffmpeg: &Path,
     audio_path: &Path,
     output_path: &Path,
     bitrate_kbps: u32,
 ) -> Result<(), String> {
-    let ffmpeg = resolve_ffmpeg_binary(state_dir);
     let mut cmd = tokio::process::Command::new(ffmpeg);
     cmd.kill_on_drop(true)
         .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
@@ -869,6 +1062,118 @@ pub fn extract_youtube_video_id(url_str: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selects_only_supported_ffmpeg_assets() {
+        for (os, arch) in [
+            ("linux", "x86_64"),
+            ("linux", "aarch64"),
+            ("windows", "x86_64"),
+            ("macos", "x86_64"),
+            ("macos", "aarch64"),
+        ] {
+            let asset = ffmpeg_asset(os, arch);
+            assert!(asset.is_some());
+            if let Some((_, checksum)) = asset {
+                assert_eq!(checksum.len(), 64);
+                assert!(checksum.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            }
+        }
+        assert!(ffmpeg_asset("windows", "aarch64").is_none());
+        assert!(ffmpeg_asset("unknown", "x86_64").is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ffmpeg_install_verifies_before_publishing_and_reuses_local_binary()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use sha2::{Digest, Sha256};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let directory = std::env::temp_dir().join(format!("rdm_ffmpeg_install_{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(directory.join("bin")).await?;
+        let module = Arc::new(MultimediaModule::new(
+            reqwest::Client::new(),
+            Arc::new(ConfigManager::from_config(
+                rdm_config::EngineConfig::default().with_state_dir(directory.clone()),
+            )),
+            Arc::new(DiskManager::new()),
+        ));
+        let binary = b"#!/bin/sh\nexit 0\n";
+        let checksum = hex::encode(Sha256::digest(binary));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let requests = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let request_count = Arc::clone(&requests);
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await?;
+                let mut request = [0; 4096];
+                let length = socket.read(&mut request).await?;
+                request_count.fetch_add(1, Ordering::Relaxed);
+                let request = String::from_utf8_lossy(&request[..length]);
+                let (status, body): (&str, &[u8]) = if request.contains("/missing/") {
+                    ("404 Not Found", b"missing")
+                } else if request.contains("/ffmpeg-") {
+                    ("200 OK", binary)
+                } else {
+                    ("200 OK", b"license and source information")
+                };
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await?;
+                socket.write_all(body).await?;
+            }
+            #[allow(unreachable_code)]
+            Ok::<(), std::io::Error>(())
+        });
+        let temporary = directory.join("bin/download.part");
+        let destination = directory.join("bin/ffmpeg");
+        let base = format!("http://{address}");
+        assert!(
+            module
+                .install_ffmpeg_binary(
+                    &format!("{base}/missing"),
+                    "test",
+                    &checksum,
+                    &temporary,
+                    &destination
+                )
+                .await
+                .is_err()
+        );
+        assert!(!tokio::fs::try_exists(&destination).await?);
+        let invalid = module
+            .install_ffmpeg_binary(&base, "test", &"0".repeat(64), &temporary, &destination)
+            .await;
+        assert!(matches!(invalid, Err(error) if error.contains("SHA-256")));
+        assert!(!tokio::fs::try_exists(&destination).await?);
+        tokio::fs::remove_file(&temporary).await?;
+        module
+            .install_ffmpeg_binary(&base, "test", &checksum, &temporary, &destination)
+            .await?;
+        assert_eq!(tokio::fs::read(&destination).await?, binary);
+        assert!(tokio::fs::try_exists(destination.with_extension("LICENSE")).await?);
+        assert!(!tokio::fs::try_exists(&temporary).await?);
+        let previous_count = requests.load(Ordering::Relaxed);
+        let (first, second) = tokio::join!(module.ensure_ffmpeg(), module.ensure_ffmpeg());
+        assert_eq!(first?, destination);
+        assert_eq!(second?, destination);
+        assert_eq!(
+            *module.subscribe_ffmpeg_status().borrow(),
+            FfmpegStatus::Ready
+        );
+        assert_eq!(requests.load(Ordering::Relaxed), previous_count);
+        server.abort();
+        tokio::fs::remove_dir_all(directory).await?;
+        Ok(())
+    }
 
     #[tokio::test]
     async fn empty_staged_output_is_rejected() -> std::io::Result<()> {

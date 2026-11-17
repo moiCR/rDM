@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "6f3b779edddd4d02d829e6a8530f70fd5fe10752",
-    "indexed_at": "2026-11-17T01:30:08Z",
+    "commit": "802b01a31ad3652d3c9a87ba0e7b471f3bda5fc9",
+    "indexed_at": "2026-11-17T01:37:39Z",
     "project": "home-moi-Proyectos-rDM",
-    "nodes": 3860,
-    "edges": 16228,
-    "original_size": 17629184,
-    "compressed_size": 3112334,
+    "nodes": 3881,
+    "edges": 16336,
+    "original_size": 17891328,
+    "compressed_size": 3133128,
     "compression_level": 3
 }

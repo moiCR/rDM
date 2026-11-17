@@ -182,3 +182,13 @@ sep = "Sep"
 oct = "Oct"
 nov = "Nov"
 dec = "Dic"
+
+[ffmpeg]
+hint = "Se descarga cuando hace falta. Se aprovecha FFmpeg si ya está instalado."
+checking = "Comprobando…"
+ready = "FFmpeg está listo."
+error = "No se pudo preparar FFmpeg. Reintenta:"
+downloading = "Descargando FFmpeg…"
+check = "Comprobar"
+download = "Descargar FFmpeg"
+preparing = "Preparando FFmpeg…"

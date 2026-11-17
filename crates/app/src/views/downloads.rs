@@ -252,6 +252,14 @@ impl DownloadsView {
         let (bottom_left_text, bottom_left_color): (SharedString, Rgba) =
             if task.status == TaskStatus::Downloading {
                 (format_remaining(task, cx), palette.text_muted)
+            } else if matches!(task.status, TaskStatus::Processing { .. })
+                && matches!(
+                    tasks_model.read(cx).ffmpeg_status(),
+                    rdm_core::engine::FfmpegStatus::Checking
+                        | rdm_core::engine::FfmpegStatus::Downloading { .. }
+                )
+            {
+                (cx.lang().get("ffmpeg.preparing"), status_color)
             } else {
                 (cx.lang().get(status_label), status_color)
             };

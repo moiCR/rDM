@@ -16,7 +16,7 @@ use crate::{
 use download::DownloadModule;
 use multimedia::MultimediaModule;
 pub(crate) use multimedia::normalize_post_process;
-pub use multimedia::{YouTubeFormat, extract_youtube_video_id};
+pub use multimedia::{FfmpegStatus, YouTubeFormat, extract_youtube_video_id};
 
 #[derive(Debug, Clone)]
 pub struct ResourceProbe {
@@ -161,6 +161,14 @@ impl Engine {
 
     pub fn disk_manager(&self) -> &Arc<DiskManager> {
         self.download.disk_manager()
+    }
+
+    pub fn subscribe_ffmpeg_status(&self) -> tokio::sync::watch::Receiver<FfmpegStatus> {
+        self.multimedia.subscribe_ffmpeg_status()
+    }
+
+    pub async fn ensure_ffmpeg(&self) -> Result<PathBuf, String> {
+        self.multimedia.ensure_ffmpeg().await
     }
 
     pub async fn save_state(&self) -> Result<(), EngineError> {

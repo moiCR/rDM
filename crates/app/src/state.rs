@@ -73,6 +73,7 @@ pub struct TasksModel {
     last_sample_at: Instant,
     download_history: Option<DownloadHistory>,
     updater_status: UpdaterStatus,
+    ffmpeg_status: rdm_core::engine::FfmpegStatus,
     active_update_progress: Option<Arc<UpdateProgress>>,
 }
 
@@ -142,6 +143,7 @@ impl TasksModel {
             last_sample_at: Instant::now(),
             download_history: None,
             updater_status: UpdaterStatus::Idle,
+            ffmpeg_status: rdm_core::engine::FfmpegStatus::Idle,
             active_update_progress: None,
         };
 
@@ -189,6 +191,7 @@ impl TasksModel {
         })
         .detach();
 
+        let mut ffmpeg_status = core.engine().subscribe_ffmpeg_status();
         cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
             let core_init = Arc::clone(&core);
             let (initial_tasks, history) = runtime
@@ -232,8 +235,10 @@ impl TasksModel {
                     .await
                     .unwrap_or_default();
 
+                let latest_ffmpeg_status = ffmpeg_status.borrow_and_update().clone();
                 let update_result = entity.update(cx, |this, cx| {
-                    let mut changed = false;
+                    let mut changed = this.ffmpeg_status != latest_ffmpeg_status;
+                    this.ffmpeg_status = latest_ffmpeg_status;
                     if let Some(progress) = &this.active_update_progress
                         && let UpdaterStatus::Downloading {
                             ref info,
@@ -271,6 +276,40 @@ impl TasksModel {
         .detach();
 
         model
+    }
+
+    pub fn ffmpeg_status(&self) -> &rdm_core::engine::FfmpegStatus {
+        &self.ffmpeg_status
+    }
+
+    pub fn prepare_ffmpeg(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.ffmpeg_status,
+            rdm_core::engine::FfmpegStatus::Checking
+                | rdm_core::engine::FfmpegStatus::Downloading { .. }
+        ) {
+            return;
+        }
+        self.ffmpeg_status = rdm_core::engine::FfmpegStatus::Checking;
+        let core = Arc::clone(&self.core);
+        let runtime = Arc::clone(&self.runtime);
+        cx.notify();
+        cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = runtime
+                .spawn(async move { core.engine().ensure_ffmpeg().await })
+                .await;
+            let status = match result {
+                Ok(Ok(_)) => rdm_core::engine::FfmpegStatus::Ready,
+                Ok(Err(error)) => rdm_core::engine::FfmpegStatus::Error(error),
+                Err(error) => rdm_core::engine::FfmpegStatus::Error(error.to_string()),
+            };
+            let _ = entity.update(cx, |this, cx| {
+                this.ffmpeg_status = status;
+                cx.notify();
+                cx.refresh_windows();
+            });
+        })
+        .detach();
     }
 
     pub fn updater_status(&self) -> &UpdaterStatus {
