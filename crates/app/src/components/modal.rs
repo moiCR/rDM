@@ -168,7 +168,9 @@ impl RenderOnce for Modal {
         let footer_element = self.footer;
         let subview_element = self.subview;
 
-        let slide_spring = SpringAnimation::new(SpringConfig::new(260.0, 26.0, 1.0)).to(self.open);
+        let slide_spring = SpringAnimation::new(SpringConfig::new(260.0, 26.0, 1.0))
+            .to(self.open)
+            .from(false);
 
         let card_id: ElementId = "modal-card".into();
         let card_spring_id = ElementId::Name(format!("{}-spring", self.id).into());

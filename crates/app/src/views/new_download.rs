@@ -29,6 +29,7 @@ struct DownloadForm {
     referer: Option<String>,
     post_process: Option<PostProcessAction>,
     advanced: bool,
+    closing: bool,
     submitting: bool,
     error: Option<String>,
     created_task: Option<Uuid>,
@@ -167,6 +168,7 @@ impl DownloadForm {
             referer: item.as_ref().and_then(|item| item.referer.clone()),
             post_process: item.and_then(|item| item.post_process),
             advanced: false,
+            closing: false,
             submitting: false,
             error: None,
             created_task: None,
@@ -176,9 +178,21 @@ impl DownloadForm {
     }
 
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.submitting {
+        if self.submitting || self.closing {
             return;
         }
+        self.closing = true;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(600))
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| this.finish_close(window, cx));
+        })
+        .detach();
+    }
+
+    fn finish_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let next = cx
             .try_global::<NewDownloadModalState>()
             .and_then(|state| state.pending.front().cloned());
@@ -194,7 +208,7 @@ impl DownloadForm {
     }
 
     fn choose_directory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.submitting || self.created_task.is_some() {
+        if self.submitting || self.created_task.is_some() || self.closing {
             return;
         }
         let prompt = cx.prompt_for_paths(PathPromptOptions {
@@ -220,7 +234,7 @@ impl DownloadForm {
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.submitting {
+        if self.submitting || self.closing {
             return;
         }
         let url_text = self.url.read(cx).value().to_string();

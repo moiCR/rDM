@@ -1,4 +1,4 @@
-use gpui::{prelude::FluentBuilder as _, *};
+use gpui::*;
 use gpui_kit::{
     base::{Disableable, Scrollbar, ScrollbarMode},
     component::{button::ButtonVariants, input::Textarea},
@@ -31,7 +31,7 @@ impl Render for DownloadForm {
             || name_error.is_some()
             || connections_error.is_some()
             || self.directory.as_os_str().is_empty();
-        let locked = self.submitting || self.created_task.is_some();
+        let locked = self.submitting || self.created_task.is_some() || self.closing;
         let viewport = window.viewport_size();
         let form = cx.entity().downgrade();
         let advanced_animation =
@@ -54,7 +54,7 @@ impl Render for DownloadForm {
             }))
             .child(
                 Modal::new("new-download-modal")
-                    .open(true)
+                    .open(!self.closing)
                     .compact()
                     .fit_content()
                     .width((viewport.width - px(32.0))
@@ -235,7 +235,7 @@ impl Render for DownloadForm {
                                 .label(if self.submitting { cx.lang().get("new_download.adding") } else if self.created_task.is_some() { cx.lang().get("common.retry") } else { cx.lang().get("new_download.download") })
                                 .primary()
 .rounded(px(24.0))
-.disabled(invalid || self.submitting)
+.disabled(invalid || self.submitting || self.closing)
                                 .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx)))),
                     ),
             )
