@@ -34,6 +34,15 @@ impl Render for DownloadForm {
         let locked = self.submitting || self.created_task.is_some();
         let viewport = window.viewport_size();
         let form = cx.entity().downgrade();
+        let advanced_animation =
+            SpringAnimation::new(SpringConfig::new(300.0, 34.0, 1.0)).to(self.advanced);
+        let advanced_height = px(96.0
+            + if name_error.is_some() { 24.0 } else { 0.0 }
+            + if connections_error.is_some() {
+                24.0
+            } else {
+                0.0
+            });
 
         div()
             .size_full()
@@ -134,16 +143,27 @@ impl Render for DownloadForm {
 .items_center()
 .gap_2()
                                                         .child(svg()
-.path(if self.advanced { "icons/chevron-down.svg" } else { "icons/chevron-right.svg" })
-.size_3())
+.path("icons/chevron-right.svg")
+.size_3()
+.text_color(muted)
+.with_spring("new-download-chevron-rotation", advanced_animation.clone(), |icon, phase| {
+    icon.with_transformation(Transformation::rotate(radians(phase.interpolate_clamped(0.0, std::f32::consts::FRAC_PI_2))))
+}))
                                                         .child(cx.lang().get("new_download.advanced")))
                                                     .on_click(cx.listener(|this, _, _, cx| { this.advanced = !this.advanced; cx.notify(); }))),
                                             )
-                                            .when(self.advanced, |content| content.child(
+                                            .child(
                                                 div()
+.overflow_hidden()
+.with_spring("new-download-advanced-height", advanced_animation, move |section, phase| {
+    section.h(phase.interpolate_clamped(px(0.0), advanced_height))
+        .opacity(phase.interpolate_clamped(0.0, 1.0))
+})
+.child(div()
 .flex()
 .flex_col()
 .gap_2()
+.line_height(px(16.0))
                                                     .child(div()
 .text_sm()
 .text_color(muted)
@@ -152,7 +172,7 @@ impl Render for DownloadForm {
                                                         .id("new-download-name")
 .aria_label(cx.lang().get("new_download.optional_name"))
                                                         .rounded(px(24.0))
-.h(px(36.0))
+.h(px(32.0))
 .w_full()
 .disabled(locked))
                                                     .children(name_error.map(|error| div()
@@ -174,7 +194,7 @@ impl Render for DownloadForm {
                                                             .id("new-download-connections")
 .aria_label(cx.lang().get("new_download.connections_label"))
                                                             .rounded(px(24.0))
-.h(px(36.0))
+.h(px(32.0))
 .text_align(TextAlign::Center)
 .disabled(locked))))
                                                     .children(connections_error.map(|error| div()

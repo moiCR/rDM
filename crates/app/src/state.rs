@@ -529,7 +529,7 @@ impl TasksModel {
             new_snapshots.push(TaskSnapshot {
                 id: task.id,
                 file_name,
-                url: task.url.clone(),
+                url: task.url(),
                 output_path: task.output_path.clone(),
                 total_size: task.total_size,
                 downloaded_bytes: downloaded,
