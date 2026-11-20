@@ -1,7 +1,7 @@
 mod calendar;
 
 use gpui::{prelude::FluentBuilder as _, *};
-use gpui_pages::Page;
+use gpui_pages::{Page, PageAnimation, PageOptions};
 use rdm_core::task::TaskStatus;
 use smallvec::SmallVec;
 
@@ -66,6 +66,10 @@ pub struct HomePage;
 impl Page for HomePage {
     fn new(_: &mut Context<Self>) -> Self {
         Self
+    }
+
+    fn options() -> PageOptions {
+        PageOptions::default().on_open(PageAnimation::SlideUpFade)
     }
 
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

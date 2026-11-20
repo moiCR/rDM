@@ -2,7 +2,7 @@ use std::{f32::consts::TAU, time::Duration};
 
 use gpui::{prelude::FluentBuilder as _, *};
 use gpui_kit::component::button::ButtonRounded;
-use gpui_pages::Page;
+use gpui_pages::{Page, PageAnimation, PageOptions};
 use rdm_core::task::TaskStatus;
 
 use crate::{
@@ -101,6 +101,10 @@ pub struct DownloadsPage;
 impl Page for DownloadsPage {
     fn new(_: &mut Context<Self>) -> Self {
         Self
+    }
+
+    fn options() -> PageOptions {
+        PageOptions::default().on_open(PageAnimation::SlideUpFade)
     }
 
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

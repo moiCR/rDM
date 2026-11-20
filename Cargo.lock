@@ -2182,12 +2182,25 @@ dependencies = [
 [[package]]
 name = "gpui-pages"
 version = "0.1.0"
-source = "git+https://github.com/moiCR/gpui-pages#c172780164a7c7a394122825b88697af811f1620"
+source = "git+https://github.com/moiCR/gpui-pages#97861d6cea6f424d7527705b21778e8e7e8dd88d"
 dependencies = [
+ "gpui-pages-codegen",
+ "gpui-pages-macros",
  "gpui-pre",
- "pages-codegen",
- "pages-macros",
 ]
+
+[[package]]
+name = "gpui-pages-codegen"
+version = "0.1.0"
+source = "git+https://github.com/moiCR/gpui-pages#97861d6cea6f424d7527705b21778e8e7e8dd88d"
+dependencies = [
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "gpui-pages-macros"
+version = "0.1.0"
+source = "git+https://github.com/moiCR/gpui-pages#97861d6cea6f424d7527705b21778e8e7e8dd88d"
 
 [[package]]
 name = "gpui-pre"
@@ -4573,19 +4586,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
 ]
-
-[[package]]
-name = "pages-codegen"
-version = "0.1.0"
-source = "git+https://github.com/moiCR/gpui-pages#c172780164a7c7a394122825b88697af811f1620"
-dependencies = [
- "syn 2.0.119",
-]
-
-[[package]]
-name = "pages-macros"
-version = "0.1.0"
-source = "git+https://github.com/moiCR/gpui-pages#c172780164a7c7a394122825b88697af811f1620"
 
 [[package]]
 name = "parking"
