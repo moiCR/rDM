@@ -7,7 +7,7 @@ use rdm_core::task::TaskStatus;
 
 use crate::{
     components::{
-        ActionTooltip, IconButton, PillButton, ProgressBar,
+        ActionTooltip, Button, IconButton, ProgressBar,
         download_card::{download_card_surface, format_bytes, task_progress_percent},
     },
     lang::ActiveLang,
@@ -213,11 +213,11 @@ impl DownloadsPage {
         let can_delete = !matches!(task.status, TaskStatus::Processing { .. });
         let retry_conversion = conversion_error.as_ref().map(|_| {
             let model = tasks_model.clone();
-            PillButton::new(
-                ("download-card-retry-conversion", task_key),
-                cx.lang().get("downloads.retry_conversion"),
-            )
-            .on_click(move |_event, _window, cx| {
+            Button::new(("download-card-retry-conversion", task_key))
+                .label(cx.lang().get("downloads.retry_conversion"))
+                .rounded(px(24.0))
+                .h(px(32.0))
+                .on_click(move |_event, _window, cx| {
                 model.update(cx, |m, cx| m.retry_conversion(task_id, cx));
             })
         });

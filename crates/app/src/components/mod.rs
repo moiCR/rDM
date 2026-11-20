@@ -8,7 +8,7 @@ pub mod select;
 pub mod separator;
 pub mod tooltip;
 
-pub use button::{Button, ButtonRounded, ButtonVariant, ButtonVariants, IconButton, PillButton};
+pub use button::{Button, ButtonRounded, ButtonVariant, ButtonVariants, IconButton};
 pub use input::{
     Input, InputContent, InputEvent, InputState, NumberInput, NumberInputEvent, NumberStep,
     StepAction, TextInput,

@@ -2,18 +2,15 @@
 use crate::linux_desktop as desktop;
 #[cfg(windows)]
 use crate::windows_desktop as desktop;
-use gpui::*;
+use gpui::{prelude::FluentBuilder as _, *};
 use gpui_kit::{
-    base::{Scrollbar, ScrollbarMode},
-    component::button::{ButtonCustomVariant, ButtonRounded},
+    base::{Disableable, Scrollbar, ScrollbarMode},
+    component::switch::Switch,
 };
 use std::{path::PathBuf, sync::Arc};
 
 use crate::{
-    components::{
-        ActionTooltip, Button, ButtonVariants, IconButton, Input, InputState, Modal, PillButton,
-        input::themed_input,
-    },
+    components::{ActionTooltip, Button, ButtonVariants, IconButton, Input, InputState, Modal},
     lang::{ActiveLang, Lang},
     layout::NavigationStyle,
     state::{CoreContext, UpdaterStatus},
@@ -137,9 +134,20 @@ impl DesktopPreference {
 }
 
 #[derive(Clone, Copy)]
+struct StepperConfig {
+    dec_id: &'static str,
+    input_id: &'static str,
+    inc_id: &'static str,
+    input_width: Pixels,
+    suffix: Option<&'static str>,
+}
+
+#[derive(Clone, Copy)]
 struct ModalPalette {
+    surface: Rgba,
+    card_surface: Rgba,
     surface_hover: Rgba,
-    control_surface: Rgba,
+    border: Rgba,
     text_color: Rgba,
     text_muted: Rgba,
     accent: Rgba,
@@ -364,18 +372,21 @@ impl RenderOnce for SettingsModal {
             }
         });
 
+        let theme = cx.theme();
         let palette = ModalPalette {
-            surface_hover: cx.theme().surface_hover(),
-            control_surface: cx
-                .theme()
+            surface: theme.surface(),
+            card_surface: theme
                 .input_background()
-                .unwrap_or_else(|| cx.theme().surface_hover()),
-            text_color: cx.theme().text_color(),
-            text_muted: cx.theme().text_muted(),
-            accent: cx.theme().accent(),
-            primary: cx.theme().primary(),
+                .unwrap_or_else(|| theme.background()),
+            surface_hover: theme.surface_hover(),
+            border: theme.border(),
+            text_color: theme.text_color(),
+            text_muted: theme.text_muted(),
+            accent: theme.accent(),
+            primary: theme.primary(),
         };
         let viewport = window.viewport_size();
+        let is_open = modal_state.open;
         let tab_index = modal_state.tab as usize;
         let scroll_handle = window
             .use_keyed_state(("settings-scroll-handle", tab_index), cx, |_, _| {
@@ -405,28 +416,42 @@ impl RenderOnce for SettingsModal {
             ),
         };
 
-        Modal::new("settings-modal")
-            .open(modal_state.open)
-            .compact()
-            .width((viewport.width - px(32.0)).clamp(px(0.0), px(620.0)))
-            .max_height((viewport.height - px(32.0)).clamp(px(0.0), px(400.0)))
-            .header(Self::render_header(modal_state.tab, palette, cx))
-            .on_close(Self::close)
+        div()
+            .id("settings-modal-root")
+            .absolute()
+            .inset_0()
+            .size_full()
+            .capture_key_down(move |event: &KeyDownEvent, window, cx| {
+                if is_open && event.keystroke.key == "escape" {
+                    Self::close(window, cx);
+                    cx.stop_propagation();
+                }
+            })
             .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
+                Modal::new("settings-modal")
+                    .open(is_open)
+                    .compact()
+                    .width((viewport.width - px(32.0)).clamp(px(0.0), px(580.0)))
+                    .max_height((viewport.height - px(32.0)).clamp(px(0.0), px(460.0)))
+                    .header(Self::render_header(modal_state.tab, palette, cx))
+                    .on_close(Self::close)
                     .child(
                         div()
-                            .id(("settings-content", tab_index))
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&scroll_handle)
-                            .pr_3()
-                            .child(content),
-                    )
-                    .child(Scrollbar::vertical(&scroll_handle).mode(ScrollbarMode::Always)),
+                            .relative()
+                            .flex_1()
+                            .min_h_0()
+                            .pt_1()
+                            .child(
+                                div()
+                                    .id(("settings-content", tab_index))
+                                    .size_full()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&scroll_handle)
+                                    .pr_2()
+                                    .child(content),
+                            )
+                            .child(Scrollbar::vertical(&scroll_handle).mode(ScrollbarMode::Always)),
+                    ),
             )
     }
 }
@@ -438,54 +463,67 @@ impl SettingsModal {
             .flex_none()
             .items_center()
             .justify_between()
-            .gap_2()
+            .gap_3()
             .child(
-                div().flex().flex_wrap().gap_1().children(
-                    [
-                        (SettingsTab::Downloads, "settings.downloads"),
-                        (SettingsTab::Appearance, "settings.appearance"),
-                        (SettingsTab::Advanced, "settings.advanced"),
-                    ]
-                    .map(|(section, label)| {
-                        let selected = section == tab;
-                        let background = if selected {
-                            palette.surface_hover.into()
-                        } else {
-                            transparent_black()
-                        };
-                        let foreground = if selected {
-                            palette.text_color
-                        } else {
-                            palette.text_muted
-                        };
-
-                        Button::new(("settings-tab", section as usize))
-                            .label(cx.lang().get(label))
-                            .toggled(selected)
-                            .rounded(px(24.0))
-                            .custom(
-                                ButtonCustomVariant::new(cx)
-                                    .color(background)
-                                    .hover(background)
-                                    .active(background)
-                                    .foreground(foreground.into()),
-                            )
-                            .on_click(move |_, window, cx| {
-                                if !selected {
-                                    cx.set_global(SettingsModalState {
-                                        open: true,
-                                        tab: section,
-                                    });
-                                    window.refresh();
-                                }
-                            })
-                    }),
-                ),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .p_1()
+                    .rounded(px(24.0))
+                    .bg(palette.card_surface)
+                    .border_1()
+                    .border_color(palette.border)
+                    .children(
+                        [
+                            (SettingsTab::Downloads, "settings.downloads"),
+                            (SettingsTab::Appearance, "settings.appearance"),
+                            (SettingsTab::Advanced, "settings.advanced"),
+                        ]
+                        .map(|(section, label)| {
+                            let selected = section == tab;
+                            div()
+                                .id(("settings-tab", section as usize))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .h(px(28.0))
+                                .px_3()
+                                .rounded(px(20.0))
+                                .text_xs()
+                                .font_weight(if selected {
+                                    FontWeight::MEDIUM
+                                } else {
+                                    FontWeight::NORMAL
+                                })
+                                .text_color(if selected {
+                                    palette.text_color
+                                } else {
+                                    palette.text_muted
+                                })
+                                .when(selected, |el| el.bg(palette.surface_hover))
+                                .cursor_pointer()
+                                .when(!selected, |el| {
+                                    el.hover(move |s| s.text_color(palette.text_color))
+                                })
+                                .on_click(move |_, window, cx| {
+                                    if !selected {
+                                        cx.set_global(SettingsModalState {
+                                            open: true,
+                                            tab: section,
+                                        });
+                                        window.refresh();
+                                    }
+                                })
+                                .child(cx.lang().get(label))
+                        }),
+                    ),
             )
             .child(
                 div().flex_none().child(
                     IconButton::new("btn-close-settings", "icons/x.svg")
-                        .rounded(px(99.0))
+                        .size(px(32.0))
+                        .rounded(px(24.0))
                         .color(palette.text_muted)
                         .hover_bg(palette.surface_hover)
                         .tooltip(cx.lang().get("common.close"))
@@ -503,20 +541,115 @@ impl SettingsModal {
         window.refresh();
     }
 
-    fn settings_input(state: &Entity<InputState>, cx: &App) -> Input {
-        themed_input(state, cx)
+    fn card(palette: ModalPalette) -> Div {
+        div()
+            .flex()
+            .flex_col()
             .rounded(px(24.0))
-            .border_color(transparent_black())
+            .bg(palette.card_surface)
+            .border_1()
+            .border_color(palette.border)
+            .px_4()
+            .py_1()
     }
 
-    fn step_button(id: &'static str, icon: &'static str, palette: ModalPalette) -> IconButton {
-        IconButton::new(id, icon)
-            .size(px(34.0))
-            .icon_size(px(14.0))
+    fn divider(palette: ModalPalette) -> Div {
+        div().h(px(1.0)).w_full().bg(palette.border).opacity(0.6)
+    }
+
+    fn row_label(title: SharedString, hint: SharedString, palette: ModalPalette) -> Div {
+        div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(palette.text_color)
+                    .child(title),
+            )
+            .child(div().text_xs().text_color(palette.text_muted).child(hint))
+    }
+
+    fn stepper(
+        config: StepperConfig,
+        state: &Entity<InputState>,
+        palette: ModalPalette,
+        on_dec: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        on_inc: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Div {
+        div()
+            .flex()
+            .items_center()
+            .flex_none()
+            .gap_1()
+            .h(px(32.0))
+            .px_1()
             .rounded(px(24.0))
-            .color(palette.text_muted)
-            .background(palette.control_surface)
-            .hover_bg(palette.surface_hover)
+            .bg(palette.surface)
+            .border_1()
+            .border_color(palette.border)
+            .child(
+                IconButton::new(config.dec_id, "icons/minus.svg")
+                    .size(px(24.0))
+                    .icon_size(px(12.0))
+                    .rounded(px(20.0))
+                    .color(palette.text_muted)
+                    .hover_bg(palette.surface_hover)
+                    .on_click(on_dec),
+            )
+            .child(
+                div().w(config.input_width).child(
+                    Input::new(state)
+                        .id(config.input_id)
+                        .appearance(false)
+                        .text_size(px(13.0))
+                        .text_color(palette.text_color)
+                        .text_align(TextAlign::Center)
+                        .h(px(24.0))
+                        .w_full(),
+                ),
+            )
+            .children(config.suffix.map(|unit| {
+                div()
+                    .text_xs()
+                    .text_color(palette.text_muted)
+                    .pr_1()
+                    .child(unit)
+            }))
+            .child(
+                IconButton::new(config.inc_id, "icons/plus.svg")
+                    .size(px(24.0))
+                    .icon_size(px(12.0))
+                    .rounded(px(20.0))
+                    .color(palette.text_muted)
+                    .hover_bg(palette.surface_hover)
+                    .on_click(on_inc),
+            )
+    }
+
+    fn segmented_track(palette: ModalPalette) -> Div {
+        div()
+            .flex()
+            .items_center()
+            .gap_0p5()
+            .p_0p5()
+            .rounded(px(24.0))
+            .bg(palette.surface)
+            .border_1()
+            .border_color(palette.border)
+    }
+
+    fn action_button(
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        primary: bool,
+    ) -> Button {
+        let button = Button::new(id).label(label).rounded(px(24.0)).h(px(30.0));
+        if primary { button.primary() } else { button }
     }
 
     fn render_downloads(
@@ -528,294 +661,177 @@ impl SettingsModal {
         div()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap_3()
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .flex_wrap()
-                    .gap_3()
-                    .py_1()
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex_basis(px(172.0))
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_size(px(14.0))
-                                    .text_color(palette.text_color)
-                                    .child(cx.lang().get("settings.speed_limit")),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(palette.text_muted)
-                                    .child(cx.lang().get("settings.speed_limit_hint")),
-                            ),
-                    )
+                Self::card(palette)
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .flex_none()
-                            .gap_1()
-                            .child(
-                                Self::step_button("btn-speed-dec", "icons/minus.svg", palette)
-                                    .on_click({
-                                        let speed = inputs.speed.clone();
-                                        move |_, window, cx| {
-                                            speed.update(cx, |state, cx| {
-                                                let current = state
-                                                    .value()
-                                                    .trim()
-                                                    .parse::<f64>()
-                                                    .unwrap_or(0.0);
-                                                let next = (current - 1.0).max(0.0);
-                                                state.set_value(format!("{next:.1}"), window, cx);
-                                            });
-                                            window.refresh();
-                                        }
-                                    }),
-                            )
-                            .child(
-                                div().w(px(72.0)).child(
-                                    Self::settings_input(&inputs.speed, cx)
-                                        .id("input-speed-limit")
-                                        .text_align(TextAlign::Center)
-                                        .h(px(36.0))
-                                        .w_full(),
-                                ),
-                            )
-                            .child(
-                                Self::step_button("btn-speed-inc", "icons/plus.svg", palette)
-                                    .on_click({
-                                        let speed = inputs.speed.clone();
-                                        move |_, window, cx| {
-                                            speed.update(cx, |state, cx| {
-                                                let current = state
-                                                    .value()
-                                                    .trim()
-                                                    .parse::<f64>()
-                                                    .unwrap_or(0.0);
-                                                let next = (current + 1.0).min(1000.0);
-                                                state.set_value(format!("{next:.1}"), window, cx);
-                                            });
-                                            window.refresh();
-                                        }
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(palette.text_muted)
-                                    .child("MB/s"),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .flex_wrap()
-                    .gap_3()
-                    .py_1()
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex_basis(px(172.0))
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_size(px(14.0))
-                                    .text_color(palette.text_color)
-                                    .child(cx.lang().get("settings.connections")),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(palette.text_muted)
-                                    .child(cx.lang().get("settings.connections_hint")),
-                            ),
+                            .justify_between()
+                            .gap_4()
+                            .py_2p5()
+                            .child(Self::row_label(
+                                cx.lang().get("settings.speed_limit"),
+                                cx.lang().get("settings.speed_limit_hint"),
+                                palette,
+                            ))
+                            .child(Self::stepper(
+                                StepperConfig {
+                                    dec_id: "btn-speed-dec",
+                                    input_id: "input-speed-limit",
+                                    inc_id: "btn-speed-inc",
+                                    input_width: px(44.0),
+                                    suffix: Some("MB/s"),
+                                },
+                                &inputs.speed,
+                                palette,
+                                {
+                                    let speed = inputs.speed.clone();
+                                    move |_, window, cx| {
+                                        speed.update(cx, |state, cx| {
+                                            let current =
+                                                state.value().trim().parse::<f64>().unwrap_or(0.0);
+                                            let next = (current - 1.0).max(0.0);
+                                            state.set_value(format!("{next:.1}"), window, cx);
+                                        });
+                                        window.refresh();
+                                    }
+                                },
+                                {
+                                    let speed = inputs.speed.clone();
+                                    move |_, window, cx| {
+                                        speed.update(cx, |state, cx| {
+                                            let current =
+                                                state.value().trim().parse::<f64>().unwrap_or(0.0);
+                                            let next = (current + 1.0).min(1000.0);
+                                            state.set_value(format!("{next:.1}"), window, cx);
+                                        });
+                                        window.refresh();
+                                    }
+                                },
+                            )),
                     )
+                    .child(Self::divider(palette))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .flex_none()
-                            .gap_1()
-                            .child(
-                                Self::step_button("btn-conn-dec", "icons/minus.svg", palette)
-                                    .on_click({
-                                        let conn = inputs.connections.clone();
-                                        move |_, window, cx| {
-                                            conn.update(cx, |state, cx| {
-                                                let current = state
-                                                    .value()
-                                                    .trim()
-                                                    .parse::<usize>()
-                                                    .unwrap_or(8);
-                                                let next = current.saturating_sub(1).clamp(1, 32);
-                                                state.set_value(next.to_string(), window, cx);
-                                            });
-                                            window.refresh();
-                                        }
-                                    }),
-                            )
-                            .child(
-                                div().w(px(54.0)).child(
-                                    Self::settings_input(&inputs.connections, cx)
-                                        .id("input-connections")
-                                        .text_align(TextAlign::Center)
-                                        .h(px(36.0))
-                                        .w_full(),
-                                ),
-                            )
-                            .child(
-                                Self::step_button("btn-conn-inc", "icons/plus.svg", palette)
-                                    .on_click({
-                                        let conn = inputs.connections.clone();
-                                        move |_, window, cx| {
-                                            conn.update(cx, |state, cx| {
-                                                let current = state
-                                                    .value()
-                                                    .trim()
-                                                    .parse::<usize>()
-                                                    .unwrap_or(8);
-                                                let next = (current + 1).clamp(1, 32);
-                                                state.set_value(next.to_string(), window, cx);
-                                            });
-                                            window.refresh();
-                                        }
-                                    }),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .flex_wrap()
-                    .gap_3()
-                    .py_1()
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex_basis(px(172.0))
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_size(px(14.0))
-                                    .text_color(palette.text_color)
-                                    .child(cx.lang().get("settings.concurrent_downloads")),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(palette.text_muted)
-                                    .child(cx.lang().get("settings.concurrent_downloads_hint")),
-                            ),
+                            .justify_between()
+                            .gap_4()
+                            .py_2p5()
+                            .child(Self::row_label(
+                                cx.lang().get("settings.connections"),
+                                cx.lang().get("settings.connections_hint"),
+                                palette,
+                            ))
+                            .child(Self::stepper(
+                                StepperConfig {
+                                    dec_id: "btn-conn-dec",
+                                    input_id: "input-connections",
+                                    inc_id: "btn-conn-inc",
+                                    input_width: px(38.0),
+                                    suffix: None,
+                                },
+                                &inputs.connections,
+                                palette,
+                                {
+                                    let conn = inputs.connections.clone();
+                                    move |_, window, cx| {
+                                        conn.update(cx, |state, cx| {
+                                            let current =
+                                                state.value().trim().parse::<usize>().unwrap_or(8);
+                                            let next = current.saturating_sub(1).clamp(1, 32);
+                                            state.set_value(next.to_string(), window, cx);
+                                        });
+                                        window.refresh();
+                                    }
+                                },
+                                {
+                                    let conn = inputs.connections.clone();
+                                    move |_, window, cx| {
+                                        conn.update(cx, |state, cx| {
+                                            let current =
+                                                state.value().trim().parse::<usize>().unwrap_or(8);
+                                            let next = (current + 1).clamp(1, 32);
+                                            state.set_value(next.to_string(), window, cx);
+                                        });
+                                        window.refresh();
+                                    }
+                                },
+                            )),
                     )
+                    .child(Self::divider(palette))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .flex_none()
-                            .gap_1()
-                            .child(
-                                Self::step_button("btn-concurrent-dec", "icons/minus.svg", palette)
-                                    .on_click({
-                                        let conc = inputs.max_concurrent.clone();
-                                        move |_, window, cx| {
-                                            conc.update(cx, |state, cx| {
-                                                let current = state
-                                                    .value()
-                                                    .trim()
-                                                    .parse::<usize>()
-                                                    .unwrap_or(3);
-                                                let next = current.saturating_sub(1).clamp(1, 16);
-                                                state.set_value(next.to_string(), window, cx);
-                                            });
-                                            window.refresh();
-                                        }
-                                    }),
-                            )
-                            .child(
-                                div().w(px(54.0)).child(
-                                    Self::settings_input(&inputs.max_concurrent, cx)
-                                        .id("input-max-concurrent")
-                                        .text_align(TextAlign::Center)
-                                        .h(px(36.0))
-                                        .w_full(),
-                                ),
-                            )
-                            .child(
-                                Self::step_button("btn-concurrent-inc", "icons/plus.svg", palette)
-                                    .on_click({
-                                        let conc = inputs.max_concurrent.clone();
-                                        move |_, window, cx| {
-                                            conc.update(cx, |state, cx| {
-                                                let current = state
-                                                    .value()
-                                                    .trim()
-                                                    .parse::<usize>()
-                                                    .unwrap_or(3);
-                                                let next = (current + 1).clamp(1, 16);
-                                                state.set_value(next.to_string(), window, cx);
-                                            });
-                                            window.refresh();
-                                        }
-                                    }),
-                            ),
+                            .justify_between()
+                            .gap_4()
+                            .py_2p5()
+                            .child(Self::row_label(
+                                cx.lang().get("settings.concurrent_downloads"),
+                                cx.lang().get("settings.concurrent_downloads_hint"),
+                                palette,
+                            ))
+                            .child(Self::stepper(
+                                StepperConfig {
+                                    dec_id: "btn-concurrent-dec",
+                                    input_id: "input-max-concurrent",
+                                    inc_id: "btn-concurrent-inc",
+                                    input_width: px(38.0),
+                                    suffix: None,
+                                },
+                                &inputs.max_concurrent,
+                                palette,
+                                {
+                                    let conc = inputs.max_concurrent.clone();
+                                    move |_, window, cx| {
+                                        conc.update(cx, |state, cx| {
+                                            let current =
+                                                state.value().trim().parse::<usize>().unwrap_or(3);
+                                            let next = current.saturating_sub(1).clamp(1, 16);
+                                            state.set_value(next.to_string(), window, cx);
+                                        });
+                                        window.refresh();
+                                    }
+                                },
+                                {
+                                    let conc = inputs.max_concurrent.clone();
+                                    move |_, window, cx| {
+                                        conc.update(cx, |state, cx| {
+                                            let current =
+                                                state.value().trim().parse::<usize>().unwrap_or(3);
+                                            let next = (current + 1).clamp(1, 16);
+                                            state.set_value(next.to_string(), window, cx);
+                                        });
+                                        window.refresh();
+                                    }
+                                },
+                            )),
                     ),
             )
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .py_1()
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_size(px(14.0))
-                                    .text_color(palette.text_color)
-                                    .child(cx.lang().get("settings.directory")),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(palette.text_muted)
-                                    .child(cx.lang().get("settings.directory_hint")),
-                            ),
-                    )
+                Self::card(palette)
+                    .py_3()
+                    .gap_2p5()
+                    .child(Self::row_label(
+                        cx.lang().get("settings.directory"),
+                        cx.lang().get("settings.directory_hint"),
+                        palette,
+                    ))
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_2()
+                            .h(px(34.0))
+                            .pl_3()
+                            .pr_1()
+                            .rounded(px(24.0))
+                            .bg(palette.surface)
+                            .border_1()
+                            .border_color(palette.border)
                             .child(
                                 div()
                                     .flex_1()
@@ -827,10 +843,13 @@ impl SettingsModal {
                                         }
                                     })
                                     .child(
-                                        Self::settings_input(&inputs.download_dir, cx)
+                                        Input::new(&inputs.download_dir)
                                             .id("input-download-dir")
+                                            .appearance(false)
                                             .cleanable(false)
-                                            .h(px(36.0))
+                                            .text_size(px(13.0))
+                                            .text_color(palette.text_color)
+                                            .h(px(26.0))
                                             .w_full(),
                                     ),
                             )
@@ -838,11 +857,12 @@ impl SettingsModal {
                                 let dir_entity = inputs.download_dir.clone();
                                 let cfg_dir = config_manager.clone();
                                 IconButton::new("btn-browse-download-dir", "icons/folder-open.svg")
-                                    .size(px(36.0))
-                                    .icon_size(px(16.0))
-                                    .rounded(px(24.0))
+                                    .size(px(26.0))
+                                    .icon_size(px(14.0))
+                                    .rounded(px(20.0))
                                     .hover_bg(palette.surface_hover)
                                     .color(palette.text_muted)
+                                    .tooltip(cx.lang().get("new_download.choose_directory"))
                                     .on_click(move |_event, window, cx| {
                                         let prompt = cx.prompt_for_paths(PathPromptOptions {
                                             files: false,
@@ -887,69 +907,109 @@ impl SettingsModal {
         auto_check: bool,
         cx: &App,
     ) -> Div {
-        let content = div()
-            .flex()
-            .flex_col()
-            .gap_2()
+        let user_agent_card = Self::card(palette)
+            .py_3()
+            .gap_2p5()
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_sm()
+                            .text_color(palette.text_color)
+                            .child(cx.lang().get("settings.user_agent")),
+                    )
+                    .child({
+                        let ua_entity = inputs.user_agent.clone();
+                        let cfg_reset = config_manager.clone();
+                        div()
+                            .id("btn-reset-user-agent")
+                            .cursor_pointer()
+                            .text_xs()
+                            .text_color(palette.accent)
+                            .hover(move |s| s.underline())
+                            .on_click(move |_event, window, cx| {
+                                let default_ua = rdm_config::get_user_agent();
+                                let _ = cfg_reset.update_config(|c| {
+                                    c.user_agent = default_ua.clone();
+                                });
+                                ua_entity.update(cx, |s, cx| {
+                                    s.set_value(default_ua, window, cx);
+                                });
+                                window.refresh();
+                            })
+                            .child(cx.lang().get("settings.restore_default"))
+                    }),
+            )
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap_1()
-                    .py_1()
+                    .items_center()
+                    .h(px(34.0))
+                    .px_3()
+                    .rounded(px(24.0))
+                    .bg(palette.surface)
+                    .border_1()
+                    .border_color(palette.border)
+                    .on_mouse_down(MouseButton::Left, {
+                        let ua = inputs.user_agent.clone();
+                        move |_, window, cx| {
+                            ua.update(cx, |s, cx| s.focus(window, cx));
+                        }
+                    })
                     .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_size(px(14.0))
-                                    .text_color(palette.text_color)
-                                    .child(cx.lang().get("settings.user_agent")),
-                            )
-                            .child({
-                                let ua_entity = inputs.user_agent.clone();
-                                let cfg_reset = config_manager.clone();
-                                div()
-                                    .id("btn-reset-user-agent")
-                                    .cursor_pointer()
-                                    .text_xs()
-                                    .text_color(palette.accent)
-                                    .hover(move |s| s.underline())
-                                    .on_click(move |_event, window, cx| {
-                                        let default_ua = rdm_config::get_user_agent();
-                                        let _ = cfg_reset.update_config(|c| {
-                                            c.user_agent = default_ua.clone();
-                                        });
-                                        ua_entity.update(cx, |s, cx| {
-                                            s.set_value(default_ua, window, cx);
-                                        });
-                                        window.refresh();
-                                    })
-                                    .child(cx.lang().get("settings.restore_default"))
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .on_mouse_down(MouseButton::Left, {
-                                let ua = inputs.user_agent.clone();
-                                move |_, window, cx| {
-                                    ua.update(cx, |s, cx| s.focus(window, cx));
-                                }
-                            })
-                            .child(
-                                Self::settings_input(&inputs.user_agent, cx)
-                                    .id("input-user-agent")
-                                    .cleanable(true)
-                                    .h(px(36.0))
-                                    .w_full(),
-                            ),
+                        Input::new(&inputs.user_agent)
+                            .id("input-user-agent")
+                            .appearance(false)
+                            .cleanable(true)
+                            .text_size(px(13.0))
+                            .text_color(palette.text_color)
+                            .h(px(26.0))
+                            .w_full(),
                     ),
-            )
+            );
+
+        let system_card = {
+            let cfg_auto_check = config_manager.clone();
+            let card = Self::card(palette).child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_4()
+                    .py_2p5()
+                    .child(Self::row_label(
+                        cx.lang().get("settings.auto_updates"),
+                        cx.lang().get("settings.auto_updates_hint"),
+                        palette,
+                    ))
+                    .child(
+                        Switch::new("btn-toggle-auto-check")
+                            .checked(auto_check)
+                            .accessibility_label(cx.lang().get("settings.auto_updates"))
+                            .on_change(move |checked, window, _cx| {
+                                let _ = cfg_auto_check.update_ui_config(|u| {
+                                    u.auto_check_updates = *checked;
+                                });
+                                window.refresh();
+                            }),
+                    ),
+            );
+
+            #[cfg(any(windows, target_os = "linux"))]
+            let card = card
+                .child(Self::divider(palette))
+                .child(Self::render_desktop_preferences(palette, cx));
+
+            card
+        };
+
+        let tools_card = Self::card(palette)
             .child({
                 use rdm_core::engine::FfmpegStatus;
                 let status = cx.tasks_model().read(cx).ffmpeg_status();
@@ -990,32 +1050,12 @@ impl SettingsModal {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .gap_3()
-                    .py_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(palette.text_color)
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child("FFmpeg"),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(palette.text_muted)
-                                    .child(message),
-                            ),
-                    )
+                    .gap_4()
+                    .py_2p5()
+                    .child(Self::row_label("FFmpeg".into(), message, palette))
                     .child({
                         let tasks_model = cx.tasks_model().clone();
-                        let button = PillButton::new(
+                        Self::action_button(
                             "settings-ffmpeg-download",
                             cx.lang().get(if busy {
                                 "ffmpeg.checking"
@@ -1024,146 +1064,89 @@ impl SettingsModal {
                             } else {
                                 "ffmpeg.download"
                             }),
-                        );
-                        if busy {
-                            button
-                        } else {
-                            button.on_click(move |_, window, cx| {
-                                tasks_model.update(cx, |model, cx| model.prepare_ffmpeg(cx));
-                                window.refresh();
-                            })
-                        }
+                            false,
+                        )
+                        .disabled(busy)
+                        .on_click(move |_, window, cx| {
+                            tasks_model.update(cx, |model, cx| model.prepare_ffmpeg(cx));
+                            window.refresh();
+                        })
                     })
             })
+            .child(Self::divider(palette))
             .child({
                 let updater_status = cx.tasks_model().read(cx).updater_status().clone();
+                let status_text: SharedString = match &updater_status {
+                    UpdaterStatus::Idle => cx.lang().get("updater.idle"),
+                    UpdaterStatus::Checking => cx.lang().get("updater.checking"),
+                    UpdaterStatus::UpToDate => cx.lang().get("updater.up_to_date"),
+                    UpdaterStatus::Available(info) => cx
+                        .lang()
+                        .get_with("updater.available", &[("version", &info.version)]),
+                    UpdaterStatus::Downloading {
+                        downloaded_bytes,
+                        total_bytes,
+                        ..
+                    } => {
+                        if *total_bytes > 0 {
+                            cx.lang().get_with(
+                                "updater.progress",
+                                &[
+                                    (
+                                        "downloaded",
+                                        &format!("{:.1}", *downloaded_bytes as f64 / 1048576.0),
+                                    ),
+                                    ("total", &format!("{:.1}", *total_bytes as f64 / 1048576.0)),
+                                    (
+                                        "percent",
+                                        &format!(
+                                            "{:.0}",
+                                            (*downloaded_bytes as f64 / *total_bytes as f64)
+                                                * 100.0
+                                        ),
+                                    ),
+                                ],
+                            )
+                        } else {
+                            cx.lang().get_with(
+                                "updater.progress_unknown",
+                                &[(
+                                    "downloaded",
+                                    &format!("{:.1}", *downloaded_bytes as f64 / 1048576.0),
+                                )],
+                            )
+                        }
+                    }
+                    UpdaterStatus::Downloaded { package, error, .. } => error
+                        .as_ref()
+                        .map(|error| cx.lang().get(error))
+                        .unwrap_or_else(|| {
+                            if *package == rdm_core::updater::PackageKind::AppImage {
+                                cx.lang().get("updater.appimage_downloaded")
+                            } else {
+                                cx.lang().get("updater.package_downloaded")
+                            }
+                        }),
+                    UpdaterStatus::Installing => cx.lang().get("updater.installing"),
+                    UpdaterStatus::Error(e) => cx
+                        .lang()
+                        .get_with("updater.error", &[("error", &cx.lang().get(e))]),
+                };
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
                     .flex_wrap()
                     .gap_3()
-                    .py_1()
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex_basis(px(175.0))
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_size(px(14.0))
-                                    .text_color(palette.text_color)
-                                    .child(cx.lang().get_with(
-                                        "updater.title",
-                                        &[("version", rdm_core::updater::current_version())],
-                                    )),
-                            )
-                            .child(
-                                div().text_xs().text_color(palette.text_muted).child(
-                                    match &updater_status {
-                                        UpdaterStatus::Idle => {
-                                            cx.lang().get("updater.idle").to_string()
-                                        }
-                                        UpdaterStatus::Checking => {
-                                            cx.lang().get("updater.checking").to_string()
-                                        }
-                                        UpdaterStatus::UpToDate => {
-                                            cx.lang().get("updater.up_to_date").to_string()
-                                        }
-                                        UpdaterStatus::Available(info) => cx
-                                            .lang()
-                                            .get_with(
-                                                "updater.available",
-                                                &[("version", &info.version)],
-                                            )
-                                            .to_string(),
-                                        UpdaterStatus::Downloading {
-                                            downloaded_bytes,
-                                            total_bytes,
-                                            ..
-                                        } => {
-                                            if *total_bytes > 0 {
-                                                cx.lang()
-                                                    .get_with(
-                                                        "updater.progress",
-                                                        &[
-                                                            (
-                                                                "downloaded",
-                                                                &format!(
-                                                                    "{:.1}",
-                                                                    *downloaded_bytes as f64
-                                                                        / 1048576.0
-                                                                ),
-                                                            ),
-                                                            (
-                                                                "total",
-                                                                &format!(
-                                                                    "{:.1}",
-                                                                    *total_bytes as f64 / 1048576.0
-                                                                ),
-                                                            ),
-                                                            (
-                                                                "percent",
-                                                                &format!(
-                                                                    "{:.0}",
-                                                                    (*downloaded_bytes as f64
-                                                                        / *total_bytes as f64)
-                                                                        * 100.0
-                                                                ),
-                                                            ),
-                                                        ],
-                                                    )
-                                                    .to_string()
-                                            } else {
-                                                cx.lang()
-                                                    .get_with(
-                                                        "updater.progress_unknown",
-                                                        &[(
-                                                            "downloaded",
-                                                            &format!(
-                                                                "{:.1}",
-                                                                *downloaded_bytes as f64
-                                                                    / 1048576.0
-                                                            ),
-                                                        )],
-                                                    )
-                                                    .to_string()
-                                            }
-                                        }
-                                        UpdaterStatus::Downloaded { package, error, .. } => error
-                                            .as_ref()
-                                            .map(|error| cx.lang().get(error).to_string())
-                                            .unwrap_or_else(|| {
-                                                if *package
-                                                    == rdm_core::updater::PackageKind::AppImage
-                                                {
-                                                    cx.lang()
-                                                        .get("updater.appimage_downloaded")
-                                                        .into()
-                                                } else {
-                                                    cx.lang()
-                                                        .get("updater.package_downloaded")
-                                                        .into()
-                                                }
-                                            }),
-                                        UpdaterStatus::Installing => {
-                                            cx.lang().get("updater.installing").to_string()
-                                        }
-                                        UpdaterStatus::Error(e) => cx
-                                            .lang()
-                                            .get_with(
-                                                "updater.error",
-                                                &[("error", &cx.lang().get(e))],
-                                            )
-                                            .to_string(),
-                                    },
-                                ),
-                            ),
-                    )
+                    .py_2p5()
+                    .child(Self::row_label(
+                        cx.lang().get_with(
+                            "updater.title",
+                            &[("version", rdm_core::updater::current_version())],
+                        ),
+                        status_text,
+                        palette,
+                    ))
                     .child(
                         div()
                             .flex()
@@ -1179,14 +1162,14 @@ impl SettingsModal {
                                         cx.lang().get("updater.install")
                                     };
                                     let tasks_model = cx.tasks_model().clone();
-                                    PillButton::new("btn-install-update", label)
-                                        .selected(true)
-                                        .on_click(move |_, window, cx| {
+                                    Self::action_button("btn-install-update", label, true).on_click(
+                                        move |_, window, cx| {
                                             tasks_model.update(cx, |model, cx| {
                                                 model.install_update(cx);
                                             });
                                             window.refresh();
-                                        })
+                                        },
+                                    )
                                 }
                                 UpdaterStatus::Downloaded { package, .. } => {
                                     let tasks_model = cx.tasks_model().clone();
@@ -1199,7 +1182,7 @@ impl SettingsModal {
                                     } else {
                                         cx.lang().get("updater.view_file")
                                     };
-                                    PillButton::new("btn-open-update", label).on_click(
+                                    Self::action_button("btn-open-update", label, false).on_click(
                                         move |_, _, cx| {
                                             tasks_model.update(cx, |model, cx| {
                                                 model.open_downloaded_update(cx)
@@ -1209,18 +1192,19 @@ impl SettingsModal {
                                 }
                                 UpdaterStatus::Checking
                                 | UpdaterStatus::Downloading { .. }
-                                | UpdaterStatus::Installing => PillButton::new(
+                                | UpdaterStatus::Installing => Self::action_button(
                                     "btn-checking-update",
                                     cx.lang().get("updater.busy"),
+                                    false,
                                 )
-                                .selected(false),
+                                .disabled(true),
                                 _ => {
                                     let tasks_model = cx.tasks_model().clone();
-                                    PillButton::new(
+                                    Self::action_button(
                                         "btn-check-updates",
                                         cx.lang().get("updater.check"),
+                                        false,
                                     )
-                                    .selected(false)
                                     .on_click(
                                         move |_, window, cx| {
                                             tasks_model.update(cx, |model, cx| {
@@ -1235,9 +1219,10 @@ impl SettingsModal {
                                 if let UpdaterStatus::Downloaded { path, .. } = &updater_status {
                                     let path = path.clone();
                                     Some(
-                                        PillButton::new(
+                                        Self::action_button(
                                             "btn-update-folder",
                                             cx.lang().get("updater.folder"),
+                                            false,
                                         )
                                         .on_click(move |_, _, cx| cx.reveal_path(&path)),
                                     )
@@ -1249,9 +1234,10 @@ impl SettingsModal {
                                 matches!(&updater_status, UpdaterStatus::Downloaded { .. }).then(
                                     || {
                                         let tasks_model = cx.tasks_model().clone();
-                                        PillButton::new(
+                                        Self::action_button(
                                             "btn-update-recheck",
                                             cx.lang().get("updater.check"),
+                                            false,
                                         )
                                         .on_click(
                                             move |_, _, cx| {
@@ -1264,62 +1250,15 @@ impl SettingsModal {
                                 ),
                             ),
                     )
-            })
-            .child({
-                let cfg_auto_check = config_manager.clone();
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .flex_wrap()
-                    .gap_3()
-                    .py_1()
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex_basis(px(175.0))
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_size(px(14.0))
-                                    .text_color(palette.text_color)
-                                    .child(cx.lang().get("settings.auto_updates")),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(palette.text_muted)
-                                    .child(cx.lang().get("settings.auto_updates_hint")),
-                            ),
-                    )
-                    .child(
-                        PillButton::new(
-                            "btn-toggle-auto-check",
-                            if auto_check {
-                                cx.lang().get("common.enabled")
-                            } else {
-                                cx.lang().get("common.disabled")
-                            },
-                        )
-                        .selected(auto_check)
-                        .on_click(move |_, window, _cx| {
-                            let next = !auto_check;
-                            let _ = cfg_auto_check.update_ui_config(|u| {
-                                u.auto_check_updates = next;
-                            });
-                            window.refresh();
-                        }),
-                    )
             });
 
-        #[cfg(any(windows, target_os = "linux"))]
-        let content = content.child(Self::render_desktop_preferences(palette, cx));
-
-        content
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(user_agent_card)
+            .child(system_card)
+            .child(tools_card)
     }
 
     #[cfg(any(windows, target_os = "linux"))]
@@ -1346,77 +1285,59 @@ impl SettingsModal {
                 cx.lang().get("settings.close_to_tray_hint"),
             ),
         ];
-        let content =
-            div().flex().flex_col().gap_2().children(rows.map(
-                |(setting, preference, id, title, description)| {
-                    let label = match (preference.value, preference.pending, setting) {
-                        (_, true, _) => cx.lang().get("common.processing"),
-                        (Some(true), false, DesktopPreference::Startup) => {
-                            cx.lang().get("common.registered")
-                        }
-                        (Some(true), false, DesktopPreference::CloseToTray) => {
-                            cx.lang().get("common.enabled")
-                        }
-                        (Some(false), false, _) => cx.lang().get("common.disabled"),
-                        (None, false, _) => cx.lang().get("common.retry"),
-                    };
-                    let mut button =
-                        PillButton::new(id, label).selected(preference.value == Some(true));
-                    if !preference.pending {
-                        button = button.on_click(move |_, _, cx| setting.change(cx));
-                    }
+
+        let mut content = div().flex().flex_col();
+        for (index, (setting, preference, id, title, description)) in rows.into_iter().enumerate() {
+            if index > 0 {
+                content = content.child(Self::divider(palette));
+            }
+            let control: AnyElement = match (preference.value, preference.pending) {
+                (Some(checked), pending) => Switch::new(id)
+                    .checked(checked)
+                    .disabled(pending)
+                    .accessibility_label(title.clone())
+                    .on_change(move |_, _, cx| setting.change(cx))
+                    .into_any_element(),
+                (None, true) => Self::action_button(id, cx.lang().get("common.processing"), false)
+                    .disabled(true)
+                    .into_any_element(),
+                (None, false) => Self::action_button(id, cx.lang().get("common.retry"), false)
+                    .on_click(move |_, _, cx| setting.change(cx))
+                    .into_any_element(),
+            };
+            content =
+                content.child(
                     div()
                         .flex()
                         .flex_col()
                         .gap_1()
-                        .py_1()
+                        .py_2p5()
                         .child(
                             div()
                                 .flex()
                                 .items_center()
                                 .justify_between()
-                                .flex_wrap()
-                                .gap_3()
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .flex_basis(px(175.0))
-                                        .min_w_0()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_1()
-                                        .child(
-                                            div()
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .text_size(px(14.0))
-                                                .text_color(palette.text_color)
-                                                .child(title),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(palette.text_muted)
-                                                .child(description),
-                                        ),
-                                )
-                                .child(button),
+                                .gap_4()
+                                .child(Self::row_label(title, description, palette))
+                                .child(control),
                         )
                         .children(preference.error.as_ref().map(|error| {
                             div().text_xs().text_color(error_color).child(error.clone())
-                        }))
-                },
-            ));
+                        })),
+                );
+        }
+
         #[cfg(target_os = "linux")]
-        let content = if !crate::linux_desktop::available(cx) {
-            content.child(
+        if !crate::linux_desktop::available(cx) {
+            content = content.child(
                 div()
+                    .pb_2()
                     .text_xs()
                     .text_color(palette.text_muted)
                     .child(cx.lang().get("settings.tray_unavailable")),
-            )
-        } else {
-            content
-        };
+            );
+        }
+
         content
     }
 
@@ -1429,33 +1350,111 @@ impl SettingsModal {
         config: Arc<rdm_config::ConfigManager>,
         cx: &App,
     ) -> Div {
-        let row1 = ["#9e9e9e", "#1e1e1e", "#ef4444", "#f97316", "#10b981"];
-        let row2 = ["", "#4422ff", "#9900ff", "#ff0099", "#e07070"];
+        let accents = [
+            "", "#9e9e9e", "#1e1e1e", "#ef4444", "#f97316", "#10b981", "#4422ff", "#9900ff",
+            "#ff0099", "#e07070",
+        ];
 
         div()
             .flex()
             .flex_col()
-            .gap_3p5()
-            .child(Self::render_language(
-                state.clone(),
-                config.clone(),
-                palette,
-                cx,
-            ))
+            .gap_3()
             .child(
-                div()
-                    .flex()
-                    .flex_col()
+                Self::card(palette)
+                    .child(Self::render_language(
+                        state.clone(),
+                        config.clone(),
+                        palette,
+                        cx,
+                    ))
+                    .child(Self::divider(palette))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_4()
+                            .py_2p5()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(palette.text_color)
+                                    .child(cx.lang().get("settings.navigation")),
+                            )
+                            .child(
+                                Self::segmented_track(palette)
+                                    .child(Self::navigation_button(
+                                        NavigationStyle::Normal,
+                                        cx.lang().get("settings.normal"),
+                                        navigation_style,
+                                        palette,
+                                        config.clone(),
+                                    ))
+                                    .child(Self::navigation_button(
+                                        NavigationStyle::Dock,
+                                        cx.lang().get("settings.dock"),
+                                        navigation_style,
+                                        palette,
+                                        config.clone(),
+                                    )),
+                            ),
+                    )
+                    .child(Self::divider(palette))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_4()
+                            .py_2p5()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(palette.text_color)
+                                    .child(cx.lang().get("settings.theme")),
+                            )
+                            .child(
+                                Self::segmented_track(palette)
+                                    .child(Self::theme_icon_button(
+                                        "dark",
+                                        "icons/moon.svg",
+                                        current_theme,
+                                        state.clone(),
+                                        palette,
+                                        config.clone(),
+                                    ))
+                                    .child(Self::theme_icon_button(
+                                        "light",
+                                        "icons/sun.svg",
+                                        current_theme,
+                                        state.clone(),
+                                        palette,
+                                        config.clone(),
+                                    )),
+                            ),
+                    ),
+            )
+            .child(
+                Self::card(palette)
+                    .py_3()
                     .gap_2p5()
-                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(palette.text_color)
+                            .child(cx.lang().get("settings.theme_color")),
+                    )
                     .child(
                         div()
                             .flex()
                             .flex_wrap()
                             .items_center()
-                            .justify_center()
-                            .gap_2p5()
-                            .children(row1.iter().map(|&hex| {
+                            .justify_between()
+                            .gap_2()
+                            .children(accents.iter().map(|&hex| {
                                 Self::accent_swatch(
                                     hex,
                                     current_accent,
@@ -1464,90 +1463,6 @@ impl SettingsModal {
                                     config.clone(),
                                 )
                             })),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .justify_center()
-                            .gap_2p5()
-                            .children(row2.iter().map(|&hex| {
-                                Self::accent_swatch(
-                                    hex,
-                                    current_accent,
-                                    palette,
-                                    state.clone(),
-                                    config.clone(),
-                                )
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .pt_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(palette.text_color)
-                            .child(cx.lang().get("settings.navigation")),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(Self::navigation_button(
-                                NavigationStyle::Normal,
-                                cx.lang().get("settings.normal"),
-                                navigation_style,
-                                config.clone(),
-                            ))
-                            .child(Self::navigation_button(
-                                NavigationStyle::Dock,
-                                cx.lang().get("settings.dock"),
-                                navigation_style,
-                                config.clone(),
-                            )),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(palette.text_color)
-                            .child(cx.lang().get("settings.theme")),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(Self::theme_icon_button(
-                                "dark",
-                                "icons/moon.svg",
-                                current_theme,
-                                state.clone(),
-                                palette,
-                                config.clone(),
-                            ))
-                            .child(Self::theme_icon_button(
-                                "light",
-                                "icons/sun.svg",
-                                current_theme,
-                                state.clone(),
-                                palette,
-                                config,
-                            )),
                     ),
             )
     }
@@ -1564,13 +1479,14 @@ impl SettingsModal {
             .flex()
             .flex_col()
             .gap_1()
+            .py_2p5()
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
                     .flex_wrap()
-                    .gap_2()
+                    .gap_3()
                     .child(
                         div()
                             .text_sm()
@@ -1578,24 +1494,52 @@ impl SettingsModal {
                             .text_color(palette.text_color)
                             .child(cx.lang().get("settings.language")),
                     )
-                    .child(div().flex().items_center().gap_2().children(
-                        cx.lang().languages().map(|(code, name)| {
-                            let code = code.to_owned();
-                            let mut button = PillButton::new(
-                                SharedString::from(format!("language-{code}")),
-                                name.to_owned(),
-                            )
-                            .selected(cx.lang().code() == code);
-                            if !pending {
+                    .child(
+                        Self::segmented_track(palette).children(cx.lang().languages().map(
+                            |(code, name)| {
+                                let code = code.to_owned();
+                                let selected = cx.lang().code() == code;
                                 let state = state.clone();
                                 let config = config.clone();
-                                button = button.on_click(move |_, _, cx| {
-                                    Self::change_language(&code, state.clone(), config.clone(), cx)
-                                });
-                            }
-                            button
-                        }),
-                    )),
+                                div()
+                                    .id(SharedString::from(format!("language-{code}")))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .h(px(28.0))
+                                    .px_3()
+                                    .rounded(px(20.0))
+                                    .text_xs()
+                                    .font_weight(if selected {
+                                        FontWeight::MEDIUM
+                                    } else {
+                                        FontWeight::NORMAL
+                                    })
+                                    .text_color(if selected {
+                                        palette.text_color
+                                    } else {
+                                        palette.text_muted
+                                    })
+                                    .when(selected, |el| el.bg(palette.surface_hover))
+                                    .when(!pending, |el| {
+                                        el.cursor_pointer()
+                                            .when(!selected, |el| {
+                                                el.hover(move |s| s.text_color(palette.text_color))
+                                            })
+                                            .on_click(move |_, _, cx| {
+                                                Self::change_language(
+                                                    &code,
+                                                    state.clone(),
+                                                    config.clone(),
+                                                    cx,
+                                                )
+                                            })
+                                    })
+                                    .when(pending, |el| el.opacity(0.5))
+                                    .child(name.to_owned())
+                            },
+                        )),
+                    ),
             )
             .children(pending.then(|| {
                 div()
@@ -1676,7 +1620,7 @@ impl SettingsModal {
             linear_color_stop(color.blend(rgb(0x000000).opacity(0.20)), 1.0),
         );
         let edge = color.blend(outline.opacity(0.24));
-        let selection = outline.opacity(0.75);
+        let selection = outline.opacity(0.8);
 
         let swatch = div()
             .id(if is_default {
@@ -1684,17 +1628,17 @@ impl SettingsModal {
             } else {
                 ElementId::Name(format!("color-{hex}").into())
             })
-            .size(px(46.0))
+            .size(px(32.0))
             .rounded_full()
             .border_2()
             .border_color(selection.opacity(if is_selected { 1.0 } else { 0.0 }))
-            .p(px(1.0))
+            .p(px(2.0))
             .cursor_pointer()
             .hover(move |s| {
                 s.border_color(if is_selected {
                     selection
                 } else {
-                    outline.opacity(0.38)
+                    outline.opacity(0.4)
                 })
             })
             .on_click(move |_event, window, cx| {
@@ -1732,32 +1676,54 @@ impl SettingsModal {
         style: NavigationStyle,
         label: SharedString,
         current: NavigationStyle,
+        palette: ModalPalette,
         config: Arc<rdm_config::ConfigManager>,
     ) -> impl IntoElement {
         let style_key = style.key();
-        PillButton::new(
-            ElementId::Name(format!("btn-style-{style_key}").into()),
-            label,
-        )
-        .selected(current == style)
-        .on_click(move |_event, window, cx| {
-            if NavigationStyle::from_key(&config.ui_config().sidebar_style) == style {
-                return;
-            }
-            config.update_ui_config_in_memory(|ui| {
-                ui.sidebar_style = style_key.to_string();
-            });
-            let config = config.clone();
-            cx.tasks_model()
-                .read(cx)
-                .tokio_handle()
-                .spawn_blocking(move || {
-                    if let Err(error) = config.save() {
-                        eprintln!("No se pudo guardar el modo de navegación: {error}");
-                    }
+        let selected = current == style;
+        div()
+            .id(ElementId::Name(format!("btn-style-{style_key}").into()))
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(28.0))
+            .px_3()
+            .rounded(px(20.0))
+            .text_xs()
+            .font_weight(if selected {
+                FontWeight::MEDIUM
+            } else {
+                FontWeight::NORMAL
+            })
+            .text_color(if selected {
+                palette.text_color
+            } else {
+                palette.text_muted
+            })
+            .when(selected, |el| el.bg(palette.surface_hover))
+            .cursor_pointer()
+            .when(!selected, |el| {
+                el.hover(move |s| s.text_color(palette.text_color))
+            })
+            .on_click(move |_event, window, cx| {
+                if NavigationStyle::from_key(&config.ui_config().sidebar_style) == style {
+                    return;
+                }
+                config.update_ui_config_in_memory(|ui| {
+                    ui.sidebar_style = style_key.to_string();
                 });
-            window.refresh();
-        })
+                let config = config.clone();
+                cx.tasks_model()
+                    .read(cx)
+                    .tokio_handle()
+                    .spawn_blocking(move || {
+                        if let Err(error) = config.save() {
+                            eprintln!("No se pudo guardar el modo de navegación: {error}");
+                        }
+                    });
+                window.refresh();
+            })
+            .child(label)
     }
 
     fn theme_icon_button(
@@ -1770,29 +1736,35 @@ impl SettingsModal {
     ) -> impl IntoElement {
         let is_selected = current == mode;
         let state_click = state.clone();
-        IconButton::new(
-            ElementId::Name(format!("btn-theme-{mode}").into()),
-            icon_path,
-        )
-        .size(px(36.0))
-        .icon_size(px(16.0))
-        .rounded(ButtonRounded::Size(px(24.0)))
-        .selected(is_selected)
-        .color(if is_selected {
-            palette.text_color
-        } else {
-            palette.text_muted
-        })
-        .hover_bg(palette.surface_hover)
-        .on_click(move |_event, window, cx| {
-            state_click.update(cx, |f, _| {
-                f.theme = mode.to_string();
-            });
-            let _ = config.update_ui_config(|ui| {
-                ui.theme = mode.to_string();
-            });
-            ThemeManager::apply_mode(mode, cx);
-            window.refresh();
-        })
+        div()
+            .id(ElementId::Name(format!("btn-theme-{mode}").into()))
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(28.0))
+            .w(px(36.0))
+            .rounded(px(20.0))
+            .when(is_selected, |el| el.bg(palette.surface_hover))
+            .cursor_pointer()
+            .on_click(move |_event, window, cx| {
+                state_click.update(cx, |f, _| {
+                    f.theme = mode.to_string();
+                });
+                let _ = config.update_ui_config(|ui| {
+                    ui.theme = mode.to_string();
+                });
+                ThemeManager::apply_mode(mode, cx);
+                window.refresh();
+            })
+            .child(
+                svg()
+                    .path(icon_path)
+                    .size(px(15.0))
+                    .text_color(if is_selected {
+                        palette.text_color
+                    } else {
+                        palette.text_muted
+                    }),
+            )
     }
 }
