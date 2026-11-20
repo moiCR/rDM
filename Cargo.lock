@@ -2182,6 +2182,7 @@ dependencies = [
 [[package]]
 name = "gpui-pages"
 version = "0.1.0"
+source = "git+https://github.com/moiCR/gpui-pages#c172780164a7c7a394122825b88697af811f1620"
 dependencies = [
  "gpui-pre",
  "pages-codegen",
@@ -4576,6 +4577,7 @@ dependencies = [
 [[package]]
 name = "pages-codegen"
 version = "0.1.0"
+source = "git+https://github.com/moiCR/gpui-pages#c172780164a7c7a394122825b88697af811f1620"
 dependencies = [
  "syn 2.0.119",
 ]
@@ -4583,6 +4585,7 @@ dependencies = [
 [[package]]
 name = "pages-macros"
 version = "0.1.0"
+source = "git+https://github.com/moiCR/gpui-pages#c172780164a7c7a394122825b88697af811f1620"
 
 [[package]]
 name = "parking"
