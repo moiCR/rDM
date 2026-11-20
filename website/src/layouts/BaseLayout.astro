@@ -1,5 +1,7 @@
 ---
 import '../css/global.css';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
 
 <!doctype html>
@@ -9,6 +11,7 @@ import '../css/global.css';
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Download Rust Download Manager (rDM) for Windows and Linux, with extensions for Chrome and Firefox." />
     <meta name="theme-color" content="#070708" />
+    <link rel="icon" type="image/png" href={`${base}/images/app-icon.png`} />
     <title>Rust Download Manager — Keep it flowing.</title>
   </head>
   <body class="bg-background font-sans text-body antialiased"><slot /></body>
