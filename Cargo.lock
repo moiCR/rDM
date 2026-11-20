@@ -2182,7 +2182,6 @@ dependencies = [
 [[package]]
 name = "gpui-pages"
 version = "0.1.0"
-source = "git+https://github.com/moiCR/gpui-pages#a64959163af000366815e7e8f22b347b2004e019"
 dependencies = [
  "gpui-pre",
  "pages-codegen",
@@ -2684,30 +2683,6 @@ name = "gpui-pre-ztracing-macro"
 version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85701631a9bbecf47e6d19f145e85e57767e7c50f7192d5b1bf65b5ef43cb373"
-
-[[package]]
-name = "gpui-router"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb9bbc5afe617f5cf103d517334a9239ed1fcb674215fcd883daa800e0bffeb5"
-dependencies = [
- "gpui-pre",
- "gpui-router-macros",
- "hashbrown 0.16.1",
- "matchit",
- "smallvec",
-]
-
-[[package]]
-name = "gpui-router-macros"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "978f0e040178034b27772e6a483d6c4b7cd908e012e4d1545efaa593cbb2a3fc"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
 
 [[package]]
 name = "granit-parser"
@@ -3759,12 +3734,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "matchit"
-version = "0.8.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f926ade0c4e170215ae43342bf13b9310a437609c81f29f86c5df6657582ef9"
-
-[[package]]
 name = "maybe-rayon"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4607,7 +4576,6 @@ dependencies = [
 [[package]]
 name = "pages-codegen"
 version = "0.1.0"
-source = "git+https://github.com/moiCR/gpui-pages#a64959163af000366815e7e8f22b347b2004e019"
 dependencies = [
  "syn 2.0.119",
 ]
@@ -4615,7 +4583,6 @@ dependencies = [
 [[package]]
 name = "pages-macros"
 version = "0.1.0"
-source = "git+https://github.com/moiCR/gpui-pages#a64959163af000366815e7e8f22b347b2004e019"
 
 [[package]]
 name = "parking"
@@ -5084,7 +5051,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rDM"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5092,7 +5059,6 @@ dependencies = [
  "gpui-kit",
  "gpui-pages",
  "gpui-pre",
- "gpui-router",
  "image",
  "ksni",
  "raw-window-handle",
@@ -5296,7 +5262,7 @@ dependencies = [
 
 [[package]]
 name = "rdm-cli"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "rdm-config",
  "rdm-core",
@@ -5307,7 +5273,7 @@ dependencies = [
 
 [[package]]
 name = "rdm-config"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "dirs 7.0.0",
  "serde",
@@ -5317,7 +5283,7 @@ dependencies = [
 
 [[package]]
 name = "rdm-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "bytes",
  "futures-util",

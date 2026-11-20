@@ -176,9 +176,11 @@ pub(crate) fn open_window(cx: &mut App) -> anyhow::Result<gpui::AnyWindowHandle>
         window.update(cx, |_, window, _| window.activate_window())?;
         return Ok(window);
     }
-    cx.set_global(crate::views::NewDownloadModalState::default());
-    cx.set_global(crate::views::SettingsModalState::default());
-    cx.set_global(crate::views::DeleteDownloadModalState::default());
+    cx.set_global(crate::modals::NewDownloadModalState::default());
+    cx.set_global(crate::modals::SettingsModalState::default());
+    cx.set_global(crate::modals::DeleteDownloadModalState::default());
+    let manager = gpui_pages::PageManager::new(crate::PAGE_ROUTES, "/", cx)?;
+    let manager = cx.new(|_| manager);
     let options = gpui::WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
             None,
@@ -193,8 +195,10 @@ pub(crate) fn open_window(cx: &mut App) -> anyhow::Result<gpui::AnyWindowHandle>
         }),
         ..Default::default()
     };
-    let (window, _) =
-        gpui_kit::open_window(options, cx, |_, cx| cx.new(crate::router::RootRouter::new))?;
+    let (window, _) = gpui_kit::open_window(options, cx, move |window, cx| {
+        gpui_pages::PageManager::attach(&manager, window, cx);
+        manager
+    })?;
     Ok(window)
 }
 
@@ -230,7 +234,7 @@ pub(crate) fn install(
     cx.set_quit_mode(QuitMode::Explicit);
     cx.on_window_closed(|cx, _| {
         if cx.windows().is_empty()
-            && !(available(cx) && crate::views::SettingsModal::close_to_tray(cx))
+            && !(available(cx) && crate::modals::SettingsModal::close_to_tray(cx))
         {
             cx.quit();
         }

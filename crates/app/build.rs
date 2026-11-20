@@ -2,12 +2,6 @@
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("cargo:rerun-if-env-changed=ENV");
-    println!("cargo:rustc-check-cfg=cfg(pages_test)");
-    if std::env::var("ENV").as_deref() == Ok("PAGES_TEST") {
-        println!("cargo:rustc-cfg=pages_test");
-    }
-
     gpui_pages::build()?;
 
     #[cfg(windows)]

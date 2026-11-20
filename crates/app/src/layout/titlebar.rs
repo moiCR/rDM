@@ -5,9 +5,9 @@ use crate::{
     components::IconButton,
     lang::ActiveLang,
     layout::toggle_sidebar,
+    modals::{NewDownloadModal, SettingsModalState, SettingsTab},
     state::{CoreContext, UpdaterStatus},
     theme::ActiveTheme,
-    views::{NewDownloadModal, SettingsModalState, SettingsTab},
 };
 
 #[derive(IntoElement)]

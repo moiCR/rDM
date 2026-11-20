@@ -13,7 +13,7 @@ use rdm_core::{
 };
 use uuid::Uuid;
 
-use crate::views::NewDownloadModal;
+use crate::modals::NewDownloadModal;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdaterStatus {

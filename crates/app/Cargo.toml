@@ -12,7 +12,6 @@ path = "src/main.rs"
 gpui-pre.workspace = true
 gpui-kit = "0.10.0"
 gpui-pages = { git = "https://github.com/moiCR/gpui-pages" }
-gpui-router = { version = "0.7", default-features = false, features = ["gpui-pre"] }
 tokio.workspace = true
 rdm-core.workspace = true
 rdm-config.workspace = true

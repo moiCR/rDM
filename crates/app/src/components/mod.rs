@@ -1,4 +1,5 @@
 pub mod button;
+pub mod download_card;
 pub mod input;
 pub mod modal;
 pub mod modal_sub_view;

@@ -1,8 +1,9 @@
 use gpui::{prelude::FluentBuilder as _, *};
 use gpui_kit::base::Button;
+use gpui_pages::router;
 
 use crate::{
-    components::ActionTooltip, lang::ActiveLang, theme::ActiveTheme, views::SettingsModalState,
+    components::ActionTooltip, lang::ActiveLang, modals::SettingsModalState, theme::ActiveTheme,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -35,7 +36,7 @@ impl NavigationItem {
         cx.lang().get(self.key())
     }
 
-    pub(super) fn active(cx: &App) -> Option<Self> {
+    pub(super) fn active(window: &Window, cx: &App) -> Option<Self> {
         if cx
             .try_global::<SettingsModalState>()
             .is_some_and(|state| state.open)
@@ -43,9 +44,10 @@ impl NavigationItem {
             return Some(Self::Settings);
         }
 
-        match gpui_router::use_location(cx).pathname.as_str() {
-            "/" => Some(Self::Dashboard),
-            "/downloads" => Some(Self::Downloads),
+        let path = router(window, cx).map(|manager| manager.read(cx).current_path().to_owned());
+        match path.as_deref() {
+            Some("/") => Some(Self::Dashboard),
+            Some("/downloads") => Some(Self::Downloads),
             _ => None,
         }
     }
@@ -64,8 +66,14 @@ impl NavigationItem {
             }
         };
 
-        if gpui_router::use_location(cx).pathname != path {
-            gpui_router::use_navigate(window, cx).push(path);
+        if let Some(manager) = router(window, cx) {
+            manager.update(cx, |manager, cx| {
+                if manager.current_path() != path
+                    && let Err(error) = manager.navigate(path, cx)
+                {
+                    eprintln!("{error}");
+                }
+            });
         }
     }
 
