@@ -61,13 +61,13 @@ impl<'a> DashboardSummary<'a> {
     }
 }
 
-#[derive(Default)]
 pub struct HomePage;
 
 impl Page for HomePage {
+    fn new(_: &mut Context<Self>) -> Self {
+        Self
+    }
 
-    fn 
-    
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let tasks = cx.tasks_model().read(cx);

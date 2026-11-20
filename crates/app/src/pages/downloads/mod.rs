@@ -96,10 +96,13 @@ fn format_remaining(task: &TaskSnapshot, cx: &App) -> SharedString {
     .into()
 }
 
-#[derive(Default)]
 pub struct DownloadsPage;
 
 impl Page for DownloadsPage {
+    fn new(_: &mut Context<Self>) -> Self {
+        Self
+    }
+
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = ViewPalette::from_theme(cx);
         let tasks_model = cx.tasks_model().clone();
