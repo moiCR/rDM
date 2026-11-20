@@ -2,6 +2,8 @@
 use std::path::PathBuf;
 
 fn main() {
+    ::build();
+    
     #[cfg(windows)]
     {
         println!("cargo:rerun-if-changed=../../icon.png");
