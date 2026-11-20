@@ -2,26 +2,19 @@ use std::{f32::consts::TAU, time::Duration};
 
 use gpui::{prelude::FluentBuilder as _, *};
 use gpui_kit::component::button::ButtonRounded;
+use gpui_pages::{Page, PageAnimation, PageOptions};
 use rdm_core::task::TaskStatus;
-use uuid::Uuid;
 
 use crate::{
-    components::{ActionTooltip, IconButton, Modal, PillButton, ProgressBar},
+    components::{
+        ActionTooltip, Button, IconButton, ProgressBar,
+        download_card::{download_card_surface, format_bytes, task_progress_percent},
+    },
     lang::ActiveLang,
+    modals::{DeleteDownloadModalState, NewDownloadModal},
     state::{CoreContext, TaskSnapshot, TasksModel},
     theme::ActiveTheme,
-    views::NewDownloadModal,
 };
-
-#[derive(Default, Clone)]
-pub struct DeleteDownloadModalState {
-    pub open: bool,
-    pub task_id: Option<Uuid>,
-    pub file_name: String,
-    pub delete_file: bool,
-}
-
-impl Global for DeleteDownloadModalState {}
 
 #[derive(Clone, Copy)]
 struct ViewPalette {
@@ -71,23 +64,6 @@ impl ViewPalette {
     }
 }
 
-pub(super) fn format_bytes(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-
-    let b = bytes as f64;
-    if b >= GB {
-        format!("{:.2} GB", b / GB)
-    } else if b >= MB {
-        format!("{:.1} MB", b / MB)
-    } else if b >= KB {
-        format!("{:.0} KB", b / KB)
-    } else {
-        format!("{bytes} B")
-    }
-}
-
 fn truncate_file_name(name: &str, max_chars: usize) -> String {
     if name.chars().count() <= max_chars {
         return name.to_string();
@@ -101,33 +77,6 @@ fn truncate_file_name(name: &str, max_chars: usize) -> String {
     let keep = max_chars.saturating_sub(3 + suffix.chars().count());
     let prefix: String = name.chars().take(keep).collect();
     format!("{prefix}...{suffix}")
-}
-
-pub(super) fn task_progress_percent(task: &TaskSnapshot) -> f32 {
-    match (task.total_size, &task.status) {
-        (
-            _,
-            TaskStatus::Completed
-            | TaskStatus::Processing { .. }
-            | TaskStatus::ConversionFailed(_)
-            | TaskStatus::ConversionQueued,
-        ) => 100.0,
-        (0, _) => 0.0,
-        _ => (task.progress.clamp(0.0, 1.0) * 100.0) as f32,
-    }
-}
-
-pub(super) fn download_card_surface(surface: Rgba, raised: Rgba, border: Rgba) -> Div {
-    div()
-        .rounded(px(24.0))
-        .bg(linear_gradient(
-            180.0,
-            linear_color_stop(raised, 0.0),
-            linear_color_stop(surface, 1.0),
-        ))
-        .border_1()
-        .border_color(border)
-        .shadow_md()
 }
 
 fn format_remaining(task: &TaskSnapshot, cx: &App) -> SharedString {
@@ -147,23 +96,18 @@ fn format_remaining(task: &TaskSnapshot, cx: &App) -> SharedString {
     .into()
 }
 
-#[derive(IntoElement)]
-pub struct DownloadsView;
+pub struct DownloadsPage;
 
-impl DownloadsView {
-    pub fn new() -> Self {
+impl Page for DownloadsPage {
+    fn new(_: &mut Context<Self>) -> Self {
         Self
     }
-}
 
-impl Default for DownloadsView {
-    fn default() -> Self {
-        Self::new()
+    fn options() -> PageOptions {
+        PageOptions::default().on_open(PageAnimation::SlideUpFade)
     }
-}
 
-impl RenderOnce for DownloadsView {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = ViewPalette::from_theme(cx);
         let tasks_model = cx.tasks_model().clone();
         let tasks = tasks_model.read(cx).tasks().to_vec();
@@ -230,7 +174,7 @@ impl RenderOnce for DownloadsView {
     }
 }
 
-impl DownloadsView {
+impl DownloadsPage {
     fn render_card(
         task: &TaskSnapshot,
         tasks_model: &Entity<TasksModel>,
@@ -273,11 +217,11 @@ impl DownloadsView {
         let can_delete = !matches!(task.status, TaskStatus::Processing { .. });
         let retry_conversion = conversion_error.as_ref().map(|_| {
             let model = tasks_model.clone();
-            PillButton::new(
-                ("download-card-retry-conversion", task_key),
-                cx.lang().get("downloads.retry_conversion"),
-            )
-            .on_click(move |_event, _window, cx| {
+            Button::new(("download-card-retry-conversion", task_key))
+                .label(cx.lang().get("downloads.retry_conversion"))
+                .rounded(px(24.0))
+                .h(px(32.0))
+                .on_click(move |_event, _window, cx| {
                 model.update(cx, |m, cx| m.retry_conversion(task_id, cx));
             })
         });
@@ -586,179 +530,6 @@ impl DownloadsView {
                 window.paint_quad(fill(Bounds::new(origin, size(cell, cell)), color));
             }
         }
-    }
-}
-
-#[derive(IntoElement)]
-pub struct DeleteDownloadModal;
-
-impl DeleteDownloadModal {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for DeleteDownloadModal {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RenderOnce for DeleteDownloadModal {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let modal_state = cx
-            .try_global::<DeleteDownloadModalState>()
-            .cloned()
-            .unwrap_or_default();
-
-        let is_open = modal_state.open && modal_state.task_id.is_some();
-        let task_id = modal_state.task_id;
-        let file_name = modal_state.file_name.clone();
-        let delete_file = modal_state.delete_file;
-
-        let palette = ViewPalette::from_theme(cx);
-        let toggle_file_name = modal_state.file_name.clone();
-
-        div()
-            .id("delete-download-modal-root")
-            .absolute()
-            .inset_0()
-            .size_full()
-            .child(
-                Modal::new("delete-download-modal")
-                    .open(is_open)
-                    .width(px(520.0))
-                    .max_height(px(320.0))
-                    .title(cx.lang().get("downloads.delete"))
-                    .on_close(move |window, cx| {
-                        cx.set_global(DeleteDownloadModalState {
-                            open: false,
-                            task_id: None,
-                            file_name: String::new(),
-                            delete_file: false,
-                        });
-                        window.refresh();
-                    })
-                    .footer(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap_2p5()
-                            .pt_2()
-                            .child(
-                                PillButton::new(
-                                    "btn-cancel-delete-download",
-                                    cx.lang().get("common.cancel"),
-                                )
-                                .selected(false)
-                                .on_click(
-                                    move |_event, window, cx| {
-                                        cx.set_global(DeleteDownloadModalState {
-                                            open: false,
-                                            task_id: None,
-                                            file_name: String::new(),
-                                            delete_file: false,
-                                        });
-                                        window.refresh();
-                                    },
-                                ),
-                            )
-                            .child(
-                                PillButton::new(
-                                    "btn-confirm-delete-download",
-                                    cx.lang().get("common.delete"),
-                                )
-                                .selected(true)
-                                .on_click(
-                                    move |_event, window, cx| {
-                                        if let Some(id) = task_id {
-                                            let model = cx.tasks_model().clone();
-                                            model.update(cx, |m, cx| {
-                                                m.delete_task(id, delete_file, cx);
-                                            });
-                                        }
-                                        cx.set_global(DeleteDownloadModalState {
-                                            open: false,
-                                            task_id: None,
-                                            file_name: String::new(),
-                                            delete_file: false,
-                                        });
-                                        window.refresh();
-                                    },
-                                ),
-                            ),
-                    )
-                    .child(
-                        div().flex().flex_col().gap_5().child(
-                            div()
-                                .id("checkbox-delete-file-from-disk")
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .gap_6()
-                                .py_2()
-                                .cursor_pointer()
-                                .on_click(move |_event, window, cx| {
-                                    cx.set_global(DeleteDownloadModalState {
-                                        open: true,
-                                        task_id,
-                                        file_name: toggle_file_name.clone(),
-                                        delete_file: !delete_file,
-                                    });
-                                    window.refresh();
-                                })
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_1p5()
-                                        .child(
-                                            div()
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .text_size(px(14.0))
-                                                .text_color(palette.text_color)
-                                                .truncate()
-                                                .child(file_name),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(palette.text_muted)
-                                                .child(cx.lang().get("downloads.delete_file")),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .size(px(18.0))
-                                        .rounded(px(5.0))
-                                        .border_1()
-                                        .border_color(if delete_file {
-                                            palette.text_color
-                                        } else {
-                                            palette.border
-                                        })
-                                        .bg(if delete_file {
-                                            palette.surface_hover
-                                        } else {
-                                            palette.background
-                                        })
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .flex_shrink_0()
-                                        .children(delete_file.then(|| {
-                                            div()
-                                                .size(px(8.0))
-                                                .rounded(px(2.0))
-                                                .bg(palette.text_color)
-                                        })),
-                                ),
-                        ),
-                    ),
-            )
     }
 }
 

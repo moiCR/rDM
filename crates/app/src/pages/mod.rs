@@ -1,18 +1,21 @@
 mod calendar;
 
 use gpui::{prelude::FluentBuilder as _, *};
+use gpui_pages::{Page, PageAnimation, PageOptions};
 use rdm_core::task::TaskStatus;
 use smallvec::SmallVec;
 
 use crate::{
-    components::{ButtonRounded, IconButton, ProgressBar},
+    components::{
+        ButtonRounded, IconButton, ProgressBar,
+        download_card::{download_card_surface, format_bytes, task_progress_percent},
+    },
     lang::ActiveLang,
+    modals::SettingsModalState,
     state::{CoreContext, DownloadHistory, TaskSnapshot},
     theme::{ActiveTheme, Theme},
-    views::SettingsModalState,
 };
 
-use super::downloads::{download_card_surface, format_bytes, task_progress_percent};
 use calendar::download_calendar;
 
 const ACTIVITY_LIMIT: usize = 5;
@@ -58,23 +61,18 @@ impl<'a> DashboardSummary<'a> {
     }
 }
 
-#[derive(IntoElement)]
-pub struct DashboardView;
+pub struct HomePage;
 
-impl DashboardView {
-    pub fn new() -> Self {
+impl Page for HomePage {
+    fn new(_: &mut Context<Self>) -> Self {
         Self
     }
-}
 
-impl Default for DashboardView {
-    fn default() -> Self {
-        Self::new()
+    fn options() -> PageOptions {
+        PageOptions::default().on_open(PageAnimation::SlideUpFade)
     }
-}
 
-impl RenderOnce for DashboardView {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let tasks = cx.tasks_model().read(cx);
         let summary = DashboardSummary::from_tasks(tasks.tasks());
@@ -122,7 +120,7 @@ impl RenderOnce for DashboardView {
     }
 }
 
-impl DashboardView {
+impl HomePage {
     fn panel(theme: &dyn Theme) -> Div {
         download_card_surface(theme.surface(), theme.surface_hover(), theme.border())
             .flex()

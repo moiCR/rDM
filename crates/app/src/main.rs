@@ -5,23 +5,25 @@ pub mod components;
 pub mod ext;
 pub mod lang;
 pub mod layout;
-pub mod router;
+pub mod modals;
+#[rustfmt::skip]
+#[path = "pages_modules.rs"]
+pub mod pages;
 pub mod state;
 pub mod theme;
-pub mod views;
 
 #[cfg(target_os = "linux")]
 mod linux_desktop;
 #[cfg(windows)]
 mod windows_desktop;
 
-#[cfg(not(target_os = "linux"))]
-use crate::router::RootRouter;
-
 use std::sync::Arc;
 
 use gpui::*;
+use gpui_pages::{ApplicationExt, PageManager};
 use rdm_core::Core;
+
+gpui_pages::include_pages!();
 
 use crate::{
     assets::Assets,
@@ -58,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = gpui_kit::application().with_assets(Assets::new());
 
-    app.run(move |cx: &mut App| {
+    app.use_pages().run_with(move |cx: &mut App| {
         cx.set_global(language);
         #[cfg(windows)]
         let desktop_events = windows_desktop::Desktop::install(cx)
@@ -67,7 +69,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Assets::new().load_fonts(cx);
         gpui_kit::init(cx);
-        gpui_router::init(cx);
 
         let mut theme_mgr = ThemeManager::new();
         if let Some(accent) = ui_config.accent_override() {
@@ -80,11 +81,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cx.set_global(AppState::new(core, tasks_model));
 
         #[cfg(windows)]
-        views::SettingsModal::initialize_desktop_preferences(ui_config.close_to_tray, cx);
+        modals::SettingsModal::initialize_desktop_preferences(ui_config.close_to_tray, cx);
 
         #[cfg(target_os = "linux")]
         {
-            views::SettingsModal::initialize_desktop_preferences(ui_config.close_to_tray, cx);
+            modals::SettingsModal::initialize_desktop_preferences(ui_config.close_to_tray, cx);
             if let Err(error) =
                 linux_desktop::install(activation_listener, runtime.handle(), startup, cx)
             {
@@ -95,6 +96,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         #[cfg(not(target_os = "linux"))]
         {
+            let manager = match PageManager::new(PAGE_ROUTES, "/", cx) {
+                Ok(manager) => cx.new(|_| manager),
+                Err(error) => {
+                    eprintln!("No se pudieron inicializar las páginas de rDM: {error}");
+                    cx.quit();
+                    return;
+                }
+            };
+
             let bounds = Bounds::centered(None, size(px(1024.0), px(680.0)), cx);
             #[cfg(windows)]
             let show = !(startup && windows_desktop::Desktop::available(cx));
@@ -113,14 +123,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ..Default::default()
             };
 
-            match gpui_kit::open_window(window_options, cx, |_window, cx| {
+            match gpui_kit::open_window(window_options, cx, move |window, cx| {
+                PageManager::attach(&manager, window, cx);
                 #[cfg(windows)]
-                _window.on_window_should_close(cx, |window, cx| {
-                    !(views::SettingsModal::close_to_tray(cx)
+                window.on_window_should_close(cx, |window, cx| {
+                    !(modals::SettingsModal::close_to_tray(cx)
                         && windows_desktop::Desktop::available(cx)
                         && windows_desktop::hide_window(window))
                 });
-                cx.new(RootRouter::new)
+                manager
             }) {
                 Ok((_window, _)) =>
                 {

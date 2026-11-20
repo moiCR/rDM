@@ -5,9 +5,9 @@ use crate::{
     components::IconButton,
     lang::ActiveLang,
     layout::toggle_sidebar,
+    modals::{NewDownloadModal, SettingsModalState, SettingsTab},
     state::{CoreContext, UpdaterStatus},
     theme::ActiveTheme,
-    views::{NewDownloadModal, SettingsModalState, SettingsTab},
 };
 
 #[derive(IntoElement)]
@@ -22,7 +22,7 @@ impl Titlebar {
         }
     }
 
-    pub(super) fn sidebar_toggle(mut self, show: bool) -> Self {
+    pub(crate) fn sidebar_toggle(mut self, show: bool) -> Self {
         self.show_sidebar_toggle = show;
         self
     }

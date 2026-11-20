@@ -1,7 +1,9 @@
 #[cfg(windows)]
 use std::path::PathBuf;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    gpui_pages::build()?;
+
     #[cfg(windows)]
     {
         println!("cargo:rerun-if-changed=../../icon.png");
@@ -59,4 +61,5 @@ fn main() {
             let _ = res.compile();
         }
     }
+    Ok(())
 }

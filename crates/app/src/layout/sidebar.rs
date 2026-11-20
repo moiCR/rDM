@@ -1,13 +1,13 @@
 use gpui::{prelude::FluentBuilder as _, *};
 
-use crate::{layout::sidebar_item::NavigationItem, theme::ActiveTheme, views::SettingsModalState};
+use crate::{layout::sidebar_item::NavigationItem, modals::SettingsModalState, theme::ActiveTheme};
 
 #[derive(IntoElement)]
-pub(super) struct Sidebar;
+pub(crate) struct Sidebar;
 
 impl RenderOnce for Sidebar {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let active = NavigationItem::active(cx);
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let active = NavigationItem::active(window, cx);
 
         div()
             .flex()
@@ -93,7 +93,7 @@ fn set_pointer_inside(state: &Entity<DockState>, inside: bool, cx: &mut App) {
 }
 
 #[derive(IntoElement)]
-pub(super) struct Dock;
+pub(crate) struct Dock;
 
 impl RenderOnce for Dock {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
@@ -114,7 +114,7 @@ impl RenderOnce for Dock {
             && (dock_state.pointer_inside || keyboard_inside);
         let reveal_spring = SpringAnimation::new(SpringConfig::new(300.0, 34.0, 1.0)).to(revealed);
         let theme = cx.theme();
-        let active = NavigationItem::active(cx);
+        let active = NavigationItem::active(window, cx);
         let selected_index = NavigationItem::ALL
             .iter()
             .position(|&item| Some(item) == active);

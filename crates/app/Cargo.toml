@@ -9,9 +9,9 @@ name = "rDM"
 path = "src/main.rs"
 
 [dependencies]
-gpui-pre = "0.3.11"
-gpui-kit = "0.9.0"
-gpui-router = { version = "0.7", default-features = false, features = ["gpui-pre"] }
+gpui-pre.workspace = true
+gpui-kit = "0.10.0"
+gpui-pages = { git = "https://github.com/moiCR/gpui-pages" }
 tokio.workspace = true
 rdm-core.workspace = true
 rdm-config.workspace = true
@@ -47,3 +47,5 @@ windows-sys = { version = "0.61.2", features = [
 winres = "0.1"
 image = { version = "0.25", default-features = false, features = ["png", "ico"] }
 
+[build-dependencies]
+gpui-pages = { git = "https://github.com/moiCR/gpui-pages", default-features = false, features = ["codegen"] }

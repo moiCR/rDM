@@ -1,4 +1,5 @@
 pub mod button;
+pub mod download_card;
 pub mod input;
 pub mod modal;
 pub mod modal_sub_view;
@@ -7,7 +8,7 @@ pub mod select;
 pub mod separator;
 pub mod tooltip;
 
-pub use button::{Button, ButtonRounded, ButtonVariant, ButtonVariants, IconButton, PillButton};
+pub use button::{Button, ButtonRounded, ButtonVariant, ButtonVariants, IconButton};
 pub use input::{
     Input, InputContent, InputEvent, InputState, NumberInput, NumberInputEvent, NumberStep,
     StepAction, TextInput,

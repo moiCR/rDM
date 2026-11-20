@@ -8,7 +8,6 @@ use uuid::Uuid;
 use crate::{
     lang::{ActiveLang, Lang},
     state::{CoreContext, DownloadRequest},
-    theme::ActiveTheme,
 };
 
 mod widgets;
@@ -423,34 +422,6 @@ impl RenderOnce for NewDownloadModal {
             cx.try_global::<NewDownloadModalState>()
                 .and_then(|state| state.form.clone()),
         )
-    }
-}
-
-#[derive(IntoElement)]
-pub struct NewDownloadView;
-
-impl NewDownloadView {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for NewDownloadView {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RenderOnce for NewDownloadView {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .bg(cx.theme().background())
-            .text_color(cx.theme().text_color())
-            .p_8()
-            .child(cx.lang().get("new_download.title"))
     }
 }
 

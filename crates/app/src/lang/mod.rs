@@ -170,12 +170,13 @@ mod tests {
     fn view_keys_and_interpolation_variables_exist_in_every_catalog() -> Result<(), LangError> {
         let lang = Lang::new("es")?;
         let sources = [
-            include_str!("../views/dashboard.rs"),
-            include_str!("../views/dashboard/calendar.rs"),
-            include_str!("../views/downloads.rs"),
-            include_str!("../views/new_download.rs"),
-            include_str!("../views/new_download/widgets.rs"),
-            include_str!("../views/settings.rs"),
+            include_str!("../pages/mod.rs"),
+            include_str!("../pages/calendar.rs"),
+            include_str!("../pages/downloads/mod.rs"),
+            include_str!("../modals/delete_download.rs"),
+            include_str!("../modals/new_download.rs"),
+            include_str!("../modals/new_download/widgets.rs"),
+            include_str!("../modals/settings.rs"),
             include_str!("../layout/sidebar_item.rs"),
             include_str!("../layout/titlebar.rs"),
             include_str!("../state.rs"),
