@@ -1,11 +1,11 @@
 ---
 import DownloadCard from './DownloadCard.astro';
-import { extensions, releasePage } from '../data/downloads';
+import { extensions } from '../data/downloads';
 ---
 
 <section id="extensions" aria-labelledby="extension-title" class="mt-18 scroll-mt-10">
   <div class="mb-6 flex items-baseline justify-between gap-4"><h2 id="extension-title" class="text-3xl tracking-tight text-primary-text">Extensions</h2><span class="text-xs text-muted">Connect your browser</span></div>
   <div class="grid gap-2.5 sm:grid-cols-2">
-    {extensions.map(({ label, icon, asset }) => <DownloadCard label={label} icon={icon} detail="Download ZIP" href={`${releasePage}/download/${asset}`} />)}
+    {extensions.map(({ label, icon, detail, href }) => <DownloadCard label={label} icon={icon} detail={detail} href={href} />)}
   </div>
 </section>
