@@ -22,7 +22,7 @@ impl Titlebar {
         }
     }
 
-    pub(super) fn sidebar_toggle(mut self, show: bool) -> Self {
+    pub(crate) fn sidebar_toggle(mut self, show: bool) -> Self {
         self.show_sidebar_toggle = show;
         self
     }

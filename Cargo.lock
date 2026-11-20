@@ -2182,9 +2182,10 @@ dependencies = [
 [[package]]
 name = "gpui-pages"
 version = "0.1.0"
-source = "git+https://github.com/moiCR/gpui-pages#ffca9603c7cd193ccf52ee793b7dee5efcf6b330"
+source = "git+https://github.com/moiCR/gpui-pages#a64959163af000366815e7e8f22b347b2004e019"
 dependencies = [
  "gpui-pre",
+ "pages-codegen",
  "pages-macros",
 ]
 
@@ -2683,6 +2684,30 @@ name = "gpui-pre-ztracing-macro"
 version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85701631a9bbecf47e6d19f145e85e57767e7c50f7192d5b1bf65b5ef43cb373"
+
+[[package]]
+name = "gpui-router"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb9bbc5afe617f5cf103d517334a9239ed1fcb674215fcd883daa800e0bffeb5"
+dependencies = [
+ "gpui-pre",
+ "gpui-router-macros",
+ "hashbrown 0.16.1",
+ "matchit",
+ "smallvec",
+]
+
+[[package]]
+name = "gpui-router-macros"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "978f0e040178034b27772e6a483d6c4b7cd908e012e4d1545efaa593cbb2a3fc"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "granit-parser"
@@ -3734,6 +3759,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "matchit"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f926ade0c4e170215ae43342bf13b9310a437609c81f29f86c5df6657582ef9"
+
+[[package]]
 name = "maybe-rayon"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4574,9 +4605,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pages-codegen"
+version = "0.1.0"
+source = "git+https://github.com/moiCR/gpui-pages#a64959163af000366815e7e8f22b347b2004e019"
+dependencies = [
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "pages-macros"
 version = "0.1.0"
-source = "git+https://github.com/moiCR/gpui-pages#ffca9603c7cd193ccf52ee793b7dee5efcf6b330"
+source = "git+https://github.com/moiCR/gpui-pages#a64959163af000366815e7e8f22b347b2004e019"
 
 [[package]]
 name = "parking"
@@ -5053,6 +5092,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pages",
  "gpui-pre",
+ "gpui-router",
  "image",
  "ksni",
  "raw-window-handle",

@@ -5,6 +5,9 @@ pub mod components;
 pub mod ext;
 pub mod lang;
 pub mod layout;
+#[rustfmt::skip]
+#[path = "pages_modules.rs"]
+pub mod pages;
 pub mod router;
 pub mod state;
 pub mod theme;
@@ -21,7 +24,10 @@ use crate::router::RootRouter;
 use std::sync::Arc;
 
 use gpui::*;
+use gpui_pages::{ApplicationExt, PageManager};
 use rdm_core::Core;
+
+gpui_pages::include_pages!();
 
 use crate::{
     assets::Assets,
@@ -58,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = gpui_kit::application().with_assets(Assets::new());
 
-    app.run(move |cx: &mut App| {
+    let launch = move |cx: &mut App| {
         cx.set_global(language);
         #[cfg(windows)]
         let desktop_events = windows_desktop::Desktop::install(cx)
@@ -78,6 +84,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let tasks_model = cx.new(|cx| TasksModel::new(Arc::clone(&core), Arc::clone(&runtime), cx));
         cx.set_global(AppState::new(core, tasks_model));
+
+        if cfg!(pages_test) {
+            if let Err(error) = open_pages_test(cx) {
+                eprintln!("No se pudo abrir el modo PAGES_TEST de rDM: {error}");
+                cx.quit();
+            }
+            return;
+        }
 
         #[cfg(windows)]
         views::SettingsModal::initialize_desktop_preferences(ui_config.close_to_tray, cx);
@@ -135,7 +149,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-    });
+    };
 
+    if cfg!(pages_test) {
+        app.use_pages().run_with(launch);
+    } else {
+        app.run(launch);
+    }
+
+    Ok(())
+}
+
+struct PagesTestRouter(Entity<PageManager>);
+
+impl Global for PagesTestRouter {}
+
+pub fn pages_test_router(cx: &App) -> Option<Entity<PageManager>> {
+    cx.try_global::<PagesTestRouter>()
+        .map(|router| router.0.clone())
+}
+
+fn open_pages_test(cx: &mut App) -> anyhow::Result<()> {
+    let manager = PageManager::new(PAGE_ROUTES, "/", cx)?;
+    let manager = cx.new(|_| manager);
+    cx.set_global(PagesTestRouter(manager.clone()));
+
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+            None,
+            size(px(1024.0), px(680.0)),
+            cx,
+        ))),
+        titlebar: Some(TitlebarOptions {
+            title: Some("rDM - Pages Test".into()),
+            appears_transparent: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    gpui_kit::open_window(options, cx, |_, _| manager)?;
+    cx.activate(true);
     Ok(())
 }
