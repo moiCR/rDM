@@ -11,8 +11,8 @@ export const applications = [
 ] as const;
 
 export const extensions = [
-  { label: 'Chrome', icon: 'chrome', asset: 'rdm-chrome.zip' },
-  { label: 'Firefox', icon: 'firefox', asset: 'rdm-firefox.zip' },
+  { label: 'Chrome', icon: 'chrome', detail: 'Download ZIP', href: `${releasePage}/download/rdm-chrome.zip` },
+  { label: 'Firefox', icon: 'firefox', detail: 'Get on Mozilla Add-ons', href: 'https://addons.mozilla.org/es-ES/firefox/addon/rust-download-manager/' },
 ] as const;
 
 export const assetPatterns: Record<string, RegExp> = {

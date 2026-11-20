@@ -64,10 +64,8 @@ Linux updates download the matching DEB, RPM, or AppImage for assisted installat
 
 ## Browser Integration
 
-Download `rdm-chrome.zip` or `rdm-firefox.zip` from the release assets. [GitHub Releases](https://github.com/moiCR/rDM/releases)
-
-- **Chrome.** Extract `rdm-chrome.zip`. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the folder containing `manifest.json`. [Chrome extension guide](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#load-unpacked)
-- **Firefox.** Open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `rdm-firefox.zip`. Repeat after restarting Firefox. [Firefox extension guide](https://extensionworkshop.com/documentation/develop/temporary-installation-in-firefox/)
+- **Chrome.** Download `rdm-chrome.zip` from [GitHub Releases](https://github.com/moiCR/rDM/releases) and extract it. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the folder containing `manifest.json`. [Chrome extension guide](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#load-unpacked)
+- **Firefox.** Install [Rust Download Manager from Mozilla Add-ons](https://addons.mozilla.org/es-ES/firefox/addon/rust-download-manager/) by selecting **Add to Firefox**.
 
 Keep the desktop app running while using the extension. The extension connects to `127.0.0.1:9654` by default. Right-click a link and choose **Descargar con rDM**, or enable automatic interception in the extension popup.
 
