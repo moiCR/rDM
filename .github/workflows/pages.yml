@@ -2,7 +2,7 @@ name: GitHub Pages
 
 on:
   push:
-    branches: [dev]
+    branches: [main]
     paths:
       - 'website/**'
       - '.github/workflows/pages.yml'
