@@ -85,13 +85,14 @@ jobs:
       - name: Stage Linux binaries and desktop assets
         run: |
           root=target/linux-package
+          rm -rf "$root" target/debian-packaging target/rpm target/rDM.AppDir
           install -Dm755 target/release/rDM "$root/usr/lib/rdm/rdm"
           install -Dm755 target/release/rdm-cli "$root/usr/lib/rdm/rdm-cli"
           cp -a crates/app/public "$root/usr/lib/rdm/public"
 
           mkdir -p "$root/usr/bin" "$root/usr/share/applications" dist
-          ln -s ../lib/rdm/rdm "$root/usr/bin/rdm"
-          ln -s ../lib/rdm/rdm-cli "$root/usr/bin/rdm-cli"
+          ln -sf ../lib/rdm/rdm "$root/usr/bin/rdm"
+          ln -sf ../lib/rdm/rdm-cli "$root/usr/bin/rdm-cli"
           icon_dir="$root/usr/share/icons/hicolor/256x256/apps"
           mkdir -p "$icon_dir"
           convert icon.png -resize 256x256 "$icon_dir/rdm.png"
