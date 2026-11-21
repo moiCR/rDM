@@ -124,7 +124,9 @@ impl Page for DownloadsPage {
                         .id("downloads-cards-scroll")
                         .size_full()
                         .overflow_y_scroll()
-                        .p_5()
+                        .px_5()
+                        .pt_5()
+                        .pb_12()
                         .child(
                             div()
                                 .w_full()
@@ -167,6 +169,43 @@ impl Page for DownloadsPage {
 
                         panel
                             .children(cards.map(|cards| cards.opacity(grid_opacity)))
+                            .when(!is_empty, |panel| {
+                                panel
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .top_0()
+                                            .left_0()
+                                            .right_0()
+                                            .h(px(20.0))
+                                            .opacity(grid_opacity)
+                                            .bg(linear_gradient(
+                                                180.0,
+                                                linear_color_stop(palette.surface, 0.0),
+                                                linear_color_stop(
+                                                    palette.surface.opacity(0.0),
+                                                    1.0,
+                                                ),
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .bottom_0()
+                                            .left_0()
+                                            .right_0()
+                                            .h(px(56.0))
+                                            .opacity(grid_opacity)
+                                            .bg(linear_gradient(
+                                                180.0,
+                                                linear_color_stop(
+                                                    palette.surface.opacity(0.0),
+                                                    0.0,
+                                                ),
+                                                linear_color_stop(palette.surface, 1.0),
+                                            )),
+                                    )
+                            })
                             .when(is_empty || grid_opacity < 0.99, |panel| {
                                 panel.child(empty.opacity(1.0 - grid_opacity))
                             })

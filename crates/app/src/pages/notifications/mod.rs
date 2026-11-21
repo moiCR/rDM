@@ -6,9 +6,7 @@ use gpui_kit::component::button::ButtonRounded;
 use gpui_pages::{Page, PageAnimation, PageOptions};
 
 use crate::{
-    components::{
-        Button, ButtonVariants, IconButton, download_card::download_card_surface, track_card_bounds,
-    },
+    components::{IconButton, download_card::download_card_surface, track_card_bounds},
     lang::ActiveLang,
     modals::NotificationDetailModalState,
     notifications::{AppNotification, NotificationKind},
@@ -97,44 +95,8 @@ impl Page for NotificationsPage {
                         )
                     })
                     .when(!is_empty, |panel| {
+                        let has_unread = unread > 0;
                         panel
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_end()
-                                    .gap_1p5()
-                                    .px_5()
-                                    .pt_4()
-                                    .pb_1()
-                                    .when(unread > 0, |row| {
-                                        row.child(
-                                            Button::new("notifications-mark-all-read")
-                                                .label(cx.lang().get("notifications.mark_all_read"))
-                                                .ghost()
-                                                .rounded(px(24.0))
-                                                .on_click(move |_, _, cx| {
-                                                    mark_all_model
-                                                        .update(cx, |m, cx| m.mark_all_read(cx));
-                                                }),
-                                        )
-                                    })
-                                    .child(
-                                        IconButton::new(
-                                            "notifications-clear-all",
-                                            "icons/eraser.svg",
-                                        )
-                                        .size(px(32.0))
-                                        .icon_size(px(15.0))
-                                        .rounded(ButtonRounded::Size(px(99.0)))
-                                        .color(text_muted)
-                                        .hover_bg(surface_hover)
-                                        .tooltip(cx.lang().get("notifications.clear_all"))
-                                        .on_click(move |_, _, cx| {
-                                            clear_model.update(cx, |m, cx| m.clear(cx));
-                                        }),
-                                    ),
-                            )
                             .child(
                                 div()
                                     .id("notifications-cards-scroll")
@@ -143,8 +105,8 @@ impl Page for NotificationsPage {
                                     .w_full()
                                     .overflow_y_scroll()
                                     .px_5()
-                                    .pb_5()
-                                    .pt_2()
+                                    .pt_5()
+                                    .pb_16()
                                     .child(
                                         div()
                                             .w_full()
@@ -166,6 +128,84 @@ impl Page for NotificationsPage {
                                                     cx,
                                                 )
                                             })),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .left_0()
+                                    .right_0()
+                                    .h(px(20.0))
+                                    .bg(linear_gradient(
+                                        180.0,
+                                        linear_color_stop(surface, 0.0),
+                                        linear_color_stop(surface.opacity(0.0), 1.0),
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .bottom_0()
+                                    .left_0()
+                                    .right_0()
+                                    .h(px(56.0))
+                                    .bg(linear_gradient(
+                                        180.0,
+                                        linear_color_stop(surface.opacity(0.0), 0.0),
+                                        linear_color_stop(surface, 1.0),
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id("notifications-actions-dock")
+                                    .absolute()
+                                    .right_4()
+                                    .bottom_4()
+                                    .occlude()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .p_1()
+                                    .rounded_full()
+                                    .bg(linear_gradient(
+                                        180.0,
+                                        linear_color_stop(surface_hover, 0.0),
+                                        linear_color_stop(surface, 1.0),
+                                    ))
+                                    .border_1()
+                                    .border_color(border)
+                                    .shadow_lg()
+                                    .child(
+                                        IconButton::new(
+                                            "notifications-mark-all-read",
+                                            "icons/check-check.svg",
+                                        )
+                                        .size(px(34.0))
+                                        .icon_size(px(16.0))
+                                        .rounded(ButtonRounded::Size(px(99.0)))
+                                        .color(if has_unread { text_color } else { text_muted })
+                                        .hover_bg(surface_hover)
+                                        .disabled(!has_unread)
+                                        .tooltip(cx.lang().get("notifications.mark_all_read"))
+                                        .on_click(move |_, _, cx| {
+                                            mark_all_model.update(cx, |m, cx| m.mark_all_read(cx));
+                                        }),
+                                    )
+                                    .child(
+                                        IconButton::new(
+                                            "notifications-clear-all",
+                                            "icons/eraser.svg",
+                                        )
+                                        .size(px(34.0))
+                                        .icon_size(px(16.0))
+                                        .rounded(ButtonRounded::Size(px(99.0)))
+                                        .color(text_muted)
+                                        .hover_bg(surface_hover)
+                                        .tooltip(cx.lang().get("notifications.clear_all"))
+                                        .on_click(move |_, _, cx| {
+                                            clear_model.update(cx, |m, cx| m.clear(cx));
+                                        }),
                                     ),
                             )
                     }),
