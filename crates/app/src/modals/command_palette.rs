@@ -345,7 +345,7 @@ impl Render for CommandPaletteForm {
         };
         let target_h = (px(44.0) + estimated_rows).min((viewport.height - px(48.0)).min(px(390.0)));
 
-        let spring = SpringAnimation::new(SpringConfig::new(300.0, 30.0, 1.0))
+        let spring = SpringAnimation::new(SpringConfig::new(320.0, 36.0, 1.0))
             .to(is_open)
             .from(false);
 
@@ -392,21 +392,25 @@ impl Render for CommandPaletteForm {
             .size_full()
             .with_spring("command-palette-expand", spring, move |overlay, phase| {
                 let alpha = phase.interpolate_clamped(0.0, 1.0);
-                if alpha <= 0.001 {
+                if alpha <= 0.005 {
                     return overlay.invisible();
                 }
-                let left = phase.interpolate(origin_x, target_x);
-                let width = phase.interpolate(origin_w, target_w).max(px(180.0));
-                let height = phase.interpolate(origin_h, target_h).max(origin_h);
-                let list_alpha = ((alpha - 0.2) / 0.8).clamp(0.0, 1.0);
+                let left = phase.interpolate_clamped(origin_x, target_x);
+                let width = phase.interpolate_clamped(origin_w, target_w);
+                let height = phase.interpolate_clamped(origin_h, target_h);
+                let header_h = phase.interpolate_clamped(origin_h, px(42.0));
+                let list_alpha = ((alpha - 0.25) / 0.75).clamp(0.0, 1.0);
+                let card_alpha = (alpha / 0.15).clamp(0.0, 1.0);
 
                 overlay
                     .visible()
-                    .occlude()
-                    .on_click(|_, window, cx| {
-                        CommandPaletteModal::close(window, cx);
+                    .when(is_open, |el| {
+                        el.occlude()
+                            .on_click(|_, window, cx| {
+                                CommandPaletteModal::close(window, cx);
+                            })
+                            .on_key_down(key_handler)
                     })
-                    .on_key_down(key_handler)
                     .child(
                         div()
                             .id("command-palette-card")
@@ -416,6 +420,7 @@ impl Render for CommandPaletteForm {
                             .top(origin_y)
                             .w(width)
                             .h(height)
+                            .opacity(card_alpha)
                             .rounded(px(16.0))
                             .bg(surface)
                             .border_1()
@@ -436,7 +441,7 @@ impl Render for CommandPaletteForm {
                                     .items_center()
                                     .gap_2p5()
                                     .px_3p5()
-                                    .h(px(42.0))
+                                    .h(header_h)
                                     .flex_shrink_0()
                                     .child(
                                         svg()
@@ -560,11 +565,6 @@ pub struct CommandPaletteModal;
 impl CommandPaletteModal {
     pub fn new() -> Self {
         Self
-    }
-
-    pub fn is_open(cx: &App) -> bool {
-        cx.try_global::<CommandPaletteState>()
-            .is_some_and(|state| state.open)
     }
 
     pub fn anchor_slot(cx: &mut App) -> Rc<Cell<Option<Bounds<Pixels>>>> {

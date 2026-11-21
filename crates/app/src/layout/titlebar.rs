@@ -151,7 +151,6 @@ impl RenderOnce for Titlebar {
             )
             .child({
                 let anchor_slot = CommandPaletteModal::anchor_slot(cx);
-                let palette_open = CommandPaletteModal::is_open(cx);
                 div()
                     .id("btn-titlebar-search")
                     .relative()
@@ -168,7 +167,6 @@ impl RenderOnce for Titlebar {
                     .border_color(border)
                     .cursor_pointer()
                     .hover(move |style| style.bg(surface_hover))
-                    .when(palette_open, |el| el.invisible())
                     .on_click(|_, window, cx| {
                         CommandPaletteModal::open(window, cx);
                     })
