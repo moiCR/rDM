@@ -173,9 +173,13 @@ mod tests {
             include_str!("../pages/mod.rs"),
             include_str!("../pages/calendar.rs"),
             include_str!("../pages/downloads/mod.rs"),
+            include_str!("../pages/notifications/mod.rs"),
+            include_str!("../modals/command_palette.rs"),
             include_str!("../modals/delete_download.rs"),
+            include_str!("../modals/download_inspector.rs"),
             include_str!("../modals/new_download.rs"),
             include_str!("../modals/new_download/widgets.rs"),
+            include_str!("../modals/notification_detail.rs"),
             include_str!("../modals/settings.rs"),
             include_str!("../layout/sidebar_item.rs"),
             include_str!("../layout/titlebar.rs"),
@@ -195,6 +199,10 @@ mod tests {
                 "status",
                 "updater",
                 "calendar",
+                "search",
+                "inspector",
+                "notifications",
+                "ytdlp",
             ] {
                 let needle = format!("\"{prefix}.");
                 let mut remaining = source;

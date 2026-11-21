@@ -149,26 +149,88 @@ impl Render for DownloadForm {
                                             )
                                             .child(
                                                 div()
-.flex()
-.child(Button::new("new-download-advanced")
-                                                    .ghost()
-.rounded(px(24.0))
-.accessibility_label(cx.lang().get("new_download.advanced"))
-                                                    .toggled(self.advanced)
-                                                    .child(div()
-.flex()
-.items_center()
-.gap_2()
-                                                        .child(svg()
-.path("icons/chevron-right.svg")
-.size_3()
-.text_color(muted)
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .gap_2()
+                                                    .child(
+                                                        Button::new("new-download-advanced")
+                                                            .ghost()
+                                                            .rounded(px(24.0))
+                                                            .accessibility_label(
+                                                                cx.lang()
+                                                                    .get("new_download.advanced"),
+                                                            )
+                                                            .toggled(self.advanced)
+                                                            .child(
+                                                                div()
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap_2()
+                                                                    .child(
+                                                                        svg()
+                                                                            .path(
+                                                                                "icons/chevron-right.svg",
+                                                                            )
+                                                                            .size_3()
+                                                                            .text_color(muted)
 .with_spring("new-download-chevron-rotation", advanced_animation.clone(), |icon, phase| {
     icon.with_transformation(Transformation::rotate(radians(phase.interpolate_clamped(0.0, std::f32::consts::FRAC_PI_2))))
 }))
                                                         .child(cx.lang().get("new_download.advanced")))
-                                                    .on_click(cx.listener(|this, _, _, cx| { this.advanced = !this.advanced; cx.notify(); }))),
+                                                    .on_click(cx.listener(|this, _, _, cx| { this.advanced = !this.advanced; cx.notify(); })))
+                                                    .child(
+                                                        Button::new("new-download-probe-media")
+                                                            .ghost()
+                                                            .rounded(px(24.0))
+                                                            .disabled(locked || url_error.is_some() || self.probing_media)
+                                                            .label(cx.lang().get(if self.probing_media {
+                                                                "new_download.media_probing"
+                                                            } else {
+                                                                "new_download.media_probe"
+                                                            }))
+                                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                                this.probe_media(window, cx);
+                                                            })),
+                                                    ),
                                             )
+                                            .children(self.media_probe.as_ref().map(|probe| {
+                                                let selected = self.selected_format;
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_2()
+                                                    .p_3()
+                                                    .rounded(px(16.0))
+                                                    .bg(field_background)
+                                                    .border_1()
+                                                    .border_color(border)
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .font_weight(FontWeight::SEMIBOLD)
+                                                            .text_color(foreground)
+                                                            .truncate()
+                                                            .child(probe.title.clone()),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .flex_wrap()
+                                                            .gap_1p5()
+                                                            .children(probe.formats.iter().enumerate().map(|(index, fmt)| {
+                                                                let is_selected = selected == Some(index);
+                                                                Button::new(("media-format", index))
+                                                                    .ghost()
+                                                                    .toggled(is_selected)
+                                                                    .rounded(px(24.0))
+                                                                    .label(fmt.label.clone())
+                                                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                                                        this.select_media_format(index, window, cx);
+                                                                    }))
+                                                            })),
+                                                    )
+                                            }))
                                             .child(
                                                 div()
 .overflow_hidden()

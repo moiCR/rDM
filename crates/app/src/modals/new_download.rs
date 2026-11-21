@@ -37,6 +37,9 @@ struct DownloadForm {
     submitting: bool,
     error: Option<String>,
     created_task: Option<Uuid>,
+    media_probe: Option<rdm_core::engine::MediaProbe>,
+    probing_media: bool,
+    selected_format: Option<usize>,
     scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -254,6 +257,9 @@ impl DownloadForm {
             submitting: false,
             error: None,
             created_task: None,
+            media_probe: None,
+            probing_media: false,
+            selected_format: None,
             scroll: ScrollHandle::new(),
             _subscriptions: subscriptions,
         }
@@ -287,6 +293,80 @@ impl DownloadForm {
             NewDownloadModal::open(Some(item), window, cx);
         }
         window.refresh();
+    }
+
+    fn probe_media(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.probing_media || self.submitting || self.closing {
+            return;
+        }
+        let url_text = self.url.read(cx).value().to_string();
+        let Ok(url) = validate_url(&url_text) else {
+            return;
+        };
+        let url = url.to_owned();
+        let engine = std::sync::Arc::clone(cx.engine());
+        let handle = cx.tasks_model().read(cx).tokio_handle().clone();
+        self.probing_media = true;
+        self.error = None;
+        self.media_probe = None;
+        self.selected_format = None;
+        cx.notify();
+        cx.spawn_in(window, async move |entity, cx| {
+            let result = handle
+                .spawn(async move { engine.probe_media(&url).await })
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|res| res);
+            let _ = entity.update(cx, |this, cx| {
+                this.probing_media = false;
+                match result {
+                    Ok(probe) => this.media_probe = Some(probe),
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn select_media_format(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(format) = self
+            .media_probe
+            .as_ref()
+            .and_then(|probe| probe.formats.get(index))
+            .cloned()
+        else {
+            return;
+        };
+        self.selected_format = Some(index);
+        self.url.update(cx, |input, cx| {
+            input.set_value(format.url.clone(), window, cx)
+        });
+        self.file_name.update(cx, |input, cx| {
+            input.set_value(format.filename.clone(), window, cx)
+        });
+        if !format.headers.is_empty() {
+            let header_lines = format
+                .headers
+                .iter()
+                .map(|(k, v)| format!("{k}: {v}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            self.headers
+                .update(cx, |input, cx| input.set_value(header_lines, window, cx));
+        }
+        self.post_process = match (format.audio_url, format.mp3_bitrate) {
+            (Some(audio_url), _) if format.audio_size > 0 => {
+                Some(PostProcessAction::MuxVideoAudio {
+                    video_size: format.video_size,
+                    audio_url,
+                    audio_size: format.audio_size,
+                })
+            }
+            (_, Some(bitrate_kbps)) => Some(PostProcessAction::ConvertMp3 { bitrate_kbps }),
+            _ => None,
+        };
+        cx.notify();
     }
 
     fn choose_directory(&mut self, window: &mut Window, cx: &mut Context<Self>) {

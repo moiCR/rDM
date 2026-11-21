@@ -86,7 +86,7 @@ impl NotificationsModel {
                         this.items.push(item);
                     }
                 }
-                this.items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                this.items.sort_by_key(|a| std::cmp::Reverse(a.created_at));
                 this.items.truncate(MAX_NOTIFICATIONS);
                 cx.notify();
                 cx.refresh_windows();
@@ -281,23 +281,33 @@ mod tests {
             runtime,
         };
         let id = Uuid::new_v4();
-        assert!(model.insert_deduplicated(NotificationKind::DownloadStarted {
-            task_id: id,
-            file_name: "a.zip".into(),
-        }));
-        assert!(!model.insert_deduplicated(NotificationKind::DownloadStarted {
-            task_id: id,
-            file_name: "a.zip".into(),
-        }));
-        assert!(model.insert_deduplicated(NotificationKind::UpdateAvailable {
-            info: sample_release("v1.3.0"),
-        }));
-        assert!(!model.insert_deduplicated(NotificationKind::UpdateAvailable {
-            info: sample_release("v1.3.0"),
-        }));
-        assert!(model.insert_deduplicated(NotificationKind::UpdateAvailable {
-            info: sample_release("v1.4.0"),
-        }));
+        assert!(
+            model.insert_deduplicated(NotificationKind::DownloadStarted {
+                task_id: id,
+                file_name: "a.zip".into(),
+            })
+        );
+        assert!(
+            !model.insert_deduplicated(NotificationKind::DownloadStarted {
+                task_id: id,
+                file_name: "a.zip".into(),
+            })
+        );
+        assert!(
+            model.insert_deduplicated(NotificationKind::UpdateAvailable {
+                info: sample_release("v1.3.0"),
+            })
+        );
+        assert!(
+            !model.insert_deduplicated(NotificationKind::UpdateAvailable {
+                info: sample_release("v1.3.0"),
+            })
+        );
+        assert!(
+            model.insert_deduplicated(NotificationKind::UpdateAvailable {
+                info: sample_release("v1.4.0"),
+            })
+        );
         assert_eq!(model.items().len(), 3);
         assert_eq!(model.unread_count(), 3);
     }

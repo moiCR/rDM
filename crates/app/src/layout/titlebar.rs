@@ -5,7 +5,7 @@ use crate::{
     components::IconButton,
     lang::ActiveLang,
     layout::toggle_sidebar,
-    modals::{NewDownloadModal, SettingsModalState, SettingsTab},
+    modals::{CommandPaletteModal, NewDownloadModal, SettingsModalState, SettingsTab},
     state::{CoreContext, UpdaterStatus},
     theme::ActiveTheme,
 };
@@ -37,7 +37,9 @@ impl Default for Titlebar {
 impl RenderOnce for Titlebar {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let background = cx.theme().background();
+        let surface = cx.theme().surface();
         let surface_hover = cx.theme().surface_hover();
+        let border = cx.theme().border();
         let text_color = cx.theme().text_color();
         let text_muted = cx.theme().text_muted();
         let error = cx.theme().error();
@@ -102,7 +104,7 @@ impl RenderOnce for Titlebar {
             )
             .child(
                 div()
-                    .id("titlebar-drag")
+                    .id("titlebar-drag-left")
                     .window_control_area(WindowControlArea::Drag)
                     .when(cfg!(target_os = "linux"), |element| {
                         let should_move = _window.use_state(cx, |_, _| false);
@@ -142,6 +144,68 @@ impl RenderOnce for Titlebar {
                                 },
                             ))
                     })
+                    .flex()
+                    .items_center()
+                    .flex_1()
+                    .h_full(),
+            )
+            .child(
+                div()
+                    .id("btn-titlebar-search")
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .w(px(280.0))
+                    .h(px(30.0))
+                    .px_3()
+                    .rounded_full()
+                    .bg(surface)
+                    .border_1()
+                    .border_color(border)
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(surface_hover))
+                    .on_click(|_, window, cx| {
+                        CommandPaletteModal::open(window, cx);
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
+                            .child(
+                                svg()
+                                    .path("icons/search.svg")
+                                    .size_3p5()
+                                    .flex_shrink_0()
+                                    .text_color(text_muted),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(text_muted)
+                                    .truncate()
+                                    .child(cx.lang().get("search.trigger")),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded(px(6.0))
+                            .bg(background)
+                            .border_1()
+                            .border_color(border)
+                            .text_size(px(10.0))
+                            .text_color(text_muted)
+                            .child("Ctrl+K"),
+                    ),
+            )
+            .child(
+                div()
+                    .id("titlebar-drag-right")
+                    .window_control_area(WindowControlArea::Drag)
                     .flex()
                     .items_center()
                     .flex_1()

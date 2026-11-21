@@ -5068,6 +5068,8 @@ dependencies = [
  "rdm-config",
  "rdm-core",
  "rustix",
+ "serde",
+ "serde_json",
  "smallvec",
  "thiserror 2.0.21",
  "tokio",

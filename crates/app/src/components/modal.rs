@@ -215,8 +215,12 @@ impl RenderOnce for Modal {
                     let target_y = ((viewport.height - target_h) / 2.0).max(px(16.0));
                     let left = phase.interpolate(origin.origin.x, target_x);
                     let top = phase.interpolate(origin.origin.y, target_y);
-                    let width = phase.interpolate(origin.size.width, target_w).max(px(120.0));
-                    let height = phase.interpolate(origin.size.height, target_h).max(px(80.0));
+                    let width = phase
+                        .interpolate(origin.size.width, target_w)
+                        .max(px(120.0));
+                    let height = phase
+                        .interpolate(origin.size.height, target_h)
+                        .max(px(80.0));
                     let content_alpha = ((alpha - 0.15) / 0.85).clamp(0.0, 1.0);
 
                     div()

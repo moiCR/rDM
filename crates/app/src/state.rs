@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{Arc, atomic::Ordering},
     time::{Duration, Instant},
@@ -13,7 +14,11 @@ use rdm_core::{
 };
 use uuid::Uuid;
 
-use crate::modals::NewDownloadModal;
+use crate::{
+    lang::ActiveLang,
+    modals::NewDownloadModal,
+    notifications::{NotificationKind, NotificationsModel, notify_entity},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdaterStatus {
@@ -102,10 +107,13 @@ pub struct TasksModel {
     runtime: Arc<tokio::runtime::Runtime>,
     tasks: Vec<TaskSnapshot>,
     previous_bytes: Vec<(Uuid, u64)>,
+    previous_statuses: HashMap<Uuid, TaskStatus>,
+    initialized_statuses: bool,
     last_sample_at: Instant,
     download_history: Option<DownloadHistory>,
     updater_status: UpdaterStatus,
     ffmpeg_status: rdm_core::engine::FfmpegStatus,
+    ytdlp_status: rdm_core::engine::YtDlpStatus,
     active_update_progress: Option<Arc<UpdateProgress>>,
 }
 
@@ -172,10 +180,13 @@ impl TasksModel {
             runtime: Arc::clone(&runtime),
             tasks: Vec::new(),
             previous_bytes: Vec::new(),
+            previous_statuses: HashMap::new(),
+            initialized_statuses: false,
             last_sample_at: Instant::now(),
             download_history: None,
             updater_status: UpdaterStatus::Idle,
             ffmpeg_status: rdm_core::engine::FfmpegStatus::Idle,
+            ytdlp_status: rdm_core::engine::YtDlpStatus::Idle,
             active_update_progress: None,
         };
 
@@ -224,6 +235,7 @@ impl TasksModel {
         .detach();
 
         let mut ffmpeg_status = core.engine().subscribe_ffmpeg_status();
+        let mut ytdlp_status = core.engine().subscribe_ytdlp_status();
         cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
             let core_init = Arc::clone(&core);
             let (initial_tasks, history) = runtime
@@ -268,9 +280,12 @@ impl TasksModel {
                     .unwrap_or_default();
 
                 let latest_ffmpeg_status = ffmpeg_status.borrow_and_update().clone();
+                let latest_ytdlp_status = ytdlp_status.borrow_and_update().clone();
                 let update_result = entity.update(cx, |this, cx| {
-                    let mut changed = this.ffmpeg_status != latest_ffmpeg_status;
+                    let mut changed = this.ffmpeg_status != latest_ffmpeg_status
+                        || this.ytdlp_status != latest_ytdlp_status;
                     this.ffmpeg_status = latest_ffmpeg_status;
+                    this.ytdlp_status = latest_ytdlp_status;
                     if let Some(progress) = &this.active_update_progress
                         && let UpdaterStatus::Downloading {
                             ref info,
@@ -293,7 +308,10 @@ impl TasksModel {
                         this.download_history = history;
                         changed = true;
                     }
-                    changed |= this.refresh_snapshots(tasks, true);
+                    let (snapshots_changed, events) =
+                        this.refresh_snapshots_with_events(tasks, true);
+                    changed |= snapshots_changed;
+                    this.emit_notifications(events, cx);
                     if changed {
                         cx.notify();
                         cx.refresh_windows();
@@ -312,6 +330,40 @@ impl TasksModel {
 
     pub fn ffmpeg_status(&self) -> &rdm_core::engine::FfmpegStatus {
         &self.ffmpeg_status
+    }
+
+    pub fn ytdlp_status(&self) -> &rdm_core::engine::YtDlpStatus {
+        &self.ytdlp_status
+    }
+
+    pub fn prepare_ytdlp(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.ytdlp_status,
+            rdm_core::engine::YtDlpStatus::Checking
+                | rdm_core::engine::YtDlpStatus::Downloading { .. }
+        ) {
+            return;
+        }
+        self.ytdlp_status = rdm_core::engine::YtDlpStatus::Checking;
+        let core = Arc::clone(&self.core);
+        let runtime = Arc::clone(&self.runtime);
+        cx.notify();
+        cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let status = match runtime
+                .spawn(async move { core.engine().ensure_ytdlp().await })
+                .await
+            {
+                Ok(Ok(_)) => rdm_core::engine::YtDlpStatus::Ready,
+                Ok(Err(error)) => rdm_core::engine::YtDlpStatus::Error(error),
+                Err(error) => rdm_core::engine::YtDlpStatus::Error(error.to_string()),
+            };
+            let _ = entity.update(cx, |this, cx| {
+                this.ytdlp_status = status;
+                cx.notify();
+                cx.refresh_windows();
+            });
+        })
+        .detach();
     }
 
     pub fn prepare_ffmpeg(&mut self, cx: &mut Context<Self>) {
@@ -373,7 +425,16 @@ impl TasksModel {
             };
 
             let _ = entity.update(cx, |this, cx| {
+                let update_event = match &status {
+                    UpdaterStatus::Available(info) => {
+                        Some(NotificationKind::UpdateAvailable { info: info.clone() })
+                    }
+                    _ => None,
+                };
                 this.updater_status = status;
+                if let Some(event) = update_event {
+                    this.emit_notifications(vec![event], cx);
+                }
                 cx.notify();
                 cx.refresh_windows();
             });
@@ -552,7 +613,56 @@ impl TasksModel {
         self.runtime.handle()
     }
 
+    fn emit_notifications(&self, events: Vec<NotificationKind>, cx: &mut Context<Self>) {
+        if events.is_empty() {
+            return;
+        }
+        let Some(notifications) = cx
+            .try_global::<AppState>()
+            .map(|state| state.notifications.clone())
+        else {
+            return;
+        };
+        let os_enabled = self.core.config().ui_config().system_notifications;
+        for kind in events {
+            let (title, body) = match &kind {
+                NotificationKind::DownloadStarted { file_name, .. } => (
+                    cx.lang().get("notifications.download_started").to_string(),
+                    file_name.clone(),
+                ),
+                NotificationKind::DownloadCompleted { file_name, .. } => (
+                    cx.lang()
+                        .get("notifications.download_completed")
+                        .to_string(),
+                    file_name.clone(),
+                ),
+                NotificationKind::DownloadFailed {
+                    file_name, error, ..
+                } => (
+                    cx.lang().get("notifications.download_failed").to_string(),
+                    format!("{file_name}: {error}"),
+                ),
+                NotificationKind::UpdateAvailable { info } => (
+                    cx.lang().get("notifications.update_available").to_string(),
+                    cx.lang()
+                        .get_with("titlebar.update_available", &[("version", &info.version)])
+                        .to_string(),
+                ),
+            };
+            notify_entity(&notifications, kind, title, body, os_enabled, cx);
+        }
+    }
+
     fn refresh_snapshots(&mut self, live_tasks: Vec<Arc<Task>>, update_speed_sample: bool) -> bool {
+        self.refresh_snapshots_with_events(live_tasks, update_speed_sample)
+            .0
+    }
+
+    fn refresh_snapshots_with_events(
+        &mut self,
+        live_tasks: Vec<Arc<Task>>,
+        update_speed_sample: bool,
+    ) -> (bool, Vec<NotificationKind>) {
         let now = Instant::now();
         let elapsed_secs = now
             .duration_since(self.last_sample_at)
@@ -634,16 +744,55 @@ impl TasksModel {
             });
         }
 
+        let mut events = Vec::new();
+        let mut next_statuses = HashMap::with_capacity(new_snapshots.len());
+        for snap in &new_snapshots {
+            if self.initialized_statuses {
+                let prev = self.previous_statuses.get(&snap.id);
+                if prev != Some(&snap.status) {
+                    match &snap.status {
+                        TaskStatus::Downloading => {
+                            events.push(NotificationKind::DownloadStarted {
+                                task_id: snap.id,
+                                file_name: snap.file_name.clone(),
+                            });
+                        }
+                        TaskStatus::Completed => {
+                            events.push(NotificationKind::DownloadCompleted {
+                                task_id: snap.id,
+                                file_name: snap.file_name.clone(),
+                                output_path: snap.output_path.clone(),
+                            });
+                        }
+                        TaskStatus::Failed(reason) | TaskStatus::ConversionFailed(reason) => {
+                            events.push(NotificationKind::DownloadFailed {
+                                task_id: snap.id,
+                                file_name: snap.file_name.clone(),
+                                url: snap.url.clone(),
+                                output_path: snap.output_path.clone(),
+                                error: reason.clone(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            next_statuses.insert(snap.id, snap.status.clone());
+        }
+        self.previous_statuses = next_statuses;
+        self.initialized_statuses = true;
+
         if update_speed_sample {
             self.previous_bytes = new_previous_bytes;
             self.last_sample_at = now;
         }
-        if self.tasks == new_snapshots {
+        let changed = if self.tasks == new_snapshots {
             false
         } else {
             self.tasks = new_snapshots;
             true
-        }
+        };
+        (changed, events)
     }
 
     pub fn start_download(
@@ -810,11 +959,20 @@ impl TasksModel {
 pub struct AppState {
     pub core: Arc<Core>,
     pub tasks_model: Entity<TasksModel>,
+    pub notifications: Entity<NotificationsModel>,
 }
 
 impl AppState {
-    pub fn new(core: Arc<Core>, tasks_model: Entity<TasksModel>) -> Self {
-        Self { core, tasks_model }
+    pub fn new(
+        core: Arc<Core>,
+        tasks_model: Entity<TasksModel>,
+        notifications: Entity<NotificationsModel>,
+    ) -> Self {
+        Self {
+            core,
+            tasks_model,
+            notifications,
+        }
     }
 }
 
@@ -826,6 +984,7 @@ pub trait CoreContext {
         self.core().engine()
     }
     fn tasks_model(&self) -> &Entity<TasksModel>;
+    fn notifications(&self) -> &Entity<NotificationsModel>;
 }
 
 impl<'a, T> CoreContext for Context<'a, T> {
@@ -836,6 +995,10 @@ impl<'a, T> CoreContext for Context<'a, T> {
     fn tasks_model(&self) -> &Entity<TasksModel> {
         &self.global::<AppState>().tasks_model
     }
+
+    fn notifications(&self) -> &Entity<NotificationsModel> {
+        &self.global::<AppState>().notifications
+    }
 }
 
 impl CoreContext for App {
@@ -845,6 +1008,10 @@ impl CoreContext for App {
 
     fn tasks_model(&self) -> &Entity<TasksModel> {
         &self.global::<AppState>().tasks_model
+    }
+
+    fn notifications(&self) -> &Entity<NotificationsModel> {
+        &self.global::<AppState>().notifications
     }
 }
 

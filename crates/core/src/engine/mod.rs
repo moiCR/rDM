@@ -16,7 +16,9 @@ use crate::{
 use download::DownloadModule;
 use multimedia::MultimediaModule;
 pub(crate) use multimedia::normalize_post_process;
-pub use multimedia::{FfmpegStatus, YouTubeFormat, extract_youtube_video_id};
+pub use multimedia::{
+    FfmpegStatus, MediaFormat, MediaProbe, YouTubeFormat, YtDlpStatus, extract_youtube_video_id,
+};
 
 #[derive(Debug, Clone)]
 pub struct ResourceProbe {
@@ -169,6 +171,18 @@ impl Engine {
 
     pub async fn ensure_ffmpeg(&self) -> Result<PathBuf, String> {
         self.multimedia.ensure_ffmpeg().await
+    }
+
+    pub fn subscribe_ytdlp_status(&self) -> tokio::sync::watch::Receiver<YtDlpStatus> {
+        self.multimedia.subscribe_ytdlp_status()
+    }
+
+    pub async fn ensure_ytdlp(&self) -> Result<PathBuf, String> {
+        self.multimedia.ensure_ytdlp().await
+    }
+
+    pub async fn probe_media(&self, url: &str) -> Result<MediaProbe, String> {
+        self.multimedia.probe_media(url).await
     }
 
     pub async fn save_state(&self) -> Result<(), EngineError> {

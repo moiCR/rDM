@@ -5,12 +5,12 @@ use uuid::Uuid;
 
 use crate::{
     components::{
-        Button, ButtonVariant, ButtonVariants, IconButton, Modal, ProgressBar,
+        Button, ButtonVariants, IconButton, Modal, ProgressBar,
         download_card::{format_bytes, task_progress_percent},
     },
     lang::ActiveLang,
     modals::DeleteDownloadModalState,
-    state::{CoreContext, TaskSnapshot},
+    state::CoreContext,
     theme::ActiveTheme,
 };
 
@@ -24,12 +24,7 @@ pub struct DownloadInspectorModalState {
 impl Global for DownloadInspectorModalState {}
 
 impl DownloadInspectorModalState {
-    pub fn open(
-        task_id: Uuid,
-        origin: Option<Bounds<Pixels>>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
+    pub fn open(task_id: Uuid, origin: Option<Bounds<Pixels>>, window: &mut Window, cx: &mut App) {
         cx.set_global(Self {
             open: true,
             task_id: Some(task_id),
@@ -39,12 +34,8 @@ impl DownloadInspectorModalState {
     }
 
     pub fn close(window: &mut Window, cx: &mut App) {
-        let origin = cx
-            .try_global::<Self>()
-            .and_then(|state| state.origin);
-        let task_id = cx
-            .try_global::<Self>()
-            .and_then(|state| state.task_id);
+        let origin = cx.try_global::<Self>().and_then(|state| state.origin);
+        let task_id = cx.try_global::<Self>().and_then(|state| state.task_id);
         cx.set_global(Self {
             open: false,
             task_id,
@@ -176,25 +167,35 @@ impl RenderOnce for DownloadInspectorModal {
                                     .child(format!("{}", task.segments.len())),
                             ),
                     )
-                    .child(div().flex().gap_1().w_full().children(task.segments.iter().map(
-                        |segment| {
-                            let seg_color = match segment.status {
-                                SegmentStatus::Completed => completed,
-                                SegmentStatus::Downloading => downloading,
-                                SegmentStatus::Failed => error_color,
-                                SegmentStatus::Pending => text_muted,
-                            };
-                            div().flex_1().min_w_0().child(
-                                ProgressBar::new(
-                                    ("inspector-seg", (task_id.as_u64_pair().0, segment.index as u64)),
-                                    segment.progress_percent(),
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .w_full()
+                            .children(task.segments.iter().map(|segment| {
+                                let seg_color = match segment.status {
+                                    SegmentStatus::Completed => completed,
+                                    SegmentStatus::Downloading => downloading,
+                                    SegmentStatus::Failed => error_color,
+                                    SegmentStatus::Pending => text_muted,
+                                };
+                                div().flex_1().min_w_0().child(
+                                    ProgressBar::new(
+                                        (
+                                            "inspector-seg",
+                                            task_id
+                                                .as_u64_pair()
+                                                .0
+                                                .wrapping_add(segment.index as u64),
+                                        ),
+                                        segment.progress_percent(),
+                                    )
+                                    .height(px(6.0))
+                                    .color(seg_color)
+                                    .track_color(background),
                                 )
-                                .height(px(6.0))
-                                .color(seg_color)
-                                .track_color(background),
-                            )
-                        },
-                    )))
+                            })),
+                    )
             });
 
             let detail_row = |label: SharedString, value: String| {
@@ -318,12 +319,7 @@ impl RenderOnce for DownloadInspectorModal {
                                             }),
                                     ),
                             )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(text_color)
-                                    .child(reason),
-                            ),
+                            .child(div().text_xs().text_color(text_color).child(reason)),
                     )
                 })
                 .child(
@@ -411,24 +407,24 @@ impl RenderOnce for DownloadInspectorModal {
                         .items_center()
                         .gap_2()
                         .when(is_completed, |row| {
-                            let open_model = tasks_model.clone();
-                            let folder_model = tasks_model.clone();
+                            let file_to_open = task.output_path.clone();
+                            let file_to_reveal = task.output_path.clone();
                             row.child(
                                 Button::new("inspector-open-file")
                                     .label(cx.lang().get("downloads.open_file"))
-                                    .variant(ButtonVariant::Secondary)
+                                    .primary()
                                     .rounded(px(24.0))
                                     .on_click(move |_, _, cx| {
-                                        open_model.read(cx).open_file(task_id);
+                                        cx.open_with_system(&file_to_open);
                                     }),
                             )
                             .child(
                                 Button::new("inspector-open-folder")
-                                    .label(cx.lang().get("downloads.open_folder"))
-                                    .variant(ButtonVariant::Ghost)
+                                    .label(cx.lang().get("downloads.reveal_file"))
+                                    .ghost()
                                     .rounded(px(24.0))
                                     .on_click(move |_, _, cx| {
-                                        folder_model.read(cx).open_folder(task_id);
+                                        cx.reveal_path(&file_to_reveal);
                                     }),
                             )
                         })
@@ -437,10 +433,11 @@ impl RenderOnce for DownloadInspectorModal {
                             row.child(
                                 Button::new("inspector-retry-conversion")
                                     .label(cx.lang().get("downloads.retry_conversion"))
-                                    .variant(ButtonVariant::Primary)
+                                    .primary()
                                     .rounded(px(24.0))
                                     .on_click(move |_, _, cx| {
-                                        retry_model.update(cx, |m, cx| m.retry_conversion(task_id, cx));
+                                        retry_model
+                                            .update(cx, |m, cx| m.retry_conversion(task_id, cx));
                                     }),
                             )
                         })
@@ -449,7 +446,7 @@ impl RenderOnce for DownloadInspectorModal {
                             row.child(
                                 Button::new("inspector-toggle-task")
                                     .label(label)
-                                    .variant(ButtonVariant::Primary)
+                                    .primary()
                                     .rounded(px(24.0))
                                     .on_click(move |_, _, cx| {
                                         toggle_model.update(cx, |m, cx| {
@@ -467,7 +464,7 @@ impl RenderOnce for DownloadInspectorModal {
                     row.child(
                         Button::new("inspector-delete-task")
                             .label(cx.lang().get("common.delete"))
-                            .variant(ButtonVariant::Ghost)
+                            .ghost()
                             .rounded(px(24.0))
                             .on_click(move |_, window, cx| {
                                 DownloadInspectorModalState::close(window, cx);
@@ -483,7 +480,11 @@ impl RenderOnce for DownloadInspectorModal {
                 })
                 .into_any_element();
 
-            (SharedString::from(file_name), Some(body_el), Some(footer_el))
+            (
+                SharedString::from(file_name),
+                Some(body_el),
+                Some(footer_el),
+            )
         } else {
             (cx.lang().get("inspector.title"), None, None)
         };

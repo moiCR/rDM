@@ -8,7 +8,10 @@ use crate::{
         titlebar::Titlebar,
         toggle_sidebar,
     },
-    modals::{DeleteDownloadModal, DownloadInspectorModal, NewDownloadModal, SettingsModal},
+    modals::{
+        CommandPaletteModal, DeleteDownloadModal, DownloadInspectorModal, NewDownloadModal,
+        NotificationDetailModal, SettingsModal,
+    },
     state::CoreContext,
     theme::ActiveTheme,
 };
@@ -64,6 +67,11 @@ impl PageLayout for RootLayout {
                 {
                     NewDownloadModal::open(None, window, cx);
                     cx.stop_propagation();
+                } else if event.keystroke.modifiers.control
+                    && event.keystroke.key.eq_ignore_ascii_case("k")
+                {
+                    CommandPaletteModal::open(window, cx);
+                    cx.stop_propagation();
                 }
             })
             .flex()
@@ -111,5 +119,7 @@ impl PageLayout for RootLayout {
             .child(NewDownloadModal::new())
             .child(DeleteDownloadModal::new())
             .child(DownloadInspectorModal::new())
+            .child(NotificationDetailModal::new())
+            .child(CommandPaletteModal::new())
     }
 }

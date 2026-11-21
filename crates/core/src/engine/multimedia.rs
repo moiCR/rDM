@@ -50,9 +50,46 @@ pub enum FfmpegStatus {
     Error(String),
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum YtDlpStatus {
+    #[default]
+    Idle,
+    Checking,
+    Downloading {
+        downloaded_bytes: u64,
+        total_bytes: u64,
+    },
+    Ready,
+    Error(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaFormat {
+    pub label: String,
+    pub ext: String,
+    pub url: String,
+    pub filename: String,
+    pub size_bytes: u64,
+    pub video_size: u64,
+    pub audio_url: Option<String>,
+    pub audio_size: u64,
+    pub mp3_bitrate: Option<u32>,
+    pub headers: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaProbe {
+    pub title: String,
+    pub uploader: Option<String>,
+    pub duration_secs: Option<u64>,
+    pub formats: Vec<MediaFormat>,
+}
+
 pub(super) struct MultimediaModule {
     ffmpeg_install: tokio::sync::Mutex<()>,
     ffmpeg_status: tokio::sync::watch::Sender<FfmpegStatus>,
+    ytdlp_install: tokio::sync::Mutex<()>,
+    ytdlp_status: tokio::sync::watch::Sender<YtDlpStatus>,
     client: reqwest::Client,
     config: Arc<ConfigManager>,
     disk_manager: Arc<DiskManager>,
@@ -117,6 +154,8 @@ impl MultimediaModule {
         Self {
             ffmpeg_install: tokio::sync::Mutex::new(()),
             ffmpeg_status: tokio::sync::watch::channel(FfmpegStatus::Idle).0,
+            ytdlp_install: tokio::sync::Mutex::new(()),
+            ytdlp_status: tokio::sync::watch::channel(YtDlpStatus::Idle).0,
             client,
             config,
             disk_manager,
@@ -125,6 +164,180 @@ impl MultimediaModule {
 
     pub(super) fn subscribe_ffmpeg_status(&self) -> tokio::sync::watch::Receiver<FfmpegStatus> {
         self.ffmpeg_status.subscribe()
+    }
+
+    pub(super) fn subscribe_ytdlp_status(&self) -> tokio::sync::watch::Receiver<YtDlpStatus> {
+        self.ytdlp_status.subscribe()
+    }
+
+    pub(super) async fn ensure_ytdlp(self: &Arc<Self>) -> Result<PathBuf, String> {
+        let module = Arc::clone(self);
+        tokio::spawn(async move {
+            let _guard = module.ytdlp_install.lock().await;
+            module.ytdlp_status.send_replace(YtDlpStatus::Checking);
+            let result = module.find_or_install_ytdlp().await;
+            module.ytdlp_status.send_replace(match &result {
+                Ok(_) => YtDlpStatus::Ready,
+                Err(error) => YtDlpStatus::Error(error.clone()),
+            });
+            result
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+
+    pub(super) async fn probe_media(self: &Arc<Self>, url: &str) -> Result<MediaProbe, String> {
+        let binary = self.ensure_ytdlp().await?;
+        let mut command = tokio::process::Command::new(&binary);
+        command
+            .arg("--dump-single-json")
+            .arg("--no-playlist")
+            .arg("--no-warnings")
+            .arg("--skip-download")
+            .arg(url)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000);
+        let output = tokio::time::timeout(std::time::Duration::from_secs(45), command.output())
+            .await
+            .map_err(|_| "yt-dlp timed out while probing media.".to_string())?
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                "yt-dlp failed to probe media.".to_string()
+            } else {
+                stderr
+            });
+        }
+        let stdout = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+        parse_ytdlp_json(&stdout)
+    }
+
+    async fn find_or_install_ytdlp(&self) -> Result<PathBuf, String> {
+        let state_dir = self.config.config().state_dir;
+        let binary_name = if cfg!(windows) {
+            "yt-dlp.exe"
+        } else {
+            "yt-dlp"
+        };
+        let local_binary = state_dir.join("bin").join(binary_name);
+        if tokio::fs::try_exists(&local_binary)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            check_ytdlp_binary(&local_binary).await?;
+            return Ok(local_binary);
+        }
+        if check_ytdlp_binary(Path::new(binary_name)).await.is_ok() {
+            return Ok(PathBuf::from(binary_name));
+        }
+        let asset = ytdlp_asset(std::env::consts::OS, std::env::consts::ARCH).ok_or_else(|| {
+            "Automatic yt-dlp installation is unavailable for this platform. Install yt-dlp on PATH."
+                .to_string()
+        })?;
+        tokio::fs::create_dir_all(state_dir.join("bin"))
+            .await
+            .map_err(|error| error.to_string())?;
+        let base = "https://github.com/yt-dlp/yt-dlp/releases/latest/download";
+        let sums = self
+            .client
+            .get(format!("{base}/SHA2-256SUMS"))
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|error| error.to_string())?
+            .text()
+            .await
+            .map_err(|error| error.to_string())?;
+        let checksum = parse_sha256sums(&sums, asset)
+            .ok_or_else(|| format!("SHA-256 checksum for {asset} not found."))?;
+        let temporary = state_dir
+            .join("bin")
+            .join(format!("yt-dlp-{}.part", Uuid::new_v4()));
+        let result = self
+            .install_ytdlp_binary(base, asset, &checksum, &temporary, &local_binary)
+            .await;
+        if result.is_err() {
+            let _ = tokio::fs::remove_file(&temporary).await;
+        }
+        result?;
+        Ok(local_binary)
+    }
+
+    async fn install_ytdlp_binary(
+        &self,
+        base: &str,
+        asset: &str,
+        checksum: &str,
+        temporary: &Path,
+        destination: &Path,
+    ) -> Result<(), String> {
+        use futures_util::StreamExt;
+        use sha2::{Digest, Sha256};
+        use tokio::io::AsyncWriteExt;
+
+        let response = self
+            .client
+            .get(format!("{base}/{asset}"))
+            .timeout(std::time::Duration::from_secs(300))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|error| error.to_string())?;
+        let total_bytes = response.content_length().unwrap_or(0);
+        let mut downloaded_bytes = 0_u64;
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(temporary)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut hasher = Sha256::new();
+        let mut stream = response.bytes_stream();
+        self.ytdlp_status.send_replace(YtDlpStatus::Downloading {
+            downloaded_bytes,
+            total_bytes,
+        });
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| error.to_string())?;
+            downloaded_bytes = downloaded_bytes.saturating_add(chunk.len() as u64);
+            if downloaded_bytes > 100 * 1024 * 1024 {
+                return Err("yt-dlp download exceeds the size limit.".into());
+            }
+            file.write_all(&chunk)
+                .await
+                .map_err(|error| error.to_string())?;
+            hasher.update(&chunk);
+            self.ytdlp_status.send_replace(YtDlpStatus::Downloading {
+                downloaded_bytes,
+                total_bytes,
+            });
+        }
+        file.sync_all().await.map_err(|error| error.to_string())?;
+        drop(file);
+        if hex::encode(hasher.finalize()) != checksum {
+            return Err("yt-dlp SHA-256 verification failed.".into());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = tokio::fs::metadata(temporary)
+                .await
+                .map_err(|error| error.to_string())?
+                .permissions();
+            perms.set_mode(0o755);
+            tokio::fs::set_permissions(temporary, perms)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        tokio::fs::rename(temporary, destination)
+            .await
+            .map_err(|error| error.to_string())?;
+        check_ytdlp_binary(destination).await
     }
 
     pub(super) async fn ensure_ffmpeg(self: &Arc<Self>) -> Result<PathBuf, String> {
@@ -1059,6 +1272,212 @@ pub fn extract_youtube_video_id(url_str: &str) -> Option<String> {
     None
 }
 
+fn ytdlp_asset(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("windows", "x86_64" | "aarch64") => Some("yt-dlp.exe"),
+        ("linux", "x86_64") => Some("yt-dlp_linux"),
+        ("linux", "aarch64") => Some("yt-dlp_linux_aarch64"),
+        ("macos", "x86_64" | "aarch64") => Some("yt-dlp_macos"),
+        _ => None,
+    }
+}
+
+fn parse_sha256sums(contents: &str, asset: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        let hash = parts.next()?;
+        let name = parts.next()?.trim_start_matches('*');
+        (name == asset).then(|| hash.to_ascii_lowercase())
+    })
+}
+
+async fn check_ytdlp_binary(path: &Path) -> Result<(), String> {
+    let mut command = tokio::process::Command::new(path);
+    command
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    let status = command.status().await.map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("yt-dlp binary check failed.".into())
+    }
+}
+
+fn parse_ytdlp_json(raw: &str) -> Result<MediaProbe, String> {
+    let value: serde_json::Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
+    let title = value
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("video")
+        .to_string();
+    let safe_title = decode_and_sanitize_filename(&title);
+    let uploader = value
+        .get("uploader")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let duration_secs = value
+        .get("duration")
+        .and_then(serde_json::Value::as_f64)
+        .map(|d| d.max(0.0) as u64);
+
+    let raw_formats = value
+        .get("formats")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let is_direct_http = |f: &serde_json::Value| {
+        let proto = f
+            .get("protocol")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        matches!(proto, "http" | "https")
+            && f.get("url")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|u| u.starts_with("http://") || u.starts_with("https://"))
+    };
+
+    let extract_headers = |f: &serde_json::Value| -> Vec<(String, String)> {
+        f.get("http_headers")
+            .and_then(serde_json::Value::as_object)
+            .map(|map| {
+                map.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|val| (k.clone(), val.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    let format_size = |f: &serde_json::Value| -> u64 {
+        f.get("filesize")
+            .and_then(serde_json::Value::as_u64)
+            .or_else(|| f.get("filesize_approx").and_then(serde_json::Value::as_u64))
+            .unwrap_or(0)
+    };
+
+    let best_audio = raw_formats
+        .iter()
+        .filter(|f| {
+            is_direct_http(f)
+                && f.get("vcodec").and_then(serde_json::Value::as_str) == Some("none")
+                && f.get("acodec").and_then(serde_json::Value::as_str) != Some("none")
+        })
+        .max_by(|a, b| {
+            let abr_a = a
+                .get("abr")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0);
+            let abr_b = b
+                .get("abr")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0);
+            abr_a.total_cmp(&abr_b)
+        });
+
+    let mut formats = Vec::new();
+    let mut seen_heights = Vec::new();
+
+    let mut video_candidates: Vec<&serde_json::Value> = raw_formats
+        .iter()
+        .filter(|f| {
+            is_direct_http(f)
+                && f.get("vcodec").and_then(serde_json::Value::as_str) != Some("none")
+                && f.get("height")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some()
+        })
+        .collect();
+    video_candidates.sort_by(|a, b| {
+        let ha = a
+            .get("height")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let hb = b
+            .get("height")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        hb.cmp(&ha)
+    });
+
+    for f in video_candidates {
+        let Some(height) = f.get("height").and_then(serde_json::Value::as_u64) else {
+            continue;
+        };
+        if seen_heights.contains(&height) || formats.len() >= 5 {
+            continue;
+        }
+        let Some(url) = f.get("url").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let ext = f
+            .get("ext")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("mp4");
+        let has_audio = f.get("acodec").and_then(serde_json::Value::as_str) != Some("none");
+        let video_size = format_size(f);
+        let (audio_url, audio_size) = if has_audio {
+            (None, 0)
+        } else if let Some(audio) = best_audio {
+            (
+                audio
+                    .get("url")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+                format_size(audio),
+            )
+        } else {
+            (None, 0)
+        };
+        seen_heights.push(height);
+        formats.push(MediaFormat {
+            label: format!("{height}p {}", ext.to_uppercase()),
+            ext: ext.to_string(),
+            url: url.to_string(),
+            filename: format!("{safe_title}.{ext}"),
+            size_bytes: video_size.saturating_add(audio_size),
+            video_size,
+            audio_url,
+            audio_size,
+            mp3_bitrate: None,
+            headers: extract_headers(f),
+        });
+    }
+
+    if let Some(audio) = best_audio
+        && let Some(url) = audio.get("url").and_then(serde_json::Value::as_str)
+    {
+        let size = format_size(audio);
+        formats.push(MediaFormat {
+            label: "Audio MP3".to_string(),
+            ext: "mp3".to_string(),
+            url: url.to_string(),
+            filename: format!("{safe_title}.mp3"),
+            size_bytes: size,
+            video_size: 0,
+            audio_url: None,
+            audio_size: 0,
+            mp3_bitrate: Some(192),
+            headers: extract_headers(audio),
+        });
+    }
+
+    if formats.is_empty() {
+        return Err("No downloadable direct HTTP formats found for this URL.".into());
+    }
+
+    Ok(MediaProbe {
+        title,
+        uploader,
+        duration_secs,
+        formats,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1183,5 +1602,44 @@ mod tests {
         tokio::fs::remove_file(path).await?;
         assert!(matches!(result, Err(reason) if reason.contains("archivo vacío")));
         Ok(())
+    }
+
+    #[test]
+    fn selects_ytdlp_assets_and_parses_sha256sums_and_json() {
+        assert_eq!(ytdlp_asset("windows", "x86_64"), Some("yt-dlp.exe"));
+        assert_eq!(ytdlp_asset("linux", "x86_64"), Some("yt-dlp_linux"));
+        assert_eq!(
+            ytdlp_asset("linux", "aarch64"),
+            Some("yt-dlp_linux_aarch64")
+        );
+        assert_eq!(ytdlp_asset("macos", "aarch64"), Some("yt-dlp_macos"));
+        assert_eq!(ytdlp_asset("freebsd", "x86_64"), None);
+
+        let sums = "aaaa1111  yt-dlp_linux\nbbbb2222  yt-dlp.exe\n";
+        assert_eq!(
+            parse_sha256sums(sums, "yt-dlp.exe"),
+            Some("bbbb2222".to_string())
+        );
+
+        let json = r#"{
+            "title": "Sample Video",
+            "uploader": "Channel",
+            "duration": 120,
+            "formats": [
+                {"ext": "mp4", "vcodec": "avc1", "acodec": "none", "height": 1080, "url": "https://cdn.example/v1080.mp4", "filesize": 5000, "protocol": "https"},
+                {"ext": "m4a", "vcodec": "none", "acodec": "mp4a", "abr": 128, "url": "https://cdn.example/a128.m4a", "filesize": 1000, "protocol": "https"}
+            ]
+        }"#;
+        let probe = parse_ytdlp_json(json).expect("valid yt-dlp json");
+        assert_eq!(probe.title, "Sample Video");
+        assert_eq!(probe.uploader.as_deref(), Some("Channel"));
+        assert_eq!(probe.duration_secs, Some(120));
+        assert!(
+            probe
+                .formats
+                .iter()
+                .any(|f| f.label.contains("1080p") && f.audio_url.is_some())
+        );
+        assert!(probe.formats.iter().any(|f| f.mp3_bitrate.is_some()));
     }
 }

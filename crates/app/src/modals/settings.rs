@@ -1075,6 +1075,102 @@ impl SettingsModal {
             })
             .child(Self::divider(palette))
             .child({
+                use rdm_core::engine::YtDlpStatus;
+                let status = cx.tasks_model().read(cx).ytdlp_status();
+                let message: SharedString = match status {
+                    YtDlpStatus::Idle => cx.lang().get("ytdlp.hint"),
+                    YtDlpStatus::Checking => cx.lang().get("ytdlp.checking"),
+                    YtDlpStatus::Ready => cx.lang().get("ytdlp.ready"),
+                    YtDlpStatus::Error(error) => {
+                        format!("{} {error}", cx.lang().get("ytdlp.error")).into()
+                    }
+                    YtDlpStatus::Downloading {
+                        downloaded_bytes,
+                        total_bytes,
+                    } => {
+                        if *total_bytes > 0 {
+                            format!(
+                                "{} {}%",
+                                cx.lang().get("ytdlp.downloading"),
+                                downloaded_bytes.saturating_mul(100) / total_bytes
+                            )
+                            .into()
+                        } else {
+                            format!(
+                                "{} {} KiB",
+                                cx.lang().get("ytdlp.downloading"),
+                                downloaded_bytes / 1024
+                            )
+                            .into()
+                        }
+                    }
+                };
+                let busy = matches!(
+                    status,
+                    YtDlpStatus::Checking | YtDlpStatus::Downloading { .. }
+                );
+                let ready = matches!(status, YtDlpStatus::Ready);
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_4()
+                    .py_2p5()
+                    .child(Self::row_label("yt-dlp".into(), message, palette))
+                    .child({
+                        let tasks_model = cx.tasks_model().clone();
+                        Self::action_button(
+                            "settings-ytdlp-download",
+                            cx.lang().get(if busy {
+                                "ytdlp.checking"
+                            } else if ready {
+                                "ytdlp.check"
+                            } else {
+                                "ytdlp.download"
+                            }),
+                            false,
+                        )
+                        .disabled(busy)
+                        .on_click(move |_, window, cx| {
+                            tasks_model.update(cx, |model, cx| model.prepare_ytdlp(cx));
+                            window.refresh();
+                        })
+                    })
+            })
+            .child(Self::divider(palette))
+            .child({
+                let enabled = cx.core().config().ui_config().system_notifications;
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_4()
+                    .py_2p5()
+                    .child(Self::row_label(
+                        cx.lang().get("settings.system_notifications"),
+                        cx.lang().get("settings.system_notifications_hint"),
+                        palette,
+                    ))
+                    .child(
+                        Self::action_button(
+                            "settings-toggle-system-notifications",
+                            cx.lang().get(if enabled {
+                                "common.enabled"
+                            } else {
+                                "common.disabled"
+                            }),
+                            enabled,
+                        )
+                        .on_click(move |_, window, cx| {
+                            let _ = cx.core().config().update_ui_config(|ui| {
+                                ui.system_notifications = !enabled;
+                            });
+                            window.refresh();
+                        }),
+                    )
+            })
+            .child(Self::divider(palette))
+            .child({
                 let updater_status = cx.tasks_model().read(cx).updater_status().clone();
                 let status_text: SharedString = match &updater_status {
                     UpdaterStatus::Idle => cx.lang().get("updater.idle"),

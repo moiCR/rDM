@@ -34,8 +34,18 @@ impl RenderOnce for Sidebar {
                     ),
             )
             .child(
-                NavigationItem::Settings
-                    .sidebar_button(active == Some(NavigationItem::Settings), cx),
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        NavigationItem::Notifications
+                            .sidebar_button(active == Some(NavigationItem::Notifications), cx),
+                    )
+                    .child(
+                        NavigationItem::Settings
+                            .sidebar_button(active == Some(NavigationItem::Settings), cx),
+                    ),
             )
     }
 }

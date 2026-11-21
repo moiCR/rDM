@@ -16,6 +16,8 @@ tokio.workspace = true
 rdm-core.workspace = true
 rdm-config.workspace = true
 uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 anyhow = { workspace = true }
 smallvec = "1.16.4"
 chrono = "0.4.45"
