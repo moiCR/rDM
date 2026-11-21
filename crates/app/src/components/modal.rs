@@ -140,35 +140,45 @@ impl RenderOnce for Modal {
         let on_close_backdrop = self.on_close.clone();
         let on_close_btn = self.on_close.clone();
 
-        let header_element =
-            if let Some(custom_header) = self.header {
-                Some(custom_header)
-            } else if self.title.is_some() || self.icon_path.is_some() || self.on_close.is_some() {
-                let title_str = self.title.clone();
-                let icon_str = self.icon_path.clone();
+        let header_element = if let Some(custom_header) = self.header {
+            Some(custom_header)
+        } else if self.title.is_some() || self.icon_path.is_some() || self.on_close.is_some() {
+            let title_str = self.title.clone();
+            let icon_str = self.icon_path.clone();
 
-                Some(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_3()
-                                .children(icon_str.map(|path| {
-                                    svg().path(path).size_6().text_color(palette_accent)
-                                }))
-                                .children(title_str.map(|title| {
-                                    div()
-                                        .text_2xl()
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_color(palette_text)
-                                        .child(title)
-                                })),
-                        )
-                        .children(on_close_btn.map(|handler| {
+            Some(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .w_full()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .items_center()
+                            .gap_3()
+                            .children(icon_str.map(|path| {
+                                svg()
+                                    .path(path)
+                                    .size_6()
+                                    .flex_shrink_0()
+                                    .text_color(palette_accent)
+                            }))
+                            .children(title_str.map(|title| {
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_2xl()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(palette_text)
+                                    .child(title)
+                            })),
+                    )
+                    .children(on_close_btn.map(|handler| {
+                        div().flex_shrink_0().child(
                             IconButton::new("btn-close-modal", "icons/x.svg")
                                 .size(px(32.0))
                                 .icon_size(px(16.0))
@@ -177,13 +187,14 @@ impl RenderOnce for Modal {
                                 .hover_bg(palette_surface_hover)
                                 .on_click(move |_event, window, cx| {
                                     handler(window, cx);
-                                })
-                        }))
-                        .into_any_element(),
-                )
-            } else {
-                None
-            };
+                                }),
+                        )
+                    }))
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
 
         let footer_element = self.footer;
         let subview_element = self.subview;

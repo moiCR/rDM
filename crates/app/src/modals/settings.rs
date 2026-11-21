@@ -1140,6 +1140,7 @@ impl SettingsModal {
             .child(Self::divider(palette))
             .child({
                 let enabled = cx.core().config().ui_config().system_notifications;
+                let config = cx.core().config().clone();
                 div()
                     .flex()
                     .items_center()
@@ -1152,21 +1153,15 @@ impl SettingsModal {
                         palette,
                     ))
                     .child(
-                        Self::action_button(
-                            "settings-toggle-system-notifications",
-                            cx.lang().get(if enabled {
-                                "common.enabled"
-                            } else {
-                                "common.disabled"
+                        Switch::new("settings-toggle-system-notifications")
+                            .checked(enabled)
+                            .accessibility_label(cx.lang().get("settings.system_notifications"))
+                            .on_change(move |checked, window, _cx| {
+                                let _ = config.update_ui_config(|ui| {
+                                    ui.system_notifications = *checked;
+                                });
+                                window.refresh();
                             }),
-                            enabled,
-                        )
-                        .on_click(move |_, window, cx| {
-                            let _ = cx.core().config().update_ui_config(|ui| {
-                                ui.system_notifications = !enabled;
-                            });
-                            window.refresh();
-                        }),
                     )
             })
             .child(Self::divider(palette))

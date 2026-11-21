@@ -2,11 +2,12 @@ use std::{cell::Cell, rc::Rc};
 
 use chrono::{DateTime, Local};
 use gpui::{prelude::FluentBuilder as _, *};
+use gpui_kit::component::button::ButtonRounded;
 use gpui_pages::{Page, PageAnimation, PageOptions};
 
 use crate::{
     components::{
-        Button, ButtonVariants, download_card::download_card_surface, track_card_bounds,
+        Button, ButtonVariants, IconButton, download_card::download_card_surface, track_card_bounds,
     },
     lang::ActiveLang,
     modals::NotificationDetailModalState,
@@ -54,67 +55,6 @@ impl Page for NotificationsPage {
             .bg(background)
             .text_color(text_color)
             .p_5()
-            .gap_4()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2p5()
-                            .child(
-                                div()
-                                    .text_xl()
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(cx.lang().get("notifications.title")),
-                            )
-                            .when(unread > 0, |row| {
-                                row.child(
-                                    div()
-                                        .px_2()
-                                        .py_0p5()
-                                        .rounded_full()
-                                        .bg(accent.opacity(0.18))
-                                        .text_xs()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(accent)
-                                        .child(unread.to_string()),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .when(unread > 0, |row| {
-                                row.child(
-                                    Button::new("notifications-mark-all-read")
-                                        .label(cx.lang().get("notifications.mark_all_read"))
-                                        .ghost()
-                                        .rounded(px(24.0))
-                                        .on_click(move |_, _, cx| {
-                                            mark_all_model.update(cx, |m, cx| m.mark_all_read(cx));
-                                        }),
-                                )
-                            })
-                            .when(!is_empty, |row| {
-                                row.child(
-                                    Button::new("notifications-clear-all")
-                                        .label(cx.lang().get("notifications.clear_all"))
-                                        .ghost()
-                                        .rounded(px(24.0))
-                                        .on_click(move |_, _, cx| {
-                                            clear_model.update(cx, |m, cx| m.clear(cx));
-                                        }),
-                                )
-                            }),
-                    ),
-            )
             .child(
                 div()
                     .relative()
@@ -157,40 +97,77 @@ impl Page for NotificationsPage {
                         )
                     })
                     .when(!is_empty, |panel| {
-                        panel.child(container_query(move |size, _window, cx| {
-                            let columns = (((f32::from(size.width) - 42.0 + 16.0) / 312.0).floor()
-                                as u16)
-                                .max(1);
-                            div()
-                                .id("notifications-cards-scroll")
-                                .size_full()
-                                .overflow_y_scroll()
-                                .p_5()
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .grid()
-                                        .grid_cols(columns)
-                                        .content_start()
-                                        .items_start()
-                                        .gap_4()
-                                        .children(items.iter().map(|item| {
-                                            Self::render_card(
-                                                item,
-                                                surface,
-                                                surface_hover,
-                                                border,
-                                                text_color,
-                                                text_muted,
-                                                accent,
-                                                completed,
-                                                downloading,
-                                                error_color,
-                                                cx,
-                                            )
-                                        })),
-                                )
-                        }))
+                        panel
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_end()
+                                    .gap_1p5()
+                                    .px_5()
+                                    .pt_4()
+                                    .pb_1()
+                                    .when(unread > 0, |row| {
+                                        row.child(
+                                            Button::new("notifications-mark-all-read")
+                                                .label(cx.lang().get("notifications.mark_all_read"))
+                                                .ghost()
+                                                .rounded(px(24.0))
+                                                .on_click(move |_, _, cx| {
+                                                    mark_all_model
+                                                        .update(cx, |m, cx| m.mark_all_read(cx));
+                                                }),
+                                        )
+                                    })
+                                    .child(
+                                        IconButton::new(
+                                            "notifications-clear-all",
+                                            "icons/eraser.svg",
+                                        )
+                                        .size(px(32.0))
+                                        .icon_size(px(15.0))
+                                        .rounded(ButtonRounded::Size(px(99.0)))
+                                        .color(text_muted)
+                                        .hover_bg(surface_hover)
+                                        .tooltip(cx.lang().get("notifications.clear_all"))
+                                        .on_click(move |_, _, cx| {
+                                            clear_model.update(cx, |m, cx| m.clear(cx));
+                                        }),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("notifications-cards-scroll")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .w_full()
+                                    .overflow_y_scroll()
+                                    .px_5()
+                                    .pb_5()
+                                    .pt_2()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_3()
+                                            .children(items.iter().map(|item| {
+                                                Self::render_card(
+                                                    item,
+                                                    surface,
+                                                    surface_hover,
+                                                    border,
+                                                    text_color,
+                                                    text_muted,
+                                                    accent,
+                                                    completed,
+                                                    downloading,
+                                                    error_color,
+                                                    cx,
+                                                )
+                                            })),
+                                    ),
+                            )
                     }),
             )
     }

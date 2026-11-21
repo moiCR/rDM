@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::{
     components::{
         Button, ButtonVariants, IconButton, Modal, ProgressBar,
-        download_card::{format_bytes, task_progress_percent},
+        download_card::{format_bytes, task_progress_percent, truncate_file_name},
     },
     lang::ActiveLang,
     modals::DeleteDownloadModalState,
@@ -87,25 +87,25 @@ impl RenderOnce for DownloadInspectorModal {
 
         let modal_h = match task.as_ref() {
             Some(task) => {
-                let mut h = 390.0_f32;
+                let mut h = 470.0_f32;
                 if !task.segments.is_empty() {
-                    h += 48.0;
+                    h += 52.0;
                 }
                 if matches!(
                     task.status,
                     TaskStatus::Failed(_) | TaskStatus::ConversionFailed(_)
                 ) {
-                    h += 96.0;
+                    h += 104.0;
                 }
                 if task.checksum.is_some() {
-                    h += 28.0;
+                    h += 32.0;
                 }
                 if task.referer.is_some() {
-                    h += 28.0;
+                    h += 32.0;
                 }
-                px(h.min(580.0))
+                px(h.min(620.0))
             }
-            None => px(420.0),
+            None => px(470.0),
         };
 
         let (title, body, footer) = if let Some(task) = task {
@@ -504,7 +504,7 @@ impl RenderOnce for DownloadInspectorModal {
                 .into_any_element();
 
             (
-                SharedString::from(file_name),
+                SharedString::from(truncate_file_name(&file_name, 30)),
                 Some(body_el),
                 Some(footer_el),
             )

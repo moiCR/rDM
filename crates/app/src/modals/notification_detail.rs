@@ -99,9 +99,9 @@ impl RenderOnce for NotificationDetailModal {
         let error_color = theme.error();
 
         let (modal_w, modal_h) = match notification.as_ref().map(|item| &item.kind) {
-            Some(NotificationKind::DownloadStarted { .. }) => (px(520.0), px(230.0)),
-            Some(NotificationKind::DownloadCompleted { .. }) => (px(540.0), px(255.0)),
-            Some(NotificationKind::DownloadFailed { .. }) => (px(580.0), px(410.0)),
+            Some(NotificationKind::DownloadStarted { .. }) => (px(520.0), px(275.0)),
+            Some(NotificationKind::DownloadCompleted { .. }) => (px(540.0), px(305.0)),
+            Some(NotificationKind::DownloadFailed { .. }) => (px(580.0), px(430.0)),
             Some(NotificationKind::UpdateAvailable { .. }) | None => (px(620.0), px(540.0)),
         };
 
