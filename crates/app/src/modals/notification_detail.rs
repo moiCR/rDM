@@ -98,6 +98,16 @@ impl NotificationDetailModal {
         div().h(px(1.0)).w_full().bg(palette.border).opacity(0.6)
     }
 
+    fn icon_action(id: impl Into<ElementId>, icon: &'static str, tooltip: SharedString) -> Button {
+        Button::new(id)
+            .size(px(34.0))
+            .p_0()
+            .rounded(px(24.0))
+            .tooltip(tooltip.clone())
+            .accessibility_label(tooltip)
+            .child(svg().path(icon).size(px(15.0)))
+    }
+
     fn render_header(
         title: SharedString,
         status_color: Option<Rgba>,
@@ -303,24 +313,26 @@ impl RenderOnce for NotificationDetailModal {
                         .gap_2()
                         .pt_1()
                         .child(
-                            Button::new("notif-open-release")
-                                .label(cx.lang().get("notifications.view_release"))
-                                .rounded(px(24.0))
-                                .h(px(32.0))
-                                .on_click(move |_, _, cx| {
-                                    cx.open_url(&html_url);
-                                }),
+                            Self::icon_action(
+                                "notif-open-release",
+                                "icons/external-link.svg",
+                                cx.lang().get("notifications.view_release"),
+                            )
+                            .on_click(move |_, _, cx| {
+                                cx.open_url(&html_url);
+                            }),
                         )
                         .child(
-                            Button::new("notif-install-update")
-                                .label(cx.lang().get("notifications.download_update"))
-                                .primary()
-                                .rounded(px(24.0))
-                                .h(px(32.0))
-                                .on_click(move |_, window, cx| {
-                                    install_model.update(cx, |m, cx| m.install_update(cx));
-                                    NotificationDetailModalState::close(window, cx);
-                                }),
+                            Self::icon_action(
+                                "notif-install-update",
+                                "icons/download.svg",
+                                cx.lang().get("notifications.download_update"),
+                            )
+                            .primary()
+                            .on_click(move |_, window, cx| {
+                                install_model.update(cx, |m, cx| m.install_update(cx));
+                                NotificationDetailModalState::close(window, cx);
+                            }),
                         )
                         .into_any_element();
 
@@ -477,43 +489,50 @@ impl RenderOnce for NotificationDetailModal {
                                 .gap_2()
                                 .when(task_exists, |row| {
                                     row.child(
-                                        Button::new("notif-retry-download")
-                                            .label(cx.lang().get("downloads.resume"))
-                                            .primary()
-                                            .rounded(px(24.0))
-                                            .h(px(32.0))
-                                            .on_click(move |_, window, cx| {
+                                        Self::icon_action(
+                                            "notif-retry-download",
+                                            "icons/resume.svg",
+                                            cx.lang().get("downloads.resume"),
+                                        )
+                                        .primary()
+                                        .on_click(
+                                            move |_, window, cx| {
                                                 retry_model.update(cx, |m, cx| {
                                                     m.resume_task(task_id, cx);
                                                 });
                                                 NotificationDetailModalState::close(window, cx);
-                                            }),
+                                            },
+                                        ),
                                     )
                                     .child(
-                                        Button::new("notif-inspect-failed")
-                                            .label(cx.lang().get("notifications.inspect"))
-                                            .rounded(px(24.0))
-                                            .h(px(32.0))
-                                            .on_click(move |_, window, cx| {
+                                        Self::icon_action(
+                                            "notif-inspect-failed",
+                                            "icons/info.svg",
+                                            cx.lang().get("notifications.inspect"),
+                                        )
+                                        .on_click(
+                                            move |_, window, cx| {
                                                 NotificationDetailModalState::close(window, cx);
                                                 DownloadInspectorModalState::open(
                                                     task_id, None, window, cx,
                                                 );
-                                            }),
+                                            },
+                                        ),
                                     )
                                 }),
                         )
                         .child(
-                            Button::new("notif-delete-item")
-                                .label(cx.lang().get("common.delete"))
-                                .danger()
-                                .rounded(px(24.0))
-                                .h(px(32.0))
-                                .on_click(move |_, window, cx| {
-                                    let notifications = cx.notifications().clone();
-                                    notifications.update(cx, |m, cx| m.remove(notif_id, cx));
-                                    NotificationDetailModalState::close(window, cx);
-                                }),
+                            Self::icon_action(
+                                "notif-delete-item",
+                                "icons/trash.svg",
+                                cx.lang().get("common.delete"),
+                            )
+                            .danger()
+                            .on_click(move |_, window, cx| {
+                                let notifications = cx.notifications().clone();
+                                notifications.update(cx, |m, cx| m.remove(notif_id, cx));
+                                NotificationDetailModalState::close(window, cx);
+                            }),
                         )
                         .into_any_element();
 
@@ -575,50 +594,60 @@ impl RenderOnce for NotificationDetailModal {
                                 .items_center()
                                 .gap_2()
                                 .child(
-                                    Button::new("notif-open-file")
-                                        .label(cx.lang().get("downloads.open_file"))
-                                        .primary()
-                                        .rounded(px(24.0))
-                                        .h(px(32.0))
-                                        .on_click(move |_, _, cx| {
+                                    Self::icon_action(
+                                        "notif-open-file",
+                                        "icons/external-link.svg",
+                                        cx.lang().get("downloads.open_file"),
+                                    )
+                                    .primary()
+                                    .on_click(
+                                        move |_, _, cx| {
                                             cx.open_with_system(&file_to_open);
-                                        }),
+                                        },
+                                    ),
                                 )
                                 .child(
-                                    Button::new("notif-open-folder")
-                                        .label(cx.lang().get("downloads.reveal_file"))
-                                        .rounded(px(24.0))
-                                        .h(px(32.0))
-                                        .on_click(move |_, _, cx| {
+                                    Self::icon_action(
+                                        "notif-open-folder",
+                                        "icons/folder-open.svg",
+                                        cx.lang().get("downloads.reveal_file"),
+                                    )
+                                    .on_click(
+                                        move |_, _, cx| {
                                             cx.reveal_path(&file_to_reveal);
-                                        }),
+                                        },
+                                    ),
                                 )
                                 .when(task_exists, |row| {
                                     row.child(
-                                        Button::new("notif-inspect-completed")
-                                            .label(cx.lang().get("notifications.inspect"))
-                                            .rounded(px(24.0))
-                                            .h(px(32.0))
-                                            .on_click(move |_, window, cx| {
+                                        Self::icon_action(
+                                            "notif-inspect-completed",
+                                            "icons/info.svg",
+                                            cx.lang().get("notifications.inspect"),
+                                        )
+                                        .on_click(
+                                            move |_, window, cx| {
                                                 NotificationDetailModalState::close(window, cx);
                                                 DownloadInspectorModalState::open(
                                                     task_id, None, window, cx,
                                                 );
-                                            }),
+                                            },
+                                        ),
                                     )
                                 }),
                         )
                         .child(
-                            Button::new("notif-delete-completed")
-                                .label(cx.lang().get("common.delete"))
-                                .danger()
-                                .rounded(px(24.0))
-                                .h(px(32.0))
-                                .on_click(move |_, window, cx| {
-                                    let notifications = cx.notifications().clone();
-                                    notifications.update(cx, |m, cx| m.remove(notif_id, cx));
-                                    NotificationDetailModalState::close(window, cx);
-                                }),
+                            Self::icon_action(
+                                "notif-delete-completed",
+                                "icons/trash.svg",
+                                cx.lang().get("common.delete"),
+                            )
+                            .danger()
+                            .on_click(move |_, window, cx| {
+                                let notifications = cx.notifications().clone();
+                                notifications.update(cx, |m, cx| m.remove(notif_id, cx));
+                                NotificationDetailModalState::close(window, cx);
+                            }),
                         )
                         .into_any_element();
 
@@ -667,30 +696,30 @@ impl RenderOnce for NotificationDetailModal {
                         .pt_1()
                         .child(div().when(task_exists, |row| {
                             row.child(
-                                Button::new("notif-inspect-started")
-                                    .label(cx.lang().get("notifications.inspect"))
-                                    .primary()
-                                    .rounded(px(24.0))
-                                    .h(px(32.0))
-                                    .on_click(move |_, window, cx| {
-                                        NotificationDetailModalState::close(window, cx);
-                                        DownloadInspectorModalState::open(
-                                            task_id, None, window, cx,
-                                        );
-                                    }),
+                                Self::icon_action(
+                                    "notif-inspect-started",
+                                    "icons/info.svg",
+                                    cx.lang().get("notifications.inspect"),
+                                )
+                                .primary()
+                                .on_click(move |_, window, cx| {
+                                    NotificationDetailModalState::close(window, cx);
+                                    DownloadInspectorModalState::open(task_id, None, window, cx);
+                                }),
                             )
                         }))
                         .child(
-                            Button::new("notif-delete-started")
-                                .label(cx.lang().get("common.delete"))
-                                .danger()
-                                .rounded(px(24.0))
-                                .h(px(32.0))
-                                .on_click(move |_, window, cx| {
-                                    let notifications = cx.notifications().clone();
-                                    notifications.update(cx, |m, cx| m.remove(notif_id, cx));
-                                    NotificationDetailModalState::close(window, cx);
-                                }),
+                            Self::icon_action(
+                                "notif-delete-started",
+                                "icons/trash.svg",
+                                cx.lang().get("common.delete"),
+                            )
+                            .danger()
+                            .on_click(move |_, window, cx| {
+                                let notifications = cx.notifications().clone();
+                                notifications.update(cx, |m, cx| m.remove(notif_id, cx));
+                                NotificationDetailModalState::close(window, cx);
+                            }),
                         )
                         .into_any_element();
 

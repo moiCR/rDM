@@ -85,6 +85,16 @@ impl DownloadInspectorModal {
         div().h(px(1.0)).w_full().bg(palette.border).opacity(0.6)
     }
 
+    fn icon_action(id: impl Into<ElementId>, icon: &'static str, tooltip: SharedString) -> Button {
+        Button::new(id)
+            .size(px(34.0))
+            .p_0()
+            .rounded(px(24.0))
+            .tooltip(tooltip.clone())
+            .accessibility_label(tooltip)
+            .child(svg().path(icon).size(px(15.0)))
+    }
+
     fn detail_row(label: SharedString, value: String, palette: InspectorPalette) -> Div {
         div()
             .flex()
@@ -555,47 +565,51 @@ impl RenderOnce for DownloadInspectorModal {
                             let file_to_open = task.output_path.clone();
                             let file_to_reveal = task.output_path.clone();
                             row.child(
-                                Button::new("inspector-open-file")
-                                    .label(cx.lang().get("downloads.open_file"))
-                                    .primary()
-                                    .rounded(px(24.0))
-                                    .h(px(32.0))
-                                    .on_click(move |_, _, cx| {
-                                        cx.open_with_system(&file_to_open);
-                                    }),
+                                Self::icon_action(
+                                    "inspector-open-file",
+                                    "icons/external-link.svg",
+                                    cx.lang().get("downloads.open_file"),
+                                )
+                                .primary()
+                                .on_click(move |_, _, cx| {
+                                    cx.open_with_system(&file_to_open);
+                                }),
                             )
                             .child(
-                                Button::new("inspector-open-folder")
-                                    .label(cx.lang().get("downloads.reveal_file"))
-                                    .rounded(px(24.0))
-                                    .h(px(32.0))
-                                    .on_click(move |_, _, cx| {
-                                        cx.reveal_path(&file_to_reveal);
-                                    }),
+                                Self::icon_action(
+                                    "inspector-open-folder",
+                                    "icons/folder-open.svg",
+                                    cx.lang().get("downloads.reveal_file"),
+                                )
+                                .on_click(move |_, _, cx| {
+                                    cx.reveal_path(&file_to_reveal);
+                                }),
                             )
                         })
                         .when(is_conversion_failed, |row| {
                             let retry_model = tasks_model.clone();
                             row.child(
-                                Button::new("inspector-retry-conversion")
-                                    .label(cx.lang().get("downloads.retry_conversion"))
-                                    .primary()
-                                    .rounded(px(24.0))
-                                    .h(px(32.0))
-                                    .on_click(move |_, _, cx| {
-                                        retry_model
-                                            .update(cx, |m, cx| m.retry_conversion(task_id, cx));
-                                    }),
+                                Self::icon_action(
+                                    "inspector-retry-conversion",
+                                    "icons/resume.svg",
+                                    cx.lang().get("downloads.retry_conversion"),
+                                )
+                                .primary()
+                                .on_click(move |_, _, cx| {
+                                    retry_model.update(cx, |m, cx| m.retry_conversion(task_id, cx));
+                                }),
                             )
                         })
                         .when_some(toggle_action, |row, (is_running, label)| {
                             let toggle_model = tasks_model.clone();
+                            let icon = if is_running {
+                                "icons/pause.svg"
+                            } else {
+                                "icons/resume.svg"
+                            };
                             row.child(
-                                Button::new("inspector-toggle-task")
-                                    .label(label)
+                                Self::icon_action("inspector-toggle-task", icon, label)
                                     .primary()
-                                    .rounded(px(24.0))
-                                    .h(px(32.0))
                                     .on_click(move |_, _, cx| {
                                         toggle_model.update(cx, |m, cx| {
                                             if is_running {
@@ -610,21 +624,22 @@ impl RenderOnce for DownloadInspectorModal {
                 )
                 .when(can_delete, |row| {
                     row.child(
-                        Button::new("inspector-delete-task")
-                            .label(cx.lang().get("common.delete"))
-                            .danger()
-                            .rounded(px(24.0))
-                            .h(px(32.0))
-                            .on_click(move |_, window, cx| {
-                                DownloadInspectorModalState::close(window, cx);
-                                cx.set_global(DeleteDownloadModalState {
-                                    open: true,
-                                    task_id: Some(task_id),
-                                    file_name: file_name_delete.clone(),
-                                    delete_file: false,
-                                });
-                                window.refresh();
-                            }),
+                        Self::icon_action(
+                            "inspector-delete-task",
+                            "icons/trash.svg",
+                            cx.lang().get("common.delete"),
+                        )
+                        .danger()
+                        .on_click(move |_, window, cx| {
+                            DownloadInspectorModalState::close(window, cx);
+                            cx.set_global(DeleteDownloadModalState {
+                                open: true,
+                                task_id: Some(task_id),
+                                file_name: file_name_delete.clone(),
+                                delete_file: false,
+                            });
+                            window.refresh();
+                        }),
                     )
                 })
                 .into_any_element();
