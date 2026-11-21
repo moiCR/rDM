@@ -21,7 +21,9 @@ mod windows_desktop;
 use std::sync::Arc;
 
 use gpui::*;
-use gpui_pages::{ApplicationExt, PageManager};
+use gpui_pages::ApplicationExt;
+#[cfg(not(target_os = "linux"))]
+use gpui_pages::PageManager;
 use rdm_core::Core;
 
 gpui_pages::include_pages!();
