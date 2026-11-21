@@ -98,6 +98,13 @@ impl RenderOnce for NotificationDetailModal {
         let completed = theme.completed();
         let error_color = theme.error();
 
+        let (modal_w, modal_h) = match notification.as_ref().map(|item| &item.kind) {
+            Some(NotificationKind::DownloadStarted { .. }) => (px(520.0), px(230.0)),
+            Some(NotificationKind::DownloadCompleted { .. }) => (px(540.0), px(255.0)),
+            Some(NotificationKind::DownloadFailed { .. }) => (px(580.0), px(410.0)),
+            Some(NotificationKind::UpdateAvailable { .. }) | None => (px(620.0), px(540.0)),
+        };
+
         let (title, body, footer) = if let Some(item) = notification {
             let notif_id = item.id;
             let timestamp = format_timestamp(item.created_at);
@@ -560,8 +567,8 @@ impl RenderOnce for NotificationDetailModal {
                 Modal::new("notification-detail-modal")
                     .open(is_open)
                     .from_bounds(modal_state.origin)
-                    .width(px(620.0))
-                    .max_height(px(560.0))
+                    .width(modal_w)
+                    .max_height(modal_h)
                     .title(title)
                     .on_close(|window, cx| {
                         NotificationDetailModalState::close(window, cx);

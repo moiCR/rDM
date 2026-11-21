@@ -1,10 +1,12 @@
+use std::{cell::Cell, rc::Rc};
+
 use gpui::{prelude::FluentBuilder as _, *};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_pages::router;
 use uuid::Uuid;
 
 use crate::{
-    components::input::themed_input,
+    components::Input,
     lang::ActiveLang,
     layout::toggle_sidebar,
     modals::{DownloadInspectorModalState, NewDownloadModal, SettingsModalState, SettingsTab},
@@ -14,10 +16,17 @@ use crate::{
 
 #[derive(Default)]
 pub struct CommandPaletteState {
+    open: bool,
     form: Option<Entity<CommandPaletteForm>>,
+    origin: Option<Bounds<Pixels>>,
 }
 
 impl Global for CommandPaletteState {}
+
+#[derive(Default)]
+pub struct TitlebarSearchAnchor(pub Rc<Cell<Option<Bounds<Pixels>>>>);
+
+impl Global for TitlebarSearchAnchor {}
 
 #[derive(Clone)]
 enum PaletteAction {
@@ -296,7 +305,11 @@ impl CommandPaletteForm {
 }
 
 impl Render for CommandPaletteForm {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = cx.try_global::<CommandPaletteState>();
+        let is_open = state.is_some_and(|s| s.open);
+        let origin = state.and_then(|s| s.origin);
+
         let entries = self.entries(cx);
         let count = entries.len();
         if count > 0 && self.selected >= count {
@@ -315,179 +328,229 @@ impl Render for CommandPaletteForm {
         let text_muted = theme.text_muted();
         let accent = theme.accent();
 
+        let viewport = window.viewport_size();
+        let origin_w = origin.map(|b| b.size.width).unwrap_or_else(|| px(280.0));
+        let origin_h = origin.map(|b| b.size.height).unwrap_or_else(|| px(30.0));
+        let origin_x = origin
+            .map(|b| b.origin.x)
+            .unwrap_or_else(|| (viewport.width - origin_w) / 2.0);
+        let origin_y = origin.map(|b| b.origin.y).unwrap_or_else(|| px(9.0));
+
+        let target_w = px(460.0).min((viewport.width - px(48.0)).max(px(300.0)));
+        let target_x = ((viewport.width - target_w) / 2.0).max(px(16.0));
+        let estimated_rows = if count == 0 {
+            px(72.0)
+        } else {
+            px((count.min(6) as f32) * 52.0 + 16.0)
+        };
+        let target_h = (px(44.0) + estimated_rows).min((viewport.height - px(48.0)).min(px(390.0)));
+
+        let spring = SpringAnimation::new(SpringConfig::new(300.0, 30.0, 1.0))
+            .to(is_open)
+            .from(false);
+
+        let query_input = Input::new(&self.query)
+            .id("command-palette-input")
+            .appearance(false)
+            .text_size(px(14.0))
+            .text_color(text_color)
+            .w_full();
+
+        let no_results_label = cx.lang().get("search.no_results");
+        let scroll = self.scroll.clone();
+
+        let key_handler = cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+            match event.keystroke.key.as_str() {
+                "escape" => {
+                    CommandPaletteModal::close(window, cx);
+                    cx.stop_propagation();
+                }
+                "down" if count > 0 => {
+                    this.selected = (this.selected + 1) % count;
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+                "up" if count > 0 => {
+                    this.selected = (this.selected + count - 1) % count;
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+                "enter" => {
+                    if let Some(action) = selected_action.clone() {
+                        Self::execute(action, window, cx);
+                        cx.stop_propagation();
+                    }
+                }
+                _ => {}
+            }
+        });
+
         div()
-            .id("command-palette-backdrop")
-            .occlude()
+            .id("command-palette-overlay")
             .absolute()
             .inset_0()
             .size_full()
-            .bg(rgb(0x000000).opacity(0.55))
-            .flex()
-            .justify_center()
-            .items_start()
-            .pt(px(72.0))
-            .on_click(|_, window, cx| {
-                CommandPaletteModal::close(window, cx);
-            })
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                match event.keystroke.key.as_str() {
-                    "escape" => {
-                        CommandPaletteModal::close(window, cx);
-                        cx.stop_propagation();
-                    }
-                    "down" if count > 0 => {
-                        this.selected = (this.selected + 1) % count;
-                        cx.notify();
-                        cx.stop_propagation();
-                    }
-                    "up" if count > 0 => {
-                        this.selected = (this.selected + count - 1) % count;
-                        cx.notify();
-                        cx.stop_propagation();
-                    }
-                    "enter" => {
-                        if let Some(action) = selected_action.clone() {
-                            Self::execute(action, window, cx);
-                            cx.stop_propagation();
-                        }
-                    }
-                    _ => {}
+            .with_spring("command-palette-expand", spring, move |overlay, phase| {
+                let alpha = phase.interpolate_clamped(0.0, 1.0);
+                if alpha <= 0.001 {
+                    return overlay.invisible();
                 }
-            }))
-            .child(
-                div()
-                    .id("command-palette-card")
+                let left = phase.interpolate(origin_x, target_x);
+                let width = phase.interpolate(origin_w, target_w).max(px(180.0));
+                let height = phase.interpolate(origin_h, target_h).max(origin_h);
+                let list_alpha = ((alpha - 0.2) / 0.8).clamp(0.0, 1.0);
+
+                overlay
+                    .visible()
                     .occlude()
-                    .w(px(580.0))
-                    .max_h(px(460.0))
-                    .rounded(px(20.0))
-                    .bg(surface)
-                    .border_1()
-                    .border_color(border)
-                    .shadow_xl()
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
+                    .on_click(|_, window, cx| {
+                        CommandPaletteModal::close(window, cx);
                     })
-                    .on_click(|_, _, cx| {
-                        cx.stop_propagation();
-                    })
+                    .on_key_down(key_handler)
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap_2p5()
-                            .px_4()
-                            .py_3()
-                            .border_b_1()
+                            .id("command-palette-card")
+                            .occlude()
+                            .absolute()
+                            .left(left)
+                            .top(origin_y)
+                            .w(width)
+                            .h(height)
+                            .rounded(px(16.0))
+                            .bg(surface)
+                            .border_1()
                             .border_color(border)
-                            .child(
-                                svg()
-                                    .path("icons/search.svg")
-                                    .size_4()
-                                    .flex_shrink_0()
-                                    .text_color(text_muted),
-                            )
-                            .child(
-                                div().flex_1().min_w_0().child(
-                                    themed_input(&self.query, cx).id("command-palette-input"),
-                                ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("command-palette-results")
-                            .track_scroll(&self.scroll)
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .p_2()
+                            .shadow_xl()
+                            .overflow_hidden()
                             .flex()
                             .flex_col()
-                            .gap_1()
-                            .when(entries.is_empty(), |list| {
-                                list.child(
-                                    div()
-                                        .py_8()
-                                        .flex()
-                                        .justify_center()
-                                        .text_xs()
-                                        .text_color(text_muted)
-                                        .child(cx.lang().get("search.no_results")),
-                                )
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
                             })
-                            .children(entries.into_iter().enumerate().map(|(index, entry)| {
-                                let is_selected = index == selected_index;
-                                let action = entry.action.clone();
+                            .on_click(|_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .child(
                                 div()
-                                    .id(ElementId::Name(entry.id.clone()))
-                                    .w_full()
-                                    .px_3()
-                                    .py_2()
-                                    .rounded(px(12.0))
-                                    .cursor_pointer()
-                                    .when(is_selected, |row| row.bg(surface_hover))
-                                    .hover(move |style| style.bg(surface_hover))
                                     .flex()
                                     .items_center()
-                                    .justify_between()
-                                    .gap_3()
-                                    .on_click(move |_, window, cx| {
-                                        Self::execute(action.clone(), window, cx);
-                                    })
+                                    .gap_2p5()
+                                    .px_3p5()
+                                    .h(px(42.0))
+                                    .flex_shrink_0()
                                     .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2p5()
-                                            .min_w_0()
-                                            .child(
-                                                svg()
-                                                    .path(entry.icon)
-                                                    .size_4()
-                                                    .flex_shrink_0()
-                                                    .text_color(if is_selected {
-                                                        accent
-                                                    } else {
-                                                        text_muted
-                                                    }),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .min_w_0()
-                                                    .child(
-                                                        div()
-                                                            .text_sm()
-                                                            .font_weight(FontWeight::MEDIUM)
-                                                            .text_color(text_color)
-                                                            .truncate()
-                                                            .child(entry.title),
-                                                    )
-                                                    .when_some(entry.subtitle, |col, sub| {
-                                                        col.child(
-                                                            div()
-                                                                .text_xs()
-                                                                .text_color(text_muted)
-                                                                .truncate()
-                                                                .child(sub),
-                                                        )
-                                                    }),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
+                                        svg()
+                                            .path("icons/search.svg")
+                                            .size_4()
                                             .flex_shrink_0()
-                                            .text_xs()
-                                            .text_color(text_muted)
-                                            .child(entry.category),
+                                            .text_color(text_muted),
                                     )
-                            })),
-                    ),
-            )
+                                    .child(div().flex_1().min_w_0().child(query_input)),
+                            )
+                            .child(
+                                div()
+                                    .id("command-palette-results")
+                                    .track_scroll(&scroll)
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_scroll()
+                                    .px_2()
+                                    .pb_2()
+                                    .opacity(list_alpha)
+                                    .flex()
+                                    .flex_col()
+                                    .gap_0p5()
+                                    .when(entries.is_empty(), |list| {
+                                        list.child(
+                                            div()
+                                                .py_6()
+                                                .flex()
+                                                .justify_center()
+                                                .text_xs()
+                                                .text_color(text_muted)
+                                                .child(no_results_label),
+                                        )
+                                    })
+                                    .children(entries.into_iter().enumerate().map(
+                                        |(index, entry)| {
+                                            let is_selected = index == selected_index;
+                                            let action = entry.action.clone();
+                                            div()
+                                                .id(ElementId::Name(entry.id.clone()))
+                                                .w_full()
+                                                .px_2p5()
+                                                .py_2()
+                                                .rounded(px(10.0))
+                                                .cursor_pointer()
+                                                .when(is_selected, |row| row.bg(surface_hover))
+                                                .hover(move |style| style.bg(surface_hover))
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_3()
+                                                .on_click(move |_, window, cx| {
+                                                    Self::execute(action.clone(), window, cx);
+                                                })
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_2p5()
+                                                        .min_w_0()
+                                                        .child(
+                                                            svg()
+                                                                .path(entry.icon)
+                                                                .size_4()
+                                                                .flex_shrink_0()
+                                                                .text_color(if is_selected {
+                                                                    accent
+                                                                } else {
+                                                                    text_muted
+                                                                }),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .flex()
+                                                                .flex_col()
+                                                                .min_w_0()
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .font_weight(
+                                                                            FontWeight::MEDIUM,
+                                                                        )
+                                                                        .text_color(text_color)
+                                                                        .truncate()
+                                                                        .child(entry.title),
+                                                                )
+                                                                .when_some(
+                                                                    entry.subtitle,
+                                                                    |col, sub| {
+                                                                        col.child(
+                                                                            div()
+                                                                                .text_xs()
+                                                                                .text_color(
+                                                                                    text_muted,
+                                                                                )
+                                                                                .truncate()
+                                                                                .child(sub),
+                                                                        )
+                                                                    },
+                                                                ),
+                                                        ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_shrink_0()
+                                                        .text_xs()
+                                                        .text_color(text_muted)
+                                                        .child(entry.category),
+                                                )
+                                        },
+                                    )),
+                            ),
+                    )
+            })
     }
 }
 
@@ -499,22 +562,61 @@ impl CommandPaletteModal {
         Self
     }
 
+    pub fn is_open(cx: &App) -> bool {
+        cx.try_global::<CommandPaletteState>()
+            .is_some_and(|state| state.open)
+    }
+
+    pub fn anchor_slot(cx: &mut App) -> Rc<Cell<Option<Bounds<Pixels>>>> {
+        if cx.try_global::<TitlebarSearchAnchor>().is_none() {
+            cx.set_global(TitlebarSearchAnchor::default());
+        }
+        Rc::clone(&cx.global::<TitlebarSearchAnchor>().0)
+    }
+
     pub fn open(window: &mut Window, cx: &mut App) {
+        let origin = cx
+            .try_global::<TitlebarSearchAnchor>()
+            .and_then(|anchor| anchor.0.get());
         if let Some(form) = cx
             .try_global::<CommandPaletteState>()
             .and_then(|state| state.form.clone())
         {
+            cx.set_global(CommandPaletteState {
+                open: true,
+                form: Some(form.clone()),
+                origin,
+            });
             let input = form.read(cx).query.clone();
-            input.update(cx, |input, cx| input.focus(window, cx));
+            input.update(cx, |input, cx| {
+                input.set_value(String::new(), window, cx);
+                input.focus(window, cx);
+            });
+            window.refresh();
             return;
         }
         let form = cx.new(|cx| CommandPaletteForm::new(window, cx));
-        cx.set_global(CommandPaletteState { form: Some(form) });
+        cx.set_global(CommandPaletteState {
+            open: true,
+            form: Some(form),
+            origin,
+        });
         window.refresh();
     }
 
     pub fn close(window: &mut Window, cx: &mut App) {
-        cx.set_global(CommandPaletteState { form: None });
+        let form = cx
+            .try_global::<CommandPaletteState>()
+            .and_then(|state| state.form.clone());
+        let origin = cx
+            .try_global::<CommandPaletteState>()
+            .and_then(|state| state.origin);
+        cx.set_global(CommandPaletteState {
+            open: false,
+            form,
+            origin,
+        });
+        window.blur(cx);
         window.refresh();
     }
 }

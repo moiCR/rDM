@@ -2,7 +2,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use crate::{
-    components::IconButton,
+    components::{IconButton, track_card_bounds},
     lang::ActiveLang,
     layout::toggle_sidebar,
     modals::{CommandPaletteModal, NewDownloadModal, SettingsModalState, SettingsTab},
@@ -149,9 +149,12 @@ impl RenderOnce for Titlebar {
                     .flex_1()
                     .h_full(),
             )
-            .child(
+            .child({
+                let anchor_slot = CommandPaletteModal::anchor_slot(cx);
+                let palette_open = CommandPaletteModal::is_open(cx);
                 div()
                     .id("btn-titlebar-search")
+                    .relative()
                     .flex()
                     .items_center()
                     .justify_between()
@@ -159,15 +162,17 @@ impl RenderOnce for Titlebar {
                     .w(px(280.0))
                     .h(px(30.0))
                     .px_3()
-                    .rounded_full()
+                    .rounded(px(16.0))
                     .bg(surface)
                     .border_1()
                     .border_color(border)
                     .cursor_pointer()
                     .hover(move |style| style.bg(surface_hover))
+                    .when(palette_open, |el| el.invisible())
                     .on_click(|_, window, cx| {
                         CommandPaletteModal::open(window, cx);
                     })
+                    .child(track_card_bounds(anchor_slot))
                     .child(
                         div()
                             .flex()
@@ -200,8 +205,8 @@ impl RenderOnce for Titlebar {
                             .text_size(px(10.0))
                             .text_color(text_muted)
                             .child("Ctrl+K"),
-                    ),
-            )
+                    )
+            })
             .child(
                 div()
                     .id("titlebar-drag-right")

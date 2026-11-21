@@ -85,6 +85,29 @@ impl RenderOnce for DownloadInspectorModal {
         let completed = theme.completed();
         let error_color = theme.error();
 
+        let modal_h = match task.as_ref() {
+            Some(task) => {
+                let mut h = 390.0_f32;
+                if !task.segments.is_empty() {
+                    h += 48.0;
+                }
+                if matches!(
+                    task.status,
+                    TaskStatus::Failed(_) | TaskStatus::ConversionFailed(_)
+                ) {
+                    h += 96.0;
+                }
+                if task.checksum.is_some() {
+                    h += 28.0;
+                }
+                if task.referer.is_some() {
+                    h += 28.0;
+                }
+                px(h.min(580.0))
+            }
+            None => px(420.0),
+        };
+
         let (title, body, footer) = if let Some(task) = task {
             let task_id = task.id;
             let file_name = task.file_name.clone();
@@ -498,8 +521,8 @@ impl RenderOnce for DownloadInspectorModal {
                 Modal::new("download-inspector-modal")
                     .open(is_open)
                     .from_bounds(modal_state.origin)
-                    .width(px(640.0))
-                    .max_height(px(580.0))
+                    .width(px(620.0))
+                    .max_height(modal_h)
                     .title(title)
                     .on_close(|window, cx| {
                         DownloadInspectorModalState::close(window, cx);
