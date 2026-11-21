@@ -182,10 +182,10 @@ impl RenderOnce for NotificationDetailModal {
             .clone();
 
         let (modal_w, modal_h, fit_content) = match notification.as_ref().map(|item| &item.kind) {
-            Some(NotificationKind::DownloadStarted { .. }) => (px(480.0), px(320.0), true),
-            Some(NotificationKind::DownloadCompleted { .. }) => (px(520.0), px(340.0), true),
-            Some(NotificationKind::DownloadFailed { .. }) => (px(560.0), px(440.0), false),
-            Some(NotificationKind::UpdateAvailable { .. }) | None => (px(580.0), px(500.0), false),
+            Some(NotificationKind::DownloadStarted { .. }) => (px(480.0), px(164.0), true),
+            Some(NotificationKind::DownloadCompleted { .. }) => (px(520.0), px(188.0), true),
+            Some(NotificationKind::DownloadFailed { .. }) => (px(560.0), px(360.0), false),
+            Some(NotificationKind::UpdateAvailable { .. }) | None => (px(580.0), px(460.0), false),
         };
 
         let (title, status_color, body, footer) = if let Some(item) = notification {
