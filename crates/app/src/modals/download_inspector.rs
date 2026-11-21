@@ -199,25 +199,25 @@ impl RenderOnce for DownloadInspectorModal {
 
         let modal_h = match task.as_ref() {
             Some(task) => {
-                let mut h = 364.0_f32;
+                let mut h = 408.0_f32;
                 if !task.segments.is_empty() {
-                    h += 44.0;
+                    h += 54.0;
                 }
                 if matches!(
                     task.status,
                     TaskStatus::Failed(_) | TaskStatus::ConversionFailed(_)
                 ) {
-                    h += 96.0;
+                    h += 104.0;
                 }
                 if task.checksum.is_some() {
-                    h += 34.0;
+                    h += 38.0;
                 }
                 if task.referer.is_some() {
-                    h += 34.0;
+                    h += 38.0;
                 }
-                px(h.min(560.0))
+                px(h.min(580.0))
             }
-            None => px(364.0),
+            None => px(408.0),
         };
 
         let (title, status_color, body, footer) = if let Some(task) = task {
