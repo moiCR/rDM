@@ -6,7 +6,6 @@ use uuid::Uuid;
 use crate::{
     components::{Button, ButtonVariants, IconButton, Modal},
     lang::ActiveLang,
-    modals::DownloadInspectorModalState,
     notifications::NotificationKind,
     state::CoreContext,
     theme::ActiveTheme,
@@ -16,12 +15,18 @@ use crate::{
 pub struct NotificationDetailModalState {
     pub open: bool,
     pub notification_id: Option<Uuid>,
+    pub morphed_id: Option<Uuid>,
     pub origin: Option<Bounds<Pixels>>,
 }
 
 impl Global for NotificationDetailModalState {}
 
 impl NotificationDetailModalState {
+    pub fn is_card_morphed(notification_id: Uuid, cx: &App) -> bool {
+        cx.try_global::<Self>()
+            .is_some_and(|state| state.morphed_id == Some(notification_id))
+    }
+
     pub fn open(
         notification_id: Uuid,
         origin: Option<Bounds<Pixels>>,
@@ -35,6 +40,7 @@ impl NotificationDetailModalState {
         cx.set_global(Self {
             open: true,
             notification_id: Some(notification_id),
+            morphed_id: origin.map(|_| notification_id),
             origin,
         });
         window.refresh();
@@ -45,10 +51,26 @@ impl NotificationDetailModalState {
         cx.set_global(Self {
             open: false,
             notification_id: prev.notification_id,
+            morphed_id: prev.morphed_id,
             origin: prev.origin,
         });
         window.blur(cx);
         window.refresh();
+        if prev.morphed_id.is_some() {
+            let handle = window.window_handle();
+            cx.spawn(async move |cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(260))
+                    .await;
+                cx.update(|cx| {
+                    if cx.try_global::<Self>().is_some_and(|s| !s.open) {
+                        cx.update_global::<Self, _>(|s, _| s.morphed_id = None);
+                        let _ = handle.update(cx, |_, window, _| window.refresh());
+                    }
+                });
+            })
+            .detach();
+        }
     }
 }
 
@@ -98,14 +120,19 @@ impl NotificationDetailModal {
         div().h(px(1.0)).w_full().bg(palette.border).opacity(0.6)
     }
 
-    fn icon_action(id: impl Into<ElementId>, icon: &'static str, tooltip: SharedString) -> Button {
+    fn icon_action(
+        id: impl Into<ElementId>,
+        icon: &'static str,
+        tooltip: SharedString,
+        color: Hsla,
+    ) -> Button {
         Button::new(id)
             .size(px(34.0))
             .p_0()
             .rounded(px(24.0))
             .tooltip(tooltip.clone())
             .accessibility_label(tooltip)
-            .child(svg().path(icon).size(px(15.0)))
+            .child(svg().path(icon).size(px(15.0)).text_color(color))
     }
 
     fn render_header(
@@ -171,6 +198,9 @@ impl RenderOnce for NotificationDetailModal {
         let is_open = modal_state.open && notification.is_some();
 
         let theme = cx.theme();
+        let component_theme = gpui_kit::component::ActiveTheme::theme(cx);
+        let primary_fg = component_theme.button_primary_foreground;
+        let danger_fg = component_theme.button_danger_foreground;
         let palette = DetailPalette {
             card_surface: theme
                 .input_background()
@@ -317,6 +347,7 @@ impl RenderOnce for NotificationDetailModal {
                                 "notif-open-release",
                                 "icons/external-link.svg",
                                 cx.lang().get("notifications.view_release"),
+                                palette.text_color.into(),
                             )
                             .on_click(move |_, _, cx| {
                                 cx.open_url(&html_url);
@@ -327,6 +358,7 @@ impl RenderOnce for NotificationDetailModal {
                                 "notif-install-update",
                                 "icons/download.svg",
                                 cx.lang().get("notifications.download_update"),
+                                primary_fg,
                             )
                             .primary()
                             .on_click(move |_, window, cx| {
@@ -493,6 +525,7 @@ impl RenderOnce for NotificationDetailModal {
                                             "notif-retry-download",
                                             "icons/resume.svg",
                                             cx.lang().get("downloads.resume"),
+                                            primary_fg,
                                         )
                                         .primary()
                                         .on_click(
@@ -504,21 +537,6 @@ impl RenderOnce for NotificationDetailModal {
                                             },
                                         ),
                                     )
-                                    .child(
-                                        Self::icon_action(
-                                            "notif-inspect-failed",
-                                            "icons/info.svg",
-                                            cx.lang().get("notifications.inspect"),
-                                        )
-                                        .on_click(
-                                            move |_, window, cx| {
-                                                NotificationDetailModalState::close(window, cx);
-                                                DownloadInspectorModalState::open(
-                                                    task_id, None, window, cx,
-                                                );
-                                            },
-                                        ),
-                                    )
                                 }),
                         )
                         .child(
@@ -526,6 +544,7 @@ impl RenderOnce for NotificationDetailModal {
                                 "notif-delete-item",
                                 "icons/trash.svg",
                                 cx.lang().get("common.delete"),
+                                danger_fg,
                             )
                             .danger()
                             .on_click(move |_, window, cx| {
@@ -539,12 +558,11 @@ impl RenderOnce for NotificationDetailModal {
                     (title, Some(palette.error), Some(body_el), Some(footer_el))
                 }
                 NotificationKind::DownloadCompleted {
-                    task_id,
                     file_name,
                     output_path,
+                    ..
                 } => {
                     let title = cx.lang().get("notifications.download_completed");
-                    let task_exists = tasks_model.read(cx).task(task_id).is_some();
 
                     let body_el = Self::card(palette)
                         .gap_1p5()
@@ -598,6 +616,7 @@ impl RenderOnce for NotificationDetailModal {
                                         "notif-open-file",
                                         "icons/external-link.svg",
                                         cx.lang().get("downloads.open_file"),
+                                        primary_fg,
                                     )
                                     .primary()
                                     .on_click(
@@ -611,36 +630,21 @@ impl RenderOnce for NotificationDetailModal {
                                         "notif-open-folder",
                                         "icons/folder-open.svg",
                                         cx.lang().get("downloads.reveal_file"),
+                                        palette.text_color.into(),
                                     )
                                     .on_click(
                                         move |_, _, cx| {
                                             cx.reveal_path(&file_to_reveal);
                                         },
                                     ),
-                                )
-                                .when(task_exists, |row| {
-                                    row.child(
-                                        Self::icon_action(
-                                            "notif-inspect-completed",
-                                            "icons/info.svg",
-                                            cx.lang().get("notifications.inspect"),
-                                        )
-                                        .on_click(
-                                            move |_, window, cx| {
-                                                NotificationDetailModalState::close(window, cx);
-                                                DownloadInspectorModalState::open(
-                                                    task_id, None, window, cx,
-                                                );
-                                            },
-                                        ),
-                                    )
-                                }),
+                                ),
                         )
                         .child(
                             Self::icon_action(
                                 "notif-delete-completed",
                                 "icons/trash.svg",
                                 cx.lang().get("common.delete"),
+                                danger_fg,
                             )
                             .danger()
                             .on_click(move |_, window, cx| {
@@ -658,9 +662,8 @@ impl RenderOnce for NotificationDetailModal {
                         Some(footer_el),
                     )
                 }
-                NotificationKind::DownloadStarted { task_id, file_name } => {
+                NotificationKind::DownloadStarted { file_name, .. } => {
                     let title = cx.lang().get("notifications.download_started");
-                    let task_exists = tasks_model.read(cx).task(task_id).is_some();
 
                     let body_el = Self::card(palette)
                         .child(
@@ -691,28 +694,15 @@ impl RenderOnce for NotificationDetailModal {
                         .flex()
                         .flex_none()
                         .items_center()
-                        .justify_between()
+                        .justify_end()
                         .gap_2()
                         .pt_1()
-                        .child(div().when(task_exists, |row| {
-                            row.child(
-                                Self::icon_action(
-                                    "notif-inspect-started",
-                                    "icons/info.svg",
-                                    cx.lang().get("notifications.inspect"),
-                                )
-                                .primary()
-                                .on_click(move |_, window, cx| {
-                                    NotificationDetailModalState::close(window, cx);
-                                    DownloadInspectorModalState::open(task_id, None, window, cx);
-                                }),
-                            )
-                        }))
                         .child(
                             Self::icon_action(
                                 "notif-delete-started",
                                 "icons/trash.svg",
                                 cx.lang().get("common.delete"),
+                                danger_fg,
                             )
                             .danger()
                             .on_click(move |_, window, cx| {

@@ -263,10 +263,13 @@ impl NotificationsPage {
             .map(|dt| dt.with_timezone(&Local).format("%H:%M · %d/%m").to_string())
             .unwrap_or_default();
 
+        let is_morphed = NotificationDetailModalState::is_card_morphed(notif_id, cx);
+
         download_card_surface(surface, surface_hover, border)
             .id(("notification-card", notif_key))
             .relative()
             .cursor_pointer()
+            .when(is_morphed, |card| card.invisible())
             .w_full()
             .min_w_0()
             .p_4()

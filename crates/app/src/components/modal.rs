@@ -199,9 +199,15 @@ impl RenderOnce for Modal {
         let footer_element = self.footer;
         let subview_element = self.subview;
 
-        let slide_spring = SpringAnimation::new(SpringConfig::new(260.0, 26.0, 1.0))
-            .to(self.open)
-            .from(false);
+        let slide_spring = if from_bounds.is_some() {
+            SpringAnimation::new(SpringConfig::new(320.0, 36.0, 1.0))
+                .to(self.open)
+                .from(false)
+        } else {
+            SpringAnimation::new(SpringConfig::new(260.0, 26.0, 1.0))
+                .to(self.open)
+                .from(false)
+        };
 
         let card_id: ElementId = "modal-card".into();
         let card_spring_id = ElementId::Name(format!("{}-spring", self.id).into());
@@ -213,7 +219,7 @@ impl RenderOnce for Modal {
             .size_full()
             .with_spring(card_spring_id, slide_spring, move |this, phase| {
                 let alpha = phase.interpolate_clamped(0.0, 1.0);
-                if alpha <= 0.001 {
+                if alpha <= 0.005 {
                     return this.invisible();
                 }
 
@@ -224,15 +230,11 @@ impl RenderOnce for Modal {
                     let target_h = card_max_h.min((viewport.height - px(64.0)).max(px(140.0)));
                     let target_x = ((viewport.width - target_w) / 2.0).max(px(16.0));
                     let target_y = ((viewport.height - target_h) / 2.0).max(px(16.0));
-                    let left = phase.interpolate(origin.origin.x, target_x);
-                    let top = phase.interpolate(origin.origin.y, target_y);
-                    let width = phase
-                        .interpolate(origin.size.width, target_w)
-                        .max(px(120.0));
-                    let height = phase
-                        .interpolate(origin.size.height, target_h)
-                        .max(px(80.0));
-                    let content_alpha = ((alpha - 0.15) / 0.85).clamp(0.0, 1.0);
+                    let left = phase.interpolate_clamped(origin.origin.x, target_x);
+                    let top = phase.interpolate_clamped(origin.origin.y, target_y);
+                    let width = phase.interpolate_clamped(origin.size.width, target_w);
+                    let height = phase.interpolate_clamped(origin.size.height, target_h);
+                    let content_alpha = ((alpha - 0.12) / 0.88).clamp(0.0, 1.0);
 
                     div()
                         .id(card_id.clone())
@@ -243,9 +245,12 @@ impl RenderOnce for Modal {
                         .h(height)
                         .overflow_hidden()
                         .occlude()
-                        .opacity(alpha.min(1.0))
                         .rounded(px(24.0))
-                        .bg(palette_surface)
+                        .bg(linear_gradient(
+                            180.0,
+                            linear_color_stop(palette_surface_hover, 0.0),
+                            linear_color_stop(palette_surface, 1.0),
+                        ))
                         .when(!self.compact, |el| {
                             el.border_1().border_color(palette_border)
                         })

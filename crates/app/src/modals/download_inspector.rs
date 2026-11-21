@@ -18,31 +18,53 @@ use crate::{
 pub struct DownloadInspectorModalState {
     pub open: bool,
     pub task_id: Option<Uuid>,
+    pub morphed_id: Option<Uuid>,
     pub origin: Option<Bounds<Pixels>>,
 }
 
 impl Global for DownloadInspectorModalState {}
 
 impl DownloadInspectorModalState {
+    pub fn is_card_morphed(task_id: Uuid, cx: &App) -> bool {
+        cx.try_global::<Self>()
+            .is_some_and(|state| state.morphed_id == Some(task_id))
+    }
+
     pub fn open(task_id: Uuid, origin: Option<Bounds<Pixels>>, window: &mut Window, cx: &mut App) {
         cx.set_global(Self {
             open: true,
             task_id: Some(task_id),
+            morphed_id: origin.map(|_| task_id),
             origin,
         });
         window.refresh();
     }
 
     pub fn close(window: &mut Window, cx: &mut App) {
-        let origin = cx.try_global::<Self>().and_then(|state| state.origin);
-        let task_id = cx.try_global::<Self>().and_then(|state| state.task_id);
+        let prev = cx.try_global::<Self>().cloned().unwrap_or_default();
         cx.set_global(Self {
             open: false,
-            task_id,
-            origin,
+            task_id: prev.task_id,
+            morphed_id: prev.morphed_id,
+            origin: prev.origin,
         });
         window.blur(cx);
         window.refresh();
+        if prev.morphed_id.is_some() {
+            let handle = window.window_handle();
+            cx.spawn(async move |cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(260))
+                    .await;
+                cx.update(|cx| {
+                    if cx.try_global::<Self>().is_some_and(|s| !s.open) {
+                        cx.update_global::<Self, _>(|s, _| s.morphed_id = None);
+                        let _ = handle.update(cx, |_, window, _| window.refresh());
+                    }
+                });
+            })
+            .detach();
+        }
     }
 }
 
@@ -85,14 +107,19 @@ impl DownloadInspectorModal {
         div().h(px(1.0)).w_full().bg(palette.border).opacity(0.6)
     }
 
-    fn icon_action(id: impl Into<ElementId>, icon: &'static str, tooltip: SharedString) -> Button {
+    fn icon_action(
+        id: impl Into<ElementId>,
+        icon: &'static str,
+        tooltip: SharedString,
+        color: Hsla,
+    ) -> Button {
         Button::new(id)
             .size(px(34.0))
             .p_0()
             .rounded(px(24.0))
             .tooltip(tooltip.clone())
             .accessibility_label(tooltip)
-            .child(svg().path(icon).size(px(15.0)))
+            .child(svg().path(icon).size(px(15.0)).text_color(color))
     }
 
     fn detail_row(label: SharedString, value: String, palette: InspectorPalette) -> Div {
@@ -184,6 +211,9 @@ impl RenderOnce for DownloadInspectorModal {
         let is_open = modal_state.open && task.is_some();
 
         let theme = cx.theme();
+        let component_theme = gpui_kit::component::ActiveTheme::theme(cx);
+        let primary_fg = component_theme.button_primary_foreground;
+        let danger_fg = component_theme.button_danger_foreground;
         let palette = InspectorPalette {
             surface: theme.surface(),
             card_surface: theme
@@ -569,6 +599,7 @@ impl RenderOnce for DownloadInspectorModal {
                                     "inspector-open-file",
                                     "icons/external-link.svg",
                                     cx.lang().get("downloads.open_file"),
+                                    primary_fg,
                                 )
                                 .primary()
                                 .on_click(move |_, _, cx| {
@@ -580,6 +611,7 @@ impl RenderOnce for DownloadInspectorModal {
                                     "inspector-open-folder",
                                     "icons/folder-open.svg",
                                     cx.lang().get("downloads.reveal_file"),
+                                    palette.text_color.into(),
                                 )
                                 .on_click(move |_, _, cx| {
                                     cx.reveal_path(&file_to_reveal);
@@ -593,6 +625,7 @@ impl RenderOnce for DownloadInspectorModal {
                                     "inspector-retry-conversion",
                                     "icons/resume.svg",
                                     cx.lang().get("downloads.retry_conversion"),
+                                    primary_fg,
                                 )
                                 .primary()
                                 .on_click(move |_, _, cx| {
@@ -608,7 +641,7 @@ impl RenderOnce for DownloadInspectorModal {
                                 "icons/resume.svg"
                             };
                             row.child(
-                                Self::icon_action("inspector-toggle-task", icon, label)
+                                Self::icon_action("inspector-toggle-task", icon, label, primary_fg)
                                     .primary()
                                     .on_click(move |_, _, cx| {
                                         toggle_model.update(cx, |m, cx| {
@@ -628,6 +661,7 @@ impl RenderOnce for DownloadInspectorModal {
                             "inspector-delete-task",
                             "icons/trash.svg",
                             cx.lang().get("common.delete"),
+                            danger_fg,
                         )
                         .danger()
                         .on_click(move |_, window, cx| {
