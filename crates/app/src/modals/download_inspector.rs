@@ -1,5 +1,5 @@
 use gpui::{prelude::FluentBuilder as _, *};
-use gpui_kit::component::button::ButtonRounded;
+use gpui_kit::base::{Scrollbar, ScrollbarMode};
 use rdm_core::task::{SegmentStatus, TaskStatus};
 use uuid::Uuid;
 
@@ -41,8 +41,24 @@ impl DownloadInspectorModalState {
             task_id,
             origin,
         });
+        window.blur(cx);
         window.refresh();
     }
+}
+
+#[derive(Clone, Copy)]
+struct InspectorPalette {
+    surface: Rgba,
+    card_surface: Rgba,
+    surface_hover: Rgba,
+    border: Rgba,
+    text_color: Rgba,
+    text_muted: Rgba,
+    accent: Rgba,
+    downloading: Rgba,
+    paused: Rgba,
+    completed: Rgba,
+    error: Rgba,
 }
 
 #[derive(IntoElement)]
@@ -51,6 +67,90 @@ pub struct DownloadInspectorModal;
 impl DownloadInspectorModal {
     pub fn new() -> Self {
         Self
+    }
+
+    fn card(palette: InspectorPalette) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .rounded(px(24.0))
+            .bg(palette.card_surface)
+            .border_1()
+            .border_color(palette.border)
+            .px_4()
+            .py_3()
+    }
+
+    fn divider(palette: InspectorPalette) -> Div {
+        div().h(px(1.0)).w_full().bg(palette.border).opacity(0.6)
+    }
+
+    fn detail_row(label: SharedString, value: String, palette: InspectorPalette) -> Div {
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_4()
+            .py_2()
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(palette.text_muted)
+                    .child(label),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(palette.text_color)
+                    .truncate()
+                    .child(value),
+            )
+    }
+
+    fn render_header(
+        title: SharedString,
+        status_color: Option<Rgba>,
+        palette: InspectorPalette,
+        cx: &App,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .pl_1()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
+                    .children(
+                        status_color
+                            .map(|color| div().size(px(8.0)).flex_none().rounded_full().bg(color)),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(palette.text_color)
+                            .truncate()
+                            .child(title),
+                    ),
+            )
+            .child(
+                IconButton::new("btn-close-download-inspector", "icons/x.svg")
+                    .size(px(32.0))
+                    .rounded(px(24.0))
+                    .color(palette.text_muted)
+                    .hover_bg(palette.surface_hover)
+                    .tooltip(cx.lang().get("common.close"))
+                    .on_click(|_, window, cx| DownloadInspectorModalState::close(window, cx)),
+            )
     }
 }
 
@@ -61,7 +161,7 @@ impl Default for DownloadInspectorModal {
 }
 
 impl RenderOnce for DownloadInspectorModal {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let modal_state = cx
             .try_global::<DownloadInspectorModalState>()
             .cloned()
@@ -74,22 +174,34 @@ impl RenderOnce for DownloadInspectorModal {
         let is_open = modal_state.open && task.is_some();
 
         let theme = cx.theme();
-        let background = theme.background();
-        let surface_hover = theme.surface_hover();
-        let border = theme.border();
-        let text_color = theme.text_color();
-        let text_muted = theme.text_muted();
-        let accent = theme.accent();
-        let downloading = theme.downloading();
-        let paused = theme.paused();
-        let completed = theme.completed();
-        let error_color = theme.error();
+        let palette = InspectorPalette {
+            surface: theme.surface(),
+            card_surface: theme
+                .input_background()
+                .unwrap_or_else(|| theme.background()),
+            surface_hover: theme.surface_hover(),
+            border: theme.border(),
+            text_color: theme.text_color(),
+            text_muted: theme.text_muted(),
+            accent: theme.accent(),
+            downloading: theme.downloading(),
+            paused: theme.paused(),
+            completed: theme.completed(),
+            error: theme.error(),
+        };
+        let viewport = window.viewport_size();
+        let scroll_handle = window
+            .use_keyed_state("download-inspector-scroll-handle", cx, |_, _| {
+                ScrollHandle::new()
+            })
+            .read(cx)
+            .clone();
 
         let modal_h = match task.as_ref() {
             Some(task) => {
-                let mut h = 470.0_f32;
+                let mut h = 420.0_f32;
                 if !task.segments.is_empty() {
-                    h += 52.0;
+                    h += 54.0;
                 }
                 if matches!(
                     task.status,
@@ -98,30 +210,32 @@ impl RenderOnce for DownloadInspectorModal {
                     h += 104.0;
                 }
                 if task.checksum.is_some() {
-                    h += 32.0;
+                    h += 34.0;
                 }
                 if task.referer.is_some() {
-                    h += 32.0;
+                    h += 34.0;
                 }
-                px(h.min(620.0))
+                px(h.min(580.0))
             }
-            None => px(470.0),
+            None => px(420.0),
         };
 
-        let (title, body, footer) = if let Some(task) = task {
+        let (title, status_color, body, footer) = if let Some(task) = task {
             let task_id = task.id;
             let file_name = task.file_name.clone();
             let percent = task_progress_percent(&task);
             let (status_key, status_color) = match &task.status {
-                TaskStatus::Downloading => ("status.downloading", downloading),
-                TaskStatus::Paused => ("status.paused", paused),
-                TaskStatus::Completed => ("status.completed", completed),
-                TaskStatus::Failed(_) => ("status.failed", error_color),
-                TaskStatus::ConversionFailed(_) => ("status.conversion_failed", error_color),
-                TaskStatus::Processing { .. } => ("status.processing", downloading),
-                TaskStatus::Connecting => ("status.connecting", downloading),
-                TaskStatus::Pending | TaskStatus::ConversionQueued => ("status.queued", text_muted),
-                TaskStatus::Cancelled => ("status.cancelled", text_muted),
+                TaskStatus::Downloading => ("status.downloading", palette.downloading),
+                TaskStatus::Paused => ("status.paused", palette.paused),
+                TaskStatus::Completed => ("status.completed", palette.completed),
+                TaskStatus::Failed(_) => ("status.failed", palette.error),
+                TaskStatus::ConversionFailed(_) => ("status.conversion_failed", palette.error),
+                TaskStatus::Processing { .. } => ("status.processing", palette.downloading),
+                TaskStatus::Connecting => ("status.connecting", palette.downloading),
+                TaskStatus::Pending | TaskStatus::ConversionQueued => {
+                    ("status.queued", palette.text_muted)
+                }
+                TaskStatus::Cancelled => ("status.cancelled", palette.text_muted),
             };
             let error_detail = match &task.status {
                 TaskStatus::Failed(reason) | TaskStatus::ConversionFailed(reason) => {
@@ -166,106 +280,13 @@ impl RenderOnce for DownloadInspectorModal {
                 _ => None,
             };
 
-            let segments_section = (!task.segments.is_empty()).then(|| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(text_muted)
-                                    .child(cx.lang().get("inspector.segments")),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(text_muted)
-                                    .child(format!("{}", task.segments.len())),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_1()
-                            .w_full()
-                            .children(task.segments.iter().map(|segment| {
-                                let seg_color = match segment.status {
-                                    SegmentStatus::Completed => completed,
-                                    SegmentStatus::Downloading => downloading,
-                                    SegmentStatus::Failed => error_color,
-                                    SegmentStatus::Pending => text_muted,
-                                };
-                                div().flex_1().min_w_0().child(
-                                    ProgressBar::new(
-                                        (
-                                            "inspector-seg",
-                                            task_id
-                                                .as_u64_pair()
-                                                .0
-                                                .wrapping_add(segment.index as u64),
-                                        ),
-                                        segment.progress_percent(),
-                                    )
-                                    .height(px(6.0))
-                                    .color(seg_color)
-                                    .track_color(background),
-                                )
-                            })),
-                    )
-            });
-
-            let detail_row = |label: SharedString, value: String| {
-                div()
-                    .flex()
-                    .items_start()
-                    .justify_between()
-                    .gap_4()
-                    .py_1p5()
-                    .border_b_1()
-                    .border_color(border)
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_xs()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(text_muted)
-                            .child(label),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .text_xs()
-                            .text_color(text_color)
-                            .truncate()
-                            .child(value),
-                    )
-            };
-
-            let body_el = div()
-                .id("inspector-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .gap_4()
+            let progress_card = Self::card(palette)
+                .gap_2p5()
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .p_4()
-                        .rounded(px(16.0))
-                        .bg(background)
-                        .border_1()
-                        .border_color(border)
                         .child(
                             div()
                                 .flex()
@@ -274,15 +295,15 @@ impl RenderOnce for DownloadInspectorModal {
                                 .child(
                                     div()
                                         .text_xs()
-                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .font_weight(FontWeight::MEDIUM)
                                         .text_color(status_color)
                                         .child(cx.lang().get(status_key)),
                                 )
                                 .child(
                                     div()
                                         .text_xs()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(text_color)
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(palette.text_color)
                                         .child(format!("{percent:.1}%")),
                                 ),
                         )
@@ -290,7 +311,7 @@ impl RenderOnce for DownloadInspectorModal {
                             ProgressBar::new(("inspector-total", task_id.as_u64_pair().0), percent)
                                 .height(px(6.0))
                                 .color(status_color)
-                                .track_color(surface_hover),
+                                .track_color(palette.surface),
                         )
                         .child(
                             div()
@@ -298,24 +319,17 @@ impl RenderOnce for DownloadInspectorModal {
                                 .items_center()
                                 .justify_between()
                                 .text_xs()
-                                .text_color(text_muted)
+                                .text_color(palette.text_muted)
                                 .child(size_text)
                                 .child(speed_text),
                         ),
                 )
-                .children(segments_section)
-                .when_some(error_detail, |container, reason| {
-                    let reason_copy = reason.clone();
-                    container.child(
+                .when(!task.segments.is_empty(), |card| {
+                    card.child(Self::divider(palette)).child(
                         div()
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .p_3()
-                            .rounded(px(12.0))
-                            .bg(error_color.opacity(0.1))
-                            .border_1()
-                            .border_color(error_color.opacity(0.35))
                             .child(
                                 div()
                                     .flex()
@@ -324,93 +338,200 @@ impl RenderOnce for DownloadInspectorModal {
                                     .child(
                                         div()
                                             .text_xs()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(error_color)
-                                            .child(cx.lang().get("inspector.error_log")),
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(palette.text_muted)
+                                            .child(cx.lang().get("inspector.segments")),
                                     )
                                     .child(
-                                        IconButton::new("inspector-copy-error", "icons/copy.svg")
-                                            .size(px(24.0))
-                                            .icon_size(px(12.0))
-                                            .rounded(ButtonRounded::Size(px(99.0)))
-                                            .color(error_color)
-                                            .hover_bg(error_color.opacity(0.15))
-                                            .on_click(move |_, _, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    reason_copy.clone(),
-                                                ));
-                                            }),
+                                        div()
+                                            .text_xs()
+                                            .text_color(palette.text_muted)
+                                            .child(format!("{}", task.segments.len())),
                                     ),
                             )
-                            .child(div().text_xs().text_color(text_color).child(reason)),
+                            .child(div().flex().gap_1().w_full().children(
+                                task.segments.iter().map(|segment| {
+                                    let seg_color = match segment.status {
+                                        SegmentStatus::Completed => palette.completed,
+                                        SegmentStatus::Downloading => palette.downloading,
+                                        SegmentStatus::Failed => palette.error,
+                                        SegmentStatus::Pending => palette.text_muted,
+                                    };
+                                    div().flex_1().min_w_0().child(
+                                        ProgressBar::new(
+                                            (
+                                                "inspector-seg",
+                                                task_id
+                                                    .as_u64_pair()
+                                                    .0
+                                                    .wrapping_add(segment.index as u64),
+                                            ),
+                                            segment.progress_percent(),
+                                        )
+                                        .height(px(6.0))
+                                        .color(seg_color)
+                                        .track_color(palette.surface),
+                                    )
+                                }),
+                            )),
                     )
-                })
+                });
+
+            let details_card = Self::card(palette)
+                .py_1()
                 .child(
                     div()
                         .flex()
-                        .flex_col()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .py_2()
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(palette.text_muted)
+                                .child(cx.lang().get("inspector.url")),
+                        )
                         .child(
                             div()
                                 .flex()
                                 .items_center()
-                                .justify_between()
-                                .gap_2()
-                                .py_1p5()
-                                .border_b_1()
-                                .border_color(border)
+                                .gap_1()
+                                .min_w_0()
                                 .child(
                                     div()
-                                        .flex_shrink_0()
+                                        .min_w_0()
                                         .text_xs()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(text_muted)
-                                        .child(cx.lang().get("inspector.url")),
+                                        .text_color(palette.accent)
+                                        .truncate()
+                                        .child(task.url.clone()),
                                 )
                                 .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap_1()
-                                        .min_w_0()
-                                        .child(
-                                            div()
-                                                .min_w_0()
-                                                .text_xs()
-                                                .text_color(accent)
-                                                .truncate()
-                                                .child(task.url.clone()),
-                                        )
-                                        .child(
-                                            IconButton::new("inspector-copy-url", "icons/copy.svg")
-                                                .size(px(24.0))
-                                                .icon_size(px(12.0))
-                                                .rounded(ButtonRounded::Size(px(99.0)))
-                                                .color(text_muted)
-                                                .hover_bg(surface_hover)
-                                                .on_click(move |_, _, cx| {
-                                                    cx.write_to_clipboard(
-                                                        ClipboardItem::new_string(url_copy.clone()),
-                                                    );
-                                                }),
-                                        ),
+                                    IconButton::new("inspector-copy-url", "icons/copy.svg")
+                                        .size(px(24.0))
+                                        .icon_size(px(12.0))
+                                        .rounded(px(20.0))
+                                        .color(palette.text_muted)
+                                        .hover_bg(palette.surface_hover)
+                                        .on_click(move |_, _, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                url_copy.clone(),
+                                            ));
+                                        }),
                                 ),
-                        )
-                        .child(detail_row(cx.lang().get("inspector.path"), path_str))
-                        .child(detail_row(
-                            cx.lang().get("inspector.connections"),
-                            task.connections.to_string(),
-                        ))
-                        .child(detail_row(
-                            cx.lang().get("inspector.speed_limit"),
-                            limit_text,
-                        ))
-                        .when_some(checksum_text, |list, checksum| {
-                            list.child(detail_row(cx.lang().get("inspector.checksum"), checksum))
-                        })
-                        .when_some(task.referer.clone(), |list, referer| {
-                            list.child(detail_row(cx.lang().get("inspector.referer"), referer))
-                        }),
+                        ),
                 )
+                .child(Self::divider(palette))
+                .child(Self::detail_row(
+                    cx.lang().get("inspector.path"),
+                    path_str,
+                    palette,
+                ))
+                .child(Self::divider(palette))
+                .child(Self::detail_row(
+                    cx.lang().get("inspector.connections"),
+                    task.connections.to_string(),
+                    palette,
+                ))
+                .child(Self::divider(palette))
+                .child(Self::detail_row(
+                    cx.lang().get("inspector.speed_limit"),
+                    limit_text,
+                    palette,
+                ))
+                .when_some(checksum_text, |list, checksum| {
+                    list.child(Self::divider(palette)).child(Self::detail_row(
+                        cx.lang().get("inspector.checksum"),
+                        checksum,
+                        palette,
+                    ))
+                })
+                .when_some(task.referer.clone(), |list, referer| {
+                    list.child(Self::divider(palette)).child(Self::detail_row(
+                        cx.lang().get("inspector.referer"),
+                        referer,
+                        palette,
+                    ))
+                });
+
+            let body_el = div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .child(
+                    div()
+                        .id("inspector-scroll")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&scroll_handle)
+                        .pr_2()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_3()
+                                .child(progress_card)
+                                .when_some(error_detail, |container, reason| {
+                                    let reason_copy = reason.clone();
+                                    container.child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .px_4()
+                                            .py_3()
+                                            .rounded(px(24.0))
+                                            .bg(palette.error.opacity(0.1))
+                                            .border_1()
+                                            .border_color(palette.error.opacity(0.3))
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .font_weight(FontWeight::MEDIUM)
+                                                            .text_color(palette.error)
+                                                            .child(
+                                                                cx.lang()
+                                                                    .get("inspector.error_log"),
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        IconButton::new(
+                                                            "inspector-copy-error",
+                                                            "icons/copy.svg",
+                                                        )
+                                                        .size(px(24.0))
+                                                        .icon_size(px(12.0))
+                                                        .rounded(px(20.0))
+                                                        .color(palette.error)
+                                                        .hover_bg(palette.error.opacity(0.15))
+                                                        .on_click(move |_, _, cx| {
+                                                            cx.write_to_clipboard(
+                                                                ClipboardItem::new_string(
+                                                                    reason_copy.clone(),
+                                                                ),
+                                                            );
+                                                        }),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(palette.text_color)
+                                                    .child(reason),
+                                            ),
+                                    )
+                                })
+                                .child(details_card),
+                        ),
+                )
+                .child(Scrollbar::vertical(&scroll_handle).mode(ScrollbarMode::Always))
                 .into_any_element();
 
             let is_completed = task.status == TaskStatus::Completed;
@@ -420,10 +541,11 @@ impl RenderOnce for DownloadInspectorModal {
 
             let footer_el = div()
                 .flex()
+                .flex_none()
                 .items_center()
                 .justify_between()
                 .gap_2()
-                .pt_2()
+                .pt_1()
                 .child(
                     div()
                         .flex()
@@ -437,6 +559,7 @@ impl RenderOnce for DownloadInspectorModal {
                                     .label(cx.lang().get("downloads.open_file"))
                                     .primary()
                                     .rounded(px(24.0))
+                                    .h(px(32.0))
                                     .on_click(move |_, _, cx| {
                                         cx.open_with_system(&file_to_open);
                                     }),
@@ -444,8 +567,8 @@ impl RenderOnce for DownloadInspectorModal {
                             .child(
                                 Button::new("inspector-open-folder")
                                     .label(cx.lang().get("downloads.reveal_file"))
-                                    .ghost()
                                     .rounded(px(24.0))
+                                    .h(px(32.0))
                                     .on_click(move |_, _, cx| {
                                         cx.reveal_path(&file_to_reveal);
                                     }),
@@ -458,6 +581,7 @@ impl RenderOnce for DownloadInspectorModal {
                                     .label(cx.lang().get("downloads.retry_conversion"))
                                     .primary()
                                     .rounded(px(24.0))
+                                    .h(px(32.0))
                                     .on_click(move |_, _, cx| {
                                         retry_model
                                             .update(cx, |m, cx| m.retry_conversion(task_id, cx));
@@ -471,6 +595,7 @@ impl RenderOnce for DownloadInspectorModal {
                                     .label(label)
                                     .primary()
                                     .rounded(px(24.0))
+                                    .h(px(32.0))
                                     .on_click(move |_, _, cx| {
                                         toggle_model.update(cx, |m, cx| {
                                             if is_running {
@@ -487,8 +612,9 @@ impl RenderOnce for DownloadInspectorModal {
                     row.child(
                         Button::new("inspector-delete-task")
                             .label(cx.lang().get("common.delete"))
-                            .ghost()
+                            .danger()
                             .rounded(px(24.0))
+                            .h(px(32.0))
                             .on_click(move |_, window, cx| {
                                 DownloadInspectorModalState::close(window, cx);
                                 cx.set_global(DeleteDownloadModalState {
@@ -504,12 +630,13 @@ impl RenderOnce for DownloadInspectorModal {
                 .into_any_element();
 
             (
-                SharedString::from(truncate_file_name(&file_name, 30)),
+                SharedString::from(truncate_file_name(&file_name, 36)),
+                Some(status_color),
                 Some(body_el),
                 Some(footer_el),
             )
         } else {
-            (cx.lang().get("inspector.title"), None, None)
+            (cx.lang().get("inspector.title"), None, None, None)
         };
 
         div()
@@ -517,13 +644,20 @@ impl RenderOnce for DownloadInspectorModal {
             .absolute()
             .inset_0()
             .size_full()
+            .capture_key_down(move |event: &KeyDownEvent, window, cx| {
+                if is_open && event.keystroke.key == "escape" {
+                    DownloadInspectorModalState::close(window, cx);
+                    cx.stop_propagation();
+                }
+            })
             .child(
                 Modal::new("download-inspector-modal")
                     .open(is_open)
+                    .compact()
                     .from_bounds(modal_state.origin)
-                    .width(px(620.0))
-                    .max_height(modal_h)
-                    .title(title)
+                    .width((viewport.width - px(32.0)).clamp(px(0.0), px(580.0)))
+                    .max_height((viewport.height - px(32.0)).clamp(px(0.0), modal_h))
+                    .header(Self::render_header(title, status_color, palette, cx))
                     .on_close(|window, cx| {
                         DownloadInspectorModalState::close(window, cx);
                     })

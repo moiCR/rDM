@@ -221,7 +221,7 @@ impl RenderOnce for Modal {
 
                 let card = if let Some(origin) = from_bounds {
                     let target_w = card_w.min((viewport.width - px(48.0)).max(px(320.0)));
-                    let target_h = card_max_h.min((viewport.height - px(64.0)).max(px(240.0)));
+                    let target_h = card_max_h.min((viewport.height - px(64.0)).max(px(140.0)));
                     let target_x = ((viewport.width - target_w) / 2.0).max(px(16.0));
                     let target_y = ((viewport.height - target_h) / 2.0).max(px(16.0));
                     let left = phase.interpolate(origin.origin.x, target_x);
@@ -246,8 +246,9 @@ impl RenderOnce for Modal {
                         .opacity(alpha.min(1.0))
                         .rounded(px(24.0))
                         .bg(palette_surface)
-                        .border_1()
-                        .border_color(palette_border)
+                        .when(!self.compact, |el| {
+                            el.border_1().border_color(palette_border)
+                        })
                         .shadow_xl()
                         .flex()
                         .flex_col()
