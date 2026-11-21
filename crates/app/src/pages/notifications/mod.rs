@@ -264,12 +264,13 @@ impl NotificationsPage {
             .unwrap_or_default();
 
         let is_morphed = NotificationDetailModalState::is_card_morphed(notif_id, cx);
+        let reveal_spring =
+            SpringAnimation::new(SpringConfig::new(360.0, 38.0, 1.0)).to(!is_morphed);
 
         download_card_surface(surface, surface_hover, border)
             .id(("notification-card", notif_key))
             .relative()
             .cursor_pointer()
-            .when(is_morphed, |card| card.invisible())
             .w_full()
             .min_w_0()
             .p_4()
@@ -323,6 +324,11 @@ impl NotificationsPage {
                     .text_color(text_muted)
                     .child(timestamp)
                     .child(cx.lang().get("notifications.open_detail")),
+            )
+            .with_spring(
+                ("notification-card-reveal", notif_key),
+                reveal_spring,
+                |card, phase| card.opacity(phase.interpolate_clamped(0.0, 1.0)),
             )
     }
 }

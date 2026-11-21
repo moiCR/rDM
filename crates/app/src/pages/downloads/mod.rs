@@ -279,12 +279,13 @@ impl DownloadsPage {
         let card_bounds = Rc::new(Cell::new(None));
         let card_bounds_click = Rc::clone(&card_bounds);
         let is_morphed = DownloadInspectorModalState::is_card_morphed(task_id, cx);
+        let reveal_spring =
+            SpringAnimation::new(SpringConfig::new(360.0, 38.0, 1.0)).to(!is_morphed);
 
         download_card_surface(palette.surface, palette.surface_hover, palette.border)
             .id(("download-card", task_key))
             .relative()
             .cursor_pointer()
-            .when(is_morphed, |card| card.invisible())
             .w_full()
             .min_w_0()
             .p_4()
@@ -492,6 +493,11 @@ impl DownloadsPage {
                                 )
                             })),
                     ),
+            )
+            .with_spring(
+                ("download-card-reveal", task_key),
+                reveal_spring,
+                |card, phase| card.opacity(phase.interpolate_clamped(0.0, 1.0)),
             )
     }
 

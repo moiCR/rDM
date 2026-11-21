@@ -234,7 +234,8 @@ impl RenderOnce for Modal {
                     let top = phase.interpolate_clamped(origin.origin.y, target_y);
                     let width = phase.interpolate_clamped(origin.size.width, target_w);
                     let height = phase.interpolate_clamped(origin.size.height, target_h);
-                    let content_alpha = ((alpha - 0.12) / 0.88).clamp(0.0, 1.0);
+                    let content_alpha = ((alpha - 0.18) / 0.82).clamp(0.0, 1.0);
+                    let shell_alpha = (alpha / 0.12).clamp(0.0, 1.0);
 
                     div()
                         .id(card_id.clone())
@@ -243,6 +244,7 @@ impl RenderOnce for Modal {
                         .top(top)
                         .w(width)
                         .h(height)
+                        .opacity(shell_alpha)
                         .overflow_hidden()
                         .occlude()
                         .rounded(px(24.0))

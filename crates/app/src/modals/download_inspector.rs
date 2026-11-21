@@ -54,7 +54,7 @@ impl DownloadInspectorModalState {
             let handle = window.window_handle();
             cx.spawn(async move |cx| {
                 cx.background_executor()
-                    .timer(std::time::Duration::from_millis(260))
+                    .timer(std::time::Duration::from_millis(180))
                     .await;
                 cx.update(|cx| {
                     if cx.try_global::<Self>().is_some_and(|s| !s.open) {
