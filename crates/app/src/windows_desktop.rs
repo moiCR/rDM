@@ -28,9 +28,9 @@ use windows_sys::{
         },
         UI::{
             Shell::{
-                NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETFOCUS,
-                NIM_SETVERSION, NIN_SELECT, NOTIFYICON_VERSION_4, NOTIFYICONDATAW,
-                Shell_NotifyIconW,
+                NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_INFO, NIM_ADD,
+                NIM_DELETE, NIM_MODIFY, NIM_SETFOCUS, NIM_SETVERSION, NIN_SELECT,
+                NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
             },
             WindowsAndMessaging::*,
         },
@@ -471,4 +471,31 @@ pub(crate) fn restore_window(window: &Window) {
         }
     }
     window.activate_window();
+}
+
+pub(crate) fn notify(title: &str, body: &str) {
+    let tray_window = unsafe { FindWindowW(TRAY_CLASS, null()) };
+    if tray_window.is_null() {
+        return;
+    }
+    let mut data = NOTIFYICONDATAW {
+        cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: tray_window,
+        uID: 1,
+        uFlags: NIF_INFO,
+        dwInfoFlags: NIIF_INFO,
+        ..Default::default()
+    };
+    write_wide_buf(&mut data.szInfoTitle, title);
+    write_wide_buf(&mut data.szInfo, body);
+    unsafe {
+        Shell_NotifyIconW(NIM_MODIFY, &data);
+    }
+}
+
+fn write_wide_buf(dest: &mut [u16], text: &str) {
+    let max_len = dest.len().saturating_sub(1);
+    for (slot, unit) in dest.iter_mut().take(max_len).zip(text.encode_utf16()) {
+        *slot = unit;
+    }
 }

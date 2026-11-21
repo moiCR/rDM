@@ -1,11 +1,22 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 
 use super::button::{ButtonRounded, IconButton};
 use crate::theme::ActiveTheme;
 
 pub type ModalCloseHandler = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
+
+pub fn track_card_bounds(slot: Rc<Cell<Option<Bounds<Pixels>>>>) -> impl IntoElement {
+    canvas(
+        move |bounds, _, _| {
+            slot.set(Some(bounds));
+        },
+        |_, (), _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
 
 #[derive(IntoElement)]
 pub struct Modal {
@@ -15,6 +26,7 @@ pub struct Modal {
     fit_content: bool,
     width: Option<Pixels>,
     max_height: Option<Pixels>,
+    from_bounds: Option<Bounds<Pixels>>,
     title: Option<SharedString>,
     icon_path: Option<SharedString>,
     on_close: Option<ModalCloseHandler>,
@@ -33,6 +45,7 @@ impl Modal {
             fit_content: false,
             width: None,
             max_height: None,
+            from_bounds: None,
             title: None,
             icon_path: None,
             on_close: None,
@@ -41,6 +54,11 @@ impl Modal {
             subview: None,
             children: Vec::new(),
         }
+    }
+
+    pub fn from_bounds(mut self, origin: Option<Bounds<Pixels>>) -> Self {
+        self.from_bounds = origin;
+        self
     }
 
     pub fn open(mut self, open: bool) -> Self {
@@ -106,7 +124,7 @@ impl ParentElement for Modal {
 }
 
 impl RenderOnce for Modal {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let palette_surface = cx.theme().surface();
         let palette_surface_hover = cx.theme().surface_hover();
         let palette_border = cx.theme().border();
@@ -114,8 +132,10 @@ impl RenderOnce for Modal {
         let palette_text_muted = cx.theme().text_muted();
         let palette_accent = cx.theme().accent();
 
+        let viewport = window.viewport_size();
         let card_w = self.width.unwrap_or_else(|| px(880.0));
         let card_max_h = self.max_height.unwrap_or_else(|| px(620.0));
+        let from_bounds = self.from_bounds;
 
         let on_close_backdrop = self.on_close.clone();
         let on_close_btn = self.on_close.clone();
@@ -187,7 +207,90 @@ impl RenderOnce for Modal {
                 }
 
                 let backdrop_alpha = phase.interpolate_clamped(0.0, 0.65);
-                let slide_y = phase.interpolate_clamped(px(60.0), px(0.0));
+
+                let card = if let Some(origin) = from_bounds {
+                    let target_w = card_w.min((viewport.width - px(48.0)).max(px(320.0)));
+                    let target_h = card_max_h.min((viewport.height - px(64.0)).max(px(240.0)));
+                    let target_x = ((viewport.width - target_w) / 2.0).max(px(16.0));
+                    let target_y = ((viewport.height - target_h) / 2.0).max(px(16.0));
+                    let left = phase.interpolate(origin.origin.x, target_x);
+                    let top = phase.interpolate(origin.origin.y, target_y);
+                    let width = phase.interpolate(origin.size.width, target_w).max(px(120.0));
+                    let height = phase.interpolate(origin.size.height, target_h).max(px(80.0));
+                    let content_alpha = ((alpha - 0.15) / 0.85).clamp(0.0, 1.0);
+
+                    div()
+                        .id(card_id.clone())
+                        .absolute()
+                        .left(left)
+                        .top(top)
+                        .w(width)
+                        .h(height)
+                        .overflow_hidden()
+                        .occlude()
+                        .opacity(alpha.min(1.0))
+                        .rounded(px(24.0))
+                        .bg(palette_surface)
+                        .border_1()
+                        .border_color(palette_border)
+                        .shadow_xl()
+                        .flex()
+                        .flex_col()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(|_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .child(
+                            div()
+                                .size_full()
+                                .flex()
+                                .flex_col()
+                                .min_h_0()
+                                .opacity(content_alpha)
+                                .when(self.compact, |inner| inner.p_4().gap_2())
+                                .when(!self.compact, |inner| inner.p_8().gap_6())
+                                .children(header_element)
+                                .children(self.children)
+                                .children(footer_element)
+                                .children(subview_element),
+                        )
+                } else {
+                    let slide_y = phase.interpolate_clamped(px(60.0), px(0.0));
+                    div()
+                        .id(card_id.clone())
+                        .relative()
+                        .overflow_hidden()
+                        .occlude()
+                        .top(slide_y)
+                        .opacity(alpha)
+                        .w(card_w)
+                        .max_h(card_max_h)
+                        .when(self.compact, |card| {
+                            card.p_4()
+                                .gap_2()
+                                .when(!self.fit_content, |card| card.h(card_max_h))
+                        })
+                        .when(!self.compact, |card| {
+                            card.p_8().gap_6().border_1().border_color(palette_border)
+                        })
+                        .rounded(px(24.0))
+                        .bg(palette_surface)
+                        .shadow_xl()
+                        .flex()
+                        .flex_col()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(|_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .children(header_element)
+                        .children(self.children)
+                        .children(footer_element)
+                        .children(subview_element)
+                };
 
                 this.visible()
                     .child(
@@ -206,48 +309,15 @@ impl RenderOnce for Modal {
                             .absolute()
                             .inset_0()
                             .size_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
+                            .when(from_bounds.is_none(), |pos| {
+                                pos.flex().items_center().justify_center()
+                            })
                             .when_some(on_close_backdrop.clone(), |el, handler| {
                                 el.on_click(move |_event, window, cx| {
                                     handler(window, cx);
                                 })
                             })
-                            .child(
-                                div()
-                                    .id(card_id.clone())
-                                    .relative()
-                                    .overflow_hidden()
-                                    .occlude()
-                                    .top(slide_y)
-                                    .opacity(alpha)
-                                    .w(card_w)
-                                    .max_h(card_max_h)
-                                    .when(self.compact, |card| {
-                                        card.p_4()
-                                            .gap_2()
-                                            .when(!self.fit_content, |card| card.h(card_max_h))
-                                    })
-                                    .when(!self.compact, |card| {
-                                        card.p_8().gap_6().border_1().border_color(palette_border)
-                                    })
-                                    .rounded(px(24.0))
-                                    .bg(palette_surface)
-                                    .shadow_xl()
-                                    .flex()
-                                    .flex_col()
-                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                        cx.stop_propagation();
-                                    })
-                                    .on_click(|_, _, cx| {
-                                        cx.stop_propagation();
-                                    })
-                                    .children(header_element)
-                                    .children(self.children)
-                                    .children(footer_element)
-                                    .children(subview_element),
-                            ),
+                            .child(card),
                     )
             })
             .into_any_element()

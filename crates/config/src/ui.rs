@@ -12,6 +12,10 @@ fn default_auto_check_updates() -> bool {
     true
 }
 
+fn default_system_notifications() -> bool {
+    true
+}
+
 fn default_language() -> String {
     "es".to_string()
 }
@@ -28,6 +32,8 @@ pub struct UIConfig {
     #[serde(default = "default_auto_check_updates")]
     pub auto_check_updates: bool,
     pub close_to_tray: bool,
+    #[serde(default = "default_system_notifications")]
+    pub system_notifications: bool,
 }
 
 impl Default for UIConfig {
@@ -39,6 +45,7 @@ impl Default for UIConfig {
             accent_color: String::new(),
             auto_check_updates: default_auto_check_updates(),
             close_to_tray: true,
+            system_notifications: default_system_notifications(),
         }
     }
 }

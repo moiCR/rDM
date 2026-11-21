@@ -8,7 +8,7 @@ use chrono::{DateTime, Datelike, Days, Local, NaiveDate};
 use gpui::{App, AsyncApp, Context, Entity, Global, WeakEntity};
 use rdm_core::{
     Core, Engine,
-    task::{Task, TaskStatus},
+    task::{ExpectedChecksum, SegmentStatus, Task, TaskStatus},
     updater::{PackageKind, ReleaseInfo, UpdateProgress},
 };
 use uuid::Uuid;
@@ -52,6 +52,32 @@ pub struct DownloadStartResult {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SegmentSnapshot {
+    pub index: usize,
+    pub start_byte: u64,
+    pub end_byte: u64,
+    pub downloaded_bytes: u64,
+    pub status: SegmentStatus,
+}
+
+impl SegmentSnapshot {
+    pub fn total_bytes(&self) -> u64 {
+        self.end_byte.saturating_sub(self.start_byte) + 1
+    }
+
+    pub fn progress_percent(&self) -> f32 {
+        if self.status == SegmentStatus::Completed {
+            return 100.0;
+        }
+        let total = self.total_bytes();
+        if total == 0 {
+            return 0.0;
+        }
+        ((self.downloaded_bytes as f64 / total as f64).clamp(0.0, 1.0) * 100.0) as f32
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskSnapshot {
     pub id: Uuid,
@@ -63,6 +89,12 @@ pub struct TaskSnapshot {
     pub speed_bytes_per_sec: u64,
     pub status: TaskStatus,
     pub progress: f64,
+    pub connections: usize,
+    pub max_speed_bytes_per_sec: u64,
+    pub checksum: Option<ExpectedChecksum>,
+    pub referer: Option<String>,
+    pub completed_at: Option<u64>,
+    pub segments: Vec<SegmentSnapshot>,
 }
 
 pub struct TasksModel {
@@ -508,6 +540,10 @@ impl TasksModel {
         &self.tasks
     }
 
+    pub fn task(&self, id: Uuid) -> Option<&TaskSnapshot> {
+        self.tasks.iter().find(|task| task.id == id)
+    }
+
     pub(crate) fn download_history(&self) -> Option<&DownloadHistory> {
         self.download_history.as_ref()
     }
@@ -566,6 +602,19 @@ impl TasksModel {
                 .unwrap_or("download.bin")
                 .to_string();
 
+            let (status, completed_at) = task.status_and_completion();
+            let segments = task
+                .segments()
+                .into_iter()
+                .map(|segment| SegmentSnapshot {
+                    index: segment.index,
+                    start_byte: segment.start_byte,
+                    end_byte: segment.end_byte,
+                    downloaded_bytes: segment.downloaded_bytes.load(Ordering::Relaxed),
+                    status: segment.status(),
+                })
+                .collect();
+
             new_snapshots.push(TaskSnapshot {
                 id: task.id,
                 file_name,
@@ -576,6 +625,12 @@ impl TasksModel {
                 speed_bytes_per_sec: speed,
                 status,
                 progress: task.progress_ratio(),
+                connections: task.connections,
+                max_speed_bytes_per_sec: task.max_speed_bytes_per_sec(),
+                checksum: task.checksum.clone(),
+                referer: task.referer(),
+                completed_at,
+                segments,
             });
         }
 

@@ -8,7 +8,7 @@ use crate::{
         titlebar::Titlebar,
         toggle_sidebar,
     },
-    modals::{DeleteDownloadModal, NewDownloadModal, SettingsModal},
+    modals::{DeleteDownloadModal, DownloadInspectorModal, NewDownloadModal, SettingsModal},
     state::CoreContext,
     theme::ActiveTheme,
 };
@@ -110,5 +110,6 @@ impl PageLayout for RootLayout {
             .child(SettingsModal::new())
             .child(NewDownloadModal::new())
             .child(DeleteDownloadModal::new())
+            .child(DownloadInspectorModal::new())
     }
 }

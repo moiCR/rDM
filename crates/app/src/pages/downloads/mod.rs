@@ -1,4 +1,4 @@
-use std::{f32::consts::TAU, time::Duration};
+use std::{cell::Cell, f32::consts::TAU, rc::Rc, time::Duration};
 
 use gpui::{prelude::FluentBuilder as _, *};
 use gpui_kit::component::button::ButtonRounded;
@@ -9,9 +9,10 @@ use crate::{
     components::{
         ActionTooltip, Button, IconButton, ProgressBar,
         download_card::{download_card_surface, format_bytes, task_progress_percent},
+        track_card_bounds,
     },
     lang::ActiveLang,
-    modals::{DeleteDownloadModalState, NewDownloadModal},
+    modals::{DeleteDownloadModalState, DownloadInspectorModalState, NewDownloadModal},
     state::{CoreContext, TaskSnapshot, TasksModel},
     theme::ActiveTheme,
 };
@@ -236,8 +237,13 @@ impl DownloadsPage {
             _ => None,
         };
 
+        let card_bounds = Rc::new(Cell::new(None));
+        let card_bounds_click = Rc::clone(&card_bounds);
+
         download_card_surface(palette.surface, palette.surface_hover, palette.border)
             .id(("download-card", task_key))
+            .relative()
+            .cursor_pointer()
             .w_full()
             .min_w_0()
             .p_4()
@@ -245,6 +251,10 @@ impl DownloadsPage {
             .flex_col()
             .justify_between()
             .gap_3p5()
+            .on_click(move |_event, window, cx| {
+                DownloadInspectorModalState::open(task_id, card_bounds_click.get(), window, cx);
+            })
+            .child(track_card_bounds(card_bounds))
             .child(
                 div()
                     .w_full()
@@ -296,6 +306,7 @@ impl DownloadsPage {
                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                     url_for_copy.clone(),
                                 ));
+                                cx.stop_propagation();
                             })
                             .child(url_str),
                     )
@@ -347,10 +358,17 @@ impl DownloadsPage {
                     )
                     .child(
                         div()
+                            .id(("download-card-actions", task_key))
                             .flex()
                             .flex_shrink_0()
                             .items_center()
                             .gap_1()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .on_click(|_, _, cx| {
+                                cx.stop_propagation();
+                            })
                             .children(retry_conversion)
                             .when(task.status == TaskStatus::Completed, |actions| {
                                 let file_button = |id, icon, tooltip| {

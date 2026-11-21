@@ -13,7 +13,7 @@ pub use input::{
     Input, InputContent, InputEvent, InputState, NumberInput, NumberInputEvent, NumberStep,
     StepAction, TextInput,
 };
-pub use modal::{Modal, ModalCloseHandler};
+pub use modal::{Modal, ModalCloseHandler, track_card_bounds};
 pub use modal_sub_view::{ModalSubView, ModalSubViewCloseHandler};
 pub use progress::{Progress, ProgressBar, ProgressCircle};
 pub use select::{Caret, Select, SelectState};

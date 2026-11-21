@@ -171,6 +171,14 @@ pub(crate) fn available(cx: &App) -> bool {
         .is_some_and(|desktop| desktop.available.load(Ordering::Relaxed))
 }
 
+pub(crate) fn notify(title: &str, body: &str) {
+    let _ = std::process::Command::new("notify-send")
+        .arg("--app-name=rDM")
+        .arg(title)
+        .arg(body)
+        .spawn();
+}
+
 pub(crate) fn open_window(cx: &mut App) -> anyhow::Result<gpui::AnyWindowHandle> {
     if let Some(window) = cx.windows().into_iter().next() {
         window.update(cx, |_, window, _| window.activate_window())?;

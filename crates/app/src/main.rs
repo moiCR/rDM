@@ -6,6 +6,7 @@ pub mod ext;
 pub mod lang;
 pub mod layout;
 pub mod modals;
+pub mod notifications;
 #[rustfmt::skip]
 #[path = "pages_modules.rs"]
 pub mod pages;
@@ -78,7 +79,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ThemeManager::apply_mode(&ui_config.theme, cx);
 
         let tasks_model = cx.new(|cx| TasksModel::new(Arc::clone(&core), Arc::clone(&runtime), cx));
-        cx.set_global(AppState::new(core, tasks_model));
+        let notifications_model = cx.new(|cx| {
+            notifications::NotificationsModel::new(
+                core.config().config().state_dir.clone(),
+                Arc::clone(&runtime),
+                cx,
+            )
+        });
+        cx.set_global(AppState::new(core, tasks_model, notifications_model));
 
         #[cfg(windows)]
         modals::SettingsModal::initialize_desktop_preferences(ui_config.close_to_tray, cx);
