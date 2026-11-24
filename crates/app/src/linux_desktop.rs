@@ -187,6 +187,9 @@ pub(crate) fn open_window(cx: &mut App) -> anyhow::Result<gpui::AnyWindowHandle>
     cx.set_global(crate::modals::NewDownloadModalState::default());
     cx.set_global(crate::modals::SettingsModalState::default());
     cx.set_global(crate::modals::DeleteDownloadModalState::default());
+    cx.set_global(crate::modals::DownloadInspectorModalState::default());
+    cx.set_global(crate::modals::NotificationDetailModalState::default());
+    cx.set_global(crate::modals::CommandPaletteState::default());
     let manager = gpui_pages::PageManager::new(crate::PAGE_ROUTES, "/", cx)?;
     let manager = cx.new(|_| manager);
     let options = gpui::WindowOptions {

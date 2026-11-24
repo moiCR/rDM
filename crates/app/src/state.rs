@@ -208,27 +208,42 @@ impl TasksModel {
             loop {
                 match intercept_rx.recv().await {
                     Ok(intercepted) => {
-                        let res = entity.update(cx, |_, cx| {
+                        if entity.upgrade().is_none() {
+                            break;
+                        }
+                        cx.update(|cx| {
                             #[cfg(target_os = "linux")]
-                            if let Err(error) = crate::linux_desktop::open_window(cx) {
-                                eprintln!("No se pudo abrir la descarga interceptada: {error}");
-                                return;
-                            }
+                            let (had_window, handle) = {
+                                let had_window = !cx.windows().is_empty();
+                                match crate::linux_desktop::open_window(cx) {
+                                    Ok(window) => (had_window, Some(window)),
+                                    Err(error) => {
+                                        eprintln!(
+                                            "No se pudo abrir la descarga interceptada: {error}"
+                                        );
+                                        return;
+                                    }
+                                }
+                            };
+                            #[cfg(not(target_os = "linux"))]
+                            let handle = cx.windows().into_iter().next();
+
                             cx.activate(true);
-                            if let Some(handle) = cx.windows().into_iter().next() {
+                            if let Some(handle) = handle {
                                 let _ = handle.update(cx, |_, window, cx| {
                                     #[cfg(windows)]
                                     crate::windows_desktop::restore_window(window);
-                                    #[cfg(not(windows))]
+                                    #[cfg(target_os = "linux")]
+                                    if !had_window {
+                                        window.activate_window();
+                                    }
+                                    #[cfg(not(any(windows, target_os = "linux")))]
                                     window.activate_window();
                                     NewDownloadModal::open(Some(intercepted), window, cx);
                                     window.refresh();
                                 });
                             }
                         });
-                        if res.is_err() {
-                            break;
-                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,

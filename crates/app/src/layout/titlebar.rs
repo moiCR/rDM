@@ -103,7 +103,7 @@ impl RenderOnce for Titlebar {
             )
             .child(
                 div()
-                    .id("titlebar-drag-left")
+                    .id("titlebar-drag")
                     .window_control_area(WindowControlArea::Drag)
                     .when(cfg!(target_os = "linux"), |element| {
                         let should_move = _window.use_state(cx, |_, _| false);
@@ -143,16 +143,6 @@ impl RenderOnce for Titlebar {
                                 },
                             ))
                     })
-                    .flex()
-                    .items_center()
-                    .flex_1()
-                    .h_full(),
-            )
-            .child(div().w(px(280.0)).h_full().flex_shrink_0())
-            .child(
-                div()
-                    .id("titlebar-drag-right")
-                    .window_control_area(WindowControlArea::Drag)
                     .flex()
                     .items_center()
                     .flex_1()
