@@ -1,0 +1,30 @@
+# Release and updater workflows
+
+The `release` workflow creates a release in `moiCR/rDM` using `CHANGELOG.md`, seeds `latest.json`, invokes the `Windows`, `Linux`, and `Extensions` workflows, and combines the signed Windows and Linux platform entries into the final `latest.json` manifest. Each platform workflow also supports manual runs against an existing release tag to replace assets and merge updated manifest entries without recreating the release.
+
+## Key generation & GitHub configuration
+
+Generate a dedicated Minisign keypair for rDM (keep the private key secret and never commit it to Git):
+
+```bash
+npx @tauri-apps/cli signer generate -w ~/.rdm/rdm.key
+```
+
+Configure these values in `moiCR/rDM` (**Settings -> Secrets and variables -> Actions**):
+
+- **Variable (or Secret) `RDM_UPDATER_PUBLIC_KEY`**: contents of the generated `.pub` file (two-line `untrusted comment:` + key, single-line base64 key, or base64-encoded `.pub` file). Embedded into release binaries at compile time via `option_env!("RDM_UPDATER_PUBLIC_KEY")`.
+- **Secret `RDM_SIGNING_PRIVATE_KEY`**: contents of the generated private key file (`~/.rdm/rdm.key`). Used by `tauri signer sign` during CI builds.
+- **Secret `RDM_SIGNING_PRIVATE_KEY_PASSWORD`**: password protecting `RDM_SIGNING_PRIVATE_KEY` (leave unset or empty if the key has no password).
+
+GitHub's `GITHUB_TOKEN` publishes releases and assets automatically.
+
+## Verification & installation
+
+- Each release publishes `latest.json` containing `version`, `notes`, `pub_date`, and platform entries (`url`, `signature`, and `size`).
+- Downloads stream atomically into a private `.part` file (`0o700` on Unix) while reporting live byte progress (`AtomicU64`), enforcing both expected size and a 1 GiB ceiling before running streaming Minisign verification in a blocking worker.
+- Trusted comments inside every `.sig` payload are verified against `version:<version>` (or `app-version:<version>`) and `file:<filename>` (when present) before the package is staged and installed:
+  - **Windows x64**: silent Inno Setup install (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS`), automatically relaunching rDM.
+  - **Linux AppImage x64**: atomic swap with `.backup` rollback and automatic restart.
+  - **Linux Debian / RPM x64**: detected via `package-format` marker or `dpkg-query` / `rpm`, elevated install via `pkexec` (`apt-get`, `dnf`, `yum`, or `zypper`), and automatic restart.
+
+Release tags must match `version` in `Cargo.toml` (for example `1.3.0` and `v1.3.0`).

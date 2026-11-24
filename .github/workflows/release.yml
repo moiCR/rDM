@@ -24,6 +24,11 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Determine release version
         id: version
         shell: bash
@@ -38,31 +43,52 @@ jobs:
           fi
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub release from CHANGELOG.md
+      - name: Prepare release seed manifest and create release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
         shell: bash
         run: |
+          set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             exit 0
           fi
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --title "rDM $RELEASE_TAG" --notes-file CHANGELOG.md --latest
+
+          mkdir -p target/updater-seed
+          previous_tag="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // empty')"
+          if [[ -n "$previous_tag" ]] && gh release view "$previous_tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep --fixed-strings --line-regexp --quiet latest.json; then
+            gh release download "$previous_tag" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir target/updater-seed
+            node packaging/updater/manifest.mjs seed --previous target/updater-seed/latest.json --notes-file CHANGELOG.md --out target/updater-seed/latest.json
+          else
+            node packaging/updater/manifest.mjs seed --notes-file CHANGELOG.md --out target/updater-seed/latest.json
+          fi
+
+          gh release create "$RELEASE_TAG" target/updater-seed/latest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "rDM $RELEASE_TAG" \
+            --notes-file CHANGELOG.md \
+            --latest
 
   windows:
     needs: release
+    permissions:
+      contents: write
     uses: ./.github/workflows/windows.yml
     with:
       release_tag: ${{ needs.release.outputs.release_tag }}
       source_ref: ${{ github.sha }}
+    secrets: inherit
 
   linux:
     needs: release
+    permissions:
+      contents: write
     uses: ./.github/workflows/linux.yml
     with:
       release_tag: ${{ needs.release.outputs.release_tag }}
       source_ref: ${{ github.sha }}
+    secrets: inherit
 
   extensions:
     needs: release
@@ -70,3 +96,43 @@ jobs:
     with:
       release_tag: ${{ needs.release.outputs.release_tag }}
       source_ref: ${{ github.sha }}
+    secrets: inherit
+
+  update-manifest:
+    needs: [release, windows, linux]
+    if: ${{ always() && needs.release.result == 'success' && (needs.windows.result == 'success' || needs.linux.result == 'success') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: release-manifest-${{ needs.release.outputs.release_tag }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Create combined updater manifest
+        env:
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+          WINDOWS_MANIFEST: ${{ needs.windows.outputs.platform_manifest }}
+          LINUX_MANIFEST: ${{ needs.linux.outputs.platform_manifest }}
+        run: |
+          set -euo pipefail
+          mkdir -p target/updater-release
+          node packaging/updater/manifest.mjs combine \
+            --version "${RELEASE_TAG#v}" \
+            --notes-file CHANGELOG.md \
+            --out target/updater-release/latest.json
+
+      - name: Publish combined updater manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" target/updater-release/latest.json --repo "$GITHUB_REPOSITORY" --clobber

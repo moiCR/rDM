@@ -10,7 +10,7 @@ use gpui::{App, AsyncApp, Context, Entity, Global, WeakEntity};
 use rdm_core::{
     Core, Engine,
     task::{ExpectedChecksum, SegmentStatus, Task, TaskStatus},
-    updater::{PackageKind, ReleaseInfo, UpdateProgress},
+    updater::{ReleaseInfo, UpdatePhase, UpdateProgress},
 };
 use uuid::Uuid;
 
@@ -31,13 +31,16 @@ pub enum UpdaterStatus {
         downloaded_bytes: u64,
         total_bytes: u64,
     },
-    Downloaded {
-        path: PathBuf,
-        package: PackageKind,
-        error: Option<String>,
+    Verifying {
+        info: ReleaseInfo,
     },
-    Installing,
-    Error(String),
+    Installing {
+        info: ReleaseInfo,
+    },
+    Error {
+        message: String,
+        release_url: Option<String>,
+    },
 }
 
 #[derive(Default)]
@@ -194,7 +197,7 @@ impl TasksModel {
             cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
                 cx.background_executor().timer(Duration::from_secs(3)).await;
                 let _ = entity.update(cx, |this, cx| {
-                    this.check_for_updates(cx);
+                    this.check_for_updates_internal(true, cx);
                 });
             })
             .detach();
@@ -286,22 +289,27 @@ impl TasksModel {
                         || this.ytdlp_status != latest_ytdlp_status;
                     this.ffmpeg_status = latest_ffmpeg_status;
                     this.ytdlp_status = latest_ytdlp_status;
-                    if let Some(progress) = &this.active_update_progress
-                        && let UpdaterStatus::Downloading {
-                            ref info,
-                            downloaded_bytes,
-                            total_bytes,
-                        } = this.updater_status
-                    {
-                        let downloaded = progress.downloaded_bytes.load(Ordering::Relaxed);
-                        let total = progress.total_bytes.load(Ordering::Relaxed);
-                        if downloaded != downloaded_bytes || total != total_bytes {
-                            this.updater_status = UpdaterStatus::Downloading {
-                                info: info.clone(),
-                                downloaded_bytes: downloaded,
-                                total_bytes: total,
+                    if let Some(progress) = &this.active_update_progress {
+                        let info = match &this.updater_status {
+                            UpdaterStatus::Downloading { info, .. }
+                            | UpdaterStatus::Verifying { info }
+                            | UpdaterStatus::Installing { info } => Some(info.clone()),
+                            _ => None,
+                        };
+                        if let Some(info) = info {
+                            let next_status = match progress.phase() {
+                                UpdatePhase::Downloading => UpdaterStatus::Downloading {
+                                    info,
+                                    downloaded_bytes: progress.downloaded(),
+                                    total_bytes: progress.total(),
+                                },
+                                UpdatePhase::Verifying => UpdaterStatus::Verifying { info },
+                                UpdatePhase::Installing => UpdaterStatus::Installing { info },
                             };
-                            changed = true;
+                            if this.updater_status != next_status {
+                                this.updater_status = next_status;
+                                changed = true;
+                            }
                         }
                     }
                     if this.download_history != history {
@@ -401,9 +409,16 @@ impl TasksModel {
     }
 
     pub fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        self.check_for_updates_internal(false, cx);
+    }
+
+    fn check_for_updates_internal(&mut self, silent: bool, cx: &mut Context<Self>) {
         if matches!(
             self.updater_status,
-            UpdaterStatus::Checking | UpdaterStatus::Downloading { .. } | UpdaterStatus::Installing
+            UpdaterStatus::Checking
+                | UpdaterStatus::Downloading { .. }
+                | UpdaterStatus::Verifying { .. }
+                | UpdaterStatus::Installing { .. }
         ) {
             return;
         }
@@ -419,9 +434,33 @@ impl TasksModel {
 
             let status = match result {
                 Ok(Ok(Some(info))) => UpdaterStatus::Available(info),
-                Ok(Ok(None)) => UpdaterStatus::UpToDate,
-                Ok(Err(e)) => UpdaterStatus::Error(e.to_string()),
-                Err(e) => UpdaterStatus::Error(e.to_string()),
+                Ok(Ok(None)) => {
+                    if silent {
+                        UpdaterStatus::Idle
+                    } else {
+                        UpdaterStatus::UpToDate
+                    }
+                }
+                Ok(Err(e)) => {
+                    if silent {
+                        UpdaterStatus::Idle
+                    } else {
+                        UpdaterStatus::Error {
+                            message: format_update_error(e),
+                            release_url: None,
+                        }
+                    }
+                }
+                Err(e) => {
+                    if silent {
+                        UpdaterStatus::Idle
+                    } else {
+                        UpdaterStatus::Error {
+                            message: e.to_string(),
+                            release_url: None,
+                        }
+                    }
+                }
             };
 
             let _ = entity.update(cx, |this, cx| {
@@ -446,10 +485,10 @@ impl TasksModel {
         let UpdaterStatus::Available(info) = self.updater_status.clone() else {
             return;
         };
-        let Some(installer_url) = info.installer_url.clone() else {
+        if !info.can_auto_install() {
             cx.open_url(&info.html_url);
             return;
-        };
+        }
 
         let progress = Arc::new(UpdateProgress::default());
         self.active_update_progress = Some(Arc::clone(&progress));
@@ -461,138 +500,48 @@ impl TasksModel {
         cx.notify();
         cx.refresh_windows();
 
-        let Some(installer_name) = info.installer_name.clone().filter(|name| {
-            !name.contains(['/', '\\']) && !matches!(name.as_str(), "" | "." | "..")
-        }) else {
-            self.active_update_progress = None;
-            self.updater_status = UpdaterStatus::Error("updater.invalid_package".into());
-            cx.notify();
-            return;
-        };
-        let temp_target = std::env::temp_dir()
-            .join(format!("rdm-update-{}", Uuid::new_v4()))
-            .join(installer_name);
-        let expected_size = info.installer_size;
-        #[cfg(target_os = "linux")]
-        let package = info.package;
-
         let runtime = Arc::clone(&self.runtime);
         let progress_download = Arc::clone(&progress);
-        let target_download = temp_target.clone();
+        let info_download = info.clone();
+        let fallback_url = info.html_url.clone();
 
         cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let download_res = runtime
+            let install_res = runtime
                 .spawn(async move {
-                    rdm_core::updater::download_installer(
-                        &installer_url,
-                        &target_download,
-                        progress_download,
-                        expected_size,
-                    )
-                    .await
+                    rdm_core::updater::download_and_install(&info_download, progress_download).await
                 })
                 .await;
 
-            match download_res {
+            match install_res {
                 Ok(Ok(())) => {
-                    #[cfg(target_os = "linux")]
                     let _ = entity.update(cx, |this, cx| {
                         this.active_update_progress = None;
-                        this.updater_status = UpdaterStatus::Downloaded {
-                            path: temp_target,
-                            package,
-                            error: None,
-                        };
-                        cx.notify();
-                        cx.refresh_windows();
+                        cx.quit();
                     });
-                    #[cfg(not(target_os = "linux"))]
-                    {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.updater_status = UpdaterStatus::Installing;
-                            cx.notify();
-                            cx.refresh_windows();
-                        });
-                        if let Err(error) = rdm_core::updater::launch_installer(&temp_target) {
-                            let _ = entity.update(cx, |this, cx| {
-                                this.active_update_progress = None;
-                                this.updater_status = UpdaterStatus::Error(error.to_string());
-                                cx.notify();
-                                cx.refresh_windows();
-                            });
-                        } else {
-                            let _ = entity.update(cx, |_, cx| cx.quit());
-                        }
-                    }
                 }
                 Ok(Err(e)) => {
                     let _ = entity.update(cx, |this, cx| {
-                        this.updater_status = UpdaterStatus::Error(e.to_string());
                         this.active_update_progress = None;
+                        this.updater_status = UpdaterStatus::Error {
+                            message: format_update_error(e),
+                            release_url: Some(fallback_url),
+                        };
                         cx.notify();
                         cx.refresh_windows();
                     });
                 }
                 Err(e) => {
                     let _ = entity.update(cx, |this, cx| {
-                        this.updater_status = UpdaterStatus::Error(e.to_string());
                         this.active_update_progress = None;
+                        this.updater_status = UpdaterStatus::Error {
+                            message: e.to_string(),
+                            release_url: Some(fallback_url),
+                        };
                         cx.notify();
                         cx.refresh_windows();
                     });
                 }
             }
-        })
-        .detach();
-    }
-
-    pub fn open_downloaded_update(&mut self, cx: &mut Context<Self>) {
-        let UpdaterStatus::Downloaded {
-            path,
-            package,
-            error,
-        } = &mut self.updater_status
-        else {
-            return;
-        };
-        if !matches!(package, PackageKind::Deb | PackageKind::Rpm) {
-            cx.reveal_path(path);
-            return;
-        }
-        *error = None;
-        let child = match std::process::Command::new("xdg-open").arg(&path).spawn() {
-            Ok(child) => child,
-            Err(failure) => {
-                *error = Some(failure.to_string());
-                cx.notify();
-                cx.refresh_windows();
-                return;
-            }
-        };
-        let target = path.clone();
-        let work = self.runtime.spawn_blocking(move || {
-            let mut child = child;
-            let status = child.wait()?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err(std::io::Error::other("updater.open_failed"))
-            }
-        });
-        cx.spawn(async move |entity: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let result = work
-                .await
-                .map_err(|error| error.to_string())
-                .and_then(|result| result.map_err(|error| error.to_string()));
-            let _ = entity.update(cx, |this, cx| {
-                if let UpdaterStatus::Downloaded { path, error, .. } = &mut this.updater_status
-                    && *path == target
-                {
-                    *error = result.err();
-                    cx.notify();
-                    cx.refresh_windows();
-                }
-            });
         })
         .detach();
     }
@@ -1012,6 +961,13 @@ impl CoreContext for App {
 
     fn notifications(&self) -> &Entity<NotificationsModel> {
         &self.global::<AppState>().notifications
+    }
+}
+
+fn format_update_error(error: rdm_core::EngineError) -> String {
+    match error {
+        rdm_core::EngineError::UpdateError(message) => message,
+        other => other.to_string(),
     }
 }
 

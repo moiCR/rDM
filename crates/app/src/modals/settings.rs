@@ -10,7 +10,9 @@ use gpui_kit::{
 use std::{path::PathBuf, sync::Arc};
 
 use crate::{
-    components::{ActionTooltip, Button, ButtonVariants, IconButton, Input, InputState, Modal},
+    components::{
+        ActionTooltip, Button, ButtonVariants, IconButton, Input, InputState, Modal, ProgressBar,
+    },
     lang::{ActiveLang, Lang},
     layout::NavigationStyle,
     state::{CoreContext, UpdaterStatus},
@@ -1180,6 +1182,9 @@ impl SettingsModal {
                         ..
                     } => {
                         if *total_bytes > 0 {
+                            let percent = ((*downloaded_bytes as f64 / *total_bytes as f64)
+                                * 100.0)
+                                .clamp(0.0, 100.0);
                             cx.lang().get_with(
                                 "updater.progress",
                                 &[
@@ -1188,14 +1193,7 @@ impl SettingsModal {
                                         &format!("{:.1}", *downloaded_bytes as f64 / 1048576.0),
                                     ),
                                     ("total", &format!("{:.1}", *total_bytes as f64 / 1048576.0)),
-                                    (
-                                        "percent",
-                                        &format!(
-                                            "{:.0}",
-                                            (*downloaded_bytes as f64 / *total_bytes as f64)
-                                                * 100.0
-                                        ),
-                                    ),
+                                    ("percent", &format!("{percent:.0}")),
                                 ],
                             )
                         } else {
@@ -1208,139 +1206,122 @@ impl SettingsModal {
                             )
                         }
                     }
-                    UpdaterStatus::Downloaded { package, error, .. } => error
-                        .as_ref()
-                        .map(|error| cx.lang().get(error))
-                        .unwrap_or_else(|| {
-                            if *package == rdm_core::updater::PackageKind::AppImage {
-                                cx.lang().get("updater.appimage_downloaded")
-                            } else {
-                                cx.lang().get("updater.package_downloaded")
-                            }
-                        }),
-                    UpdaterStatus::Installing => cx.lang().get("updater.installing"),
-                    UpdaterStatus::Error(e) => cx
+                    UpdaterStatus::Verifying { .. } => cx.lang().get("updater.verifying"),
+                    UpdaterStatus::Installing { .. } => cx.lang().get("updater.installing"),
+                    UpdaterStatus::Error { message, .. } => cx
                         .lang()
-                        .get_with("updater.error", &[("error", &cx.lang().get(e))]),
+                        .get_with("updater.error", &[("error", &cx.lang().get(message))]),
                 };
+                let download_progress = match &updater_status {
+                    UpdaterStatus::Downloading {
+                        downloaded_bytes,
+                        total_bytes,
+                        ..
+                    } if *total_bytes > 0 => Some(
+                        ((*downloaded_bytes as f64 / *total_bytes as f64) * 100.0).clamp(0.0, 100.0)
+                            as f32,
+                    ),
+                    _ => None,
+                };
+                let release_link = match &updater_status {
+                    UpdaterStatus::Available(info) if info.can_auto_install() => {
+                        Some(info.html_url.clone())
+                    }
+                    UpdaterStatus::Error { release_url, .. } => release_url.clone(),
+                    _ => None,
+                };
+
                 div()
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .flex_wrap()
-                    .gap_3()
+                    .flex_col()
+                    .gap_2()
                     .py_2p5()
-                    .child(Self::row_label(
-                        cx.lang().get_with(
-                            "updater.title",
-                            &[("version", rdm_core::updater::current_version())],
-                        ),
-                        status_text,
-                        palette,
-                    ))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .child(match &updater_status {
-                                UpdaterStatus::Available(info) => {
-                                    let label = if info.installer_url.is_none() {
-                                        cx.lang().get("updater.view_release")
-                                    } else if cfg!(target_os = "linux") {
-                                        cx.lang().get("updater.download")
-                                    } else {
-                                        cx.lang().get("updater.install")
-                                    };
-                                    let tasks_model = cx.tasks_model().clone();
-                                    Self::action_button("btn-install-update", label, true).on_click(
-                                        move |_, window, cx| {
-                                            tasks_model.update(cx, |model, cx| {
-                                                model.install_update(cx);
-                                            });
-                                            window.refresh();
-                                        },
-                                    )
-                                }
-                                UpdaterStatus::Downloaded { package, .. } => {
-                                    let tasks_model = cx.tasks_model().clone();
-                                    let label = if matches!(
-                                        package,
-                                        rdm_core::updater::PackageKind::Deb
-                                            | rdm_core::updater::PackageKind::Rpm
-                                    ) {
-                                        cx.lang().get("updater.open_package")
-                                    } else {
-                                        cx.lang().get("updater.view_file")
-                                    };
-                                    Self::action_button("btn-open-update", label, false).on_click(
-                                        move |_, _, cx| {
-                                            tasks_model.update(cx, |model, cx| {
-                                                model.open_downloaded_update(cx)
-                                            });
-                                        },
-                                    )
-                                }
-                                UpdaterStatus::Checking
-                                | UpdaterStatus::Downloading { .. }
-                                | UpdaterStatus::Installing => Self::action_button(
-                                    "btn-checking-update",
-                                    cx.lang().get("updater.busy"),
-                                    false,
-                                )
-                                .disabled(true),
-                                _ => {
-                                    let tasks_model = cx.tasks_model().clone();
-                                    Self::action_button(
-                                        "btn-check-updates",
-                                        cx.lang().get("updater.check"),
-                                        false,
-                                    )
-                                    .on_click(
-                                        move |_, window, cx| {
-                                            tasks_model.update(cx, |model, cx| {
-                                                model.check_for_updates(cx);
-                                            });
-                                            window.refresh();
-                                        },
-                                    )
-                                }
-                            })
-                            .children(
-                                if let UpdaterStatus::Downloaded { path, .. } = &updater_status {
-                                    let path = path.clone();
-                                    Some(
-                                        Self::action_button(
-                                            "btn-update-folder",
-                                            cx.lang().get("updater.folder"),
-                                            false,
-                                        )
-                                        .on_click(move |_, _, cx| cx.reveal_path(&path)),
-                                    )
-                                } else {
-                                    None
-                                },
-                            )
-                            .children(
-                                matches!(&updater_status, UpdaterStatus::Downloaded { .. }).then(
-                                    || {
-                                        let tasks_model = cx.tasks_model().clone();
-                                        Self::action_button(
-                                            "btn-update-recheck",
-                                            cx.lang().get("updater.check"),
-                                            false,
-                                        )
-                                        .on_click(
-                                            move |_, _, cx| {
-                                                tasks_model.update(cx, |model, cx| {
-                                                    model.check_for_updates(cx)
-                                                });
-                                            },
-                                        )
-                                    },
+                            .justify_between()
+                            .flex_wrap()
+                            .gap_3()
+                            .child(Self::row_label(
+                                cx.lang().get_with(
+                                    "updater.title",
+                                    &[("version", rdm_core::updater::current_version())],
                                 ),
+                                status_text,
+                                palette,
+                            ))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .children(release_link.map(|url| {
+                                        Self::action_button(
+                                            "btn-view-release",
+                                            cx.lang().get("updater.view_release"),
+                                            false,
+                                        )
+                                        .on_click(move |_, _, cx| cx.open_url(&url))
+                                    }))
+                                    .child(match &updater_status {
+                                        UpdaterStatus::Available(info) => {
+                                            if info.can_auto_install() {
+                                                let tasks_model = cx.tasks_model().clone();
+                                                Self::action_button(
+                                                    "btn-install-update",
+                                                    cx.lang().get("updater.install"),
+                                                    true,
+                                                )
+                                                .on_click(move |_, window, cx| {
+                                                    tasks_model.update(cx, |model, cx| {
+                                                        model.install_update(cx);
+                                                    });
+                                                    window.refresh();
+                                                })
+                                            } else {
+                                                let url = info.html_url.clone();
+                                                Self::action_button(
+                                                    "btn-view-release-primary",
+                                                    cx.lang().get("updater.view_release"),
+                                                    true,
+                                                )
+                                                .on_click(move |_, _, cx| cx.open_url(&url))
+                                            }
+                                        }
+                                        UpdaterStatus::Checking
+                                        | UpdaterStatus::Downloading { .. }
+                                        | UpdaterStatus::Verifying { .. }
+                                        | UpdaterStatus::Installing { .. } => Self::action_button(
+                                            "btn-checking-update",
+                                            cx.lang().get("updater.busy"),
+                                            false,
+                                        )
+                                        .disabled(true),
+                                        UpdaterStatus::Idle
+                                        | UpdaterStatus::UpToDate
+                                        | UpdaterStatus::Error { .. } => {
+                                            let tasks_model = cx.tasks_model().clone();
+                                            Self::action_button(
+                                                "btn-check-updates",
+                                                cx.lang().get("updater.check"),
+                                                false,
+                                            )
+                                            .on_click(
+                                                move |_, window, cx| {
+                                                    tasks_model.update(cx, |model, cx| {
+                                                        model.check_for_updates(cx);
+                                                    });
+                                                    window.refresh();
+                                                },
+                                            )
+                                        }
+                                    }),
                             ),
                     )
+                    .children(download_progress.map(|percent| {
+                        ProgressBar::new("settings-update-progress", percent).color(palette.accent)
+                    }))
             });
 
         div()

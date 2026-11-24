@@ -11,10 +11,14 @@ on:
         description: Git ref to build
         required: true
         type: string
+    outputs:
+      platform_manifest:
+        description: Windows updater manifest entries
+        value: ${{ jobs.package.outputs.platform_manifest }}
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing release tag, for example v1.0.0
+        description: Existing release tag, for example v1.3.0
         required: true
         type: string
       source_ref:
@@ -27,6 +31,8 @@ permissions:
 jobs:
   package:
     runs-on: windows-2025
+    outputs:
+      platform_manifest: ${{ steps.manifest.outputs.platform_manifest }}
     concurrency:
       group: release-windows-${{ inputs.release_tag }}
       cancel-in-progress: false
@@ -44,6 +50,23 @@ jobs:
       - name: Cache Rust build
         uses: swatinem/rust-cache@v2
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validate updater signing configuration
+        env:
+          RDM_UPDATER_PUBLIC_KEY: ${{ secrets.RDM_UPDATER_PUBLIC_KEY || vars.RDM_UPDATER_PUBLIC_KEY }}
+          RDM_SIGNING_PRIVATE_KEY: ${{ secrets.RDM_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RDM_UPDATER_PUBLIC_KEY)) {
+            throw 'Missing RDM_UPDATER_PUBLIC_KEY repository variable or secret.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:RDM_SIGNING_PRIVATE_KEY)) {
+            throw 'Missing RDM_SIGNING_PRIVATE_KEY repository secret.'
+          }
+
       - name: Validate release target
         id: version
         env:
@@ -58,15 +81,43 @@ jobs:
           gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY
           "version=$version" >> $env:GITHUB_OUTPUT
 
-      - name: Install Inno Setup
-        run: choco install innosetup --version=6.7.1 --yes --no-progress
+      - name: Install Inno Setup and Tauri signer
+        run: |
+          choco install innosetup --version=6.7.1 --yes --no-progress
+          npm install --global @tauri-apps/cli
 
       - name: Build installer and portable archive
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          RDM_UPDATER_PUBLIC_KEY: ${{ secrets.RDM_UPDATER_PUBLIC_KEY || vars.RDM_UPDATER_PUBLIC_KEY }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           ./scripts/package-windows.ps1 -Version $env:VERSION
+
+      - name: Sign installer and generate updater fragment
+        id: manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.RDM_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.RDM_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $installer = "dist/rDM-Setup-v$env:VERSION-x64.exe"
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+            throw "Missing release asset $installer."
+          }
+          tauri signer sign $installer --app-version $env:VERSION
+          if (-not (Test-Path -LiteralPath "$installer.sig" -PathType Leaf)) {
+            throw "Missing generated installer signature $installer.sig."
+          }
+          node packaging/updater/manifest.mjs fragment `
+            --platform windows `
+            --tag $env:RELEASE_TAG `
+            --version $env:VERSION `
+            --dir dist `
+            --out dist/platform-manifest.json
+          $manifest = (Get-Content dist/platform-manifest.json -Raw).Trim()
+          "platform_manifest=$manifest" >> $env:GITHUB_OUTPUT
 
       - name: Replace Windows release assets
         env:
@@ -74,10 +125,52 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           $installer = "dist/rDM-Setup-v$env:VERSION-x64.exe"
+          $signature = "$installer.sig"
           $archive = "dist/rDM-v$env:VERSION-portable-x64.zip"
-          foreach ($asset in @($installer, $archive)) {
+          foreach ($asset in @($installer, $signature, $archive)) {
             if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
               throw "Missing release asset $asset."
             }
           }
-          gh release upload $env:RELEASE_TAG $installer $archive --repo $env:GITHUB_REPOSITORY --clobber
+          gh release upload $env:RELEASE_TAG $installer $signature $archive --repo $env:GITHUB_REPOSITORY --clobber
+
+  update-manifest:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: release-manifest-${{ inputs.release_tag }}
+      cancel-in-progress: false
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      PLATFORM_MANIFEST: ${{ needs.package.outputs.platform_manifest }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || format('refs/tags/{0}', inputs.release_tag) }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Merge Windows entries with existing release manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p target/updater-manifest
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir target/updater-manifest
+          printf '%s' "$PLATFORM_MANIFEST" > target/updater-manifest/platform.json
+          node packaging/updater/manifest.mjs merge \
+            --version "${RELEASE_TAG#v}" \
+            --tag "$RELEASE_TAG" \
+            --notes-file CHANGELOG.md \
+            --manifest target/updater-manifest/latest.json \
+            --fragment target/updater-manifest/platform.json \
+            --out target/updater-manifest/latest.json
+          gh release upload "$RELEASE_TAG" target/updater-manifest/latest.json \
+            --repo "$GITHUB_REPOSITORY" --clobber

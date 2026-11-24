@@ -269,6 +269,8 @@ mod tests {
             installer_name: None,
             installer_size: 0,
             package: rdm_core::updater::PackageKind::Manual,
+            signature: None,
+            appimage_path: None,
         }
     }
 

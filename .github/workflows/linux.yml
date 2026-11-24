@@ -11,10 +11,14 @@ on:
         description: Git ref to build
         required: true
         type: string
+    outputs:
+      platform_manifest:
+        description: Linux updater manifest entries
+        value: ${{ jobs.package.outputs.platform_manifest }}
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing release tag, for example v1.0.0
+        description: Existing release tag, for example v1.3.0
         required: true
         type: string
       source_ref:
@@ -31,6 +35,8 @@ defaults:
 jobs:
   package:
     runs-on: ubuntu-24.04
+    outputs:
+      platform_manifest: ${{ steps.manifest.outputs.platform_manifest }}
     concurrency:
       group: release-linux-${{ inputs.release_tag }}
       cancel-in-progress: false
@@ -47,6 +53,25 @@ jobs:
 
       - name: Cache Rust build
         uses: swatinem/rust-cache@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validate updater signing configuration
+        env:
+          RDM_UPDATER_PUBLIC_KEY: ${{ secrets.RDM_UPDATER_PUBLIC_KEY || vars.RDM_UPDATER_PUBLIC_KEY }}
+          RDM_SIGNING_PRIVATE_KEY: ${{ secrets.RDM_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${RDM_UPDATER_PUBLIC_KEY// }" ]]; then
+            echo "Missing RDM_UPDATER_PUBLIC_KEY repository variable or secret." >&2
+            exit 1
+          fi
+          if [[ -z "${RDM_SIGNING_PRIVATE_KEY// }" ]]; then
+            echo "Missing RDM_SIGNING_PRIVATE_KEY repository secret." >&2
+            exit 1
+          fi
 
       - name: Validate release target
         id: version
@@ -72,6 +97,7 @@ jobs:
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxcb-randr0-dev libxcb-icccm4-dev libxcb-image0-dev \
             libxcb-keysyms1-dev libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev
+          npm install --global @tauri-apps/cli
 
       - name: Validate Linux implementation
         run: |
@@ -80,6 +106,8 @@ jobs:
           cargo test --locked --workspace
 
       - name: Build release binaries
+        env:
+          RDM_UPDATER_PUBLIC_KEY: ${{ secrets.RDM_UPDATER_PUBLIC_KEY || vars.RDM_UPDATER_PUBLIC_KEY }}
         run: cargo build --release --locked --workspace
 
       - name: Stage Linux binaries and desktop assets
@@ -228,6 +256,29 @@ jobs:
 
           target/appimagetool.AppImage --no-appstream "$appdir" "dist/rDM-${VERSION}-x86_64.AppImage"
 
+      - name: Sign Linux installers and generate updater fragment
+        id: manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.RDM_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.RDM_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for package in \
+            "dist/rDM-${VERSION}-x86_64.AppImage" \
+            "dist/rdm_${VERSION}_amd64.deb" \
+            "dist/rdm-${VERSION}-1.x86_64.rpm"; do
+            tauri signer sign "$package" --app-version "$VERSION"
+            test -s "$package.sig"
+          done
+
+          node packaging/updater/manifest.mjs fragment \
+            --platform linux \
+            --tag "$RELEASE_TAG" \
+            --version "$VERSION" \
+            --dir dist \
+            --out dist/platform-manifest.json
+          printf 'platform_manifest=%s\n' "$(cat dist/platform-manifest.json)" >> "$GITHUB_OUTPUT"
+
       - name: Replace Linux release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -235,6 +286,50 @@ jobs:
         run: |
           gh release upload "$RELEASE_TAG" \
             "dist/rDM-${VERSION}-x86_64.AppImage" \
+            "dist/rDM-${VERSION}-x86_64.AppImage.sig" \
             "dist/rdm_${VERSION}_amd64.deb" \
+            "dist/rdm_${VERSION}_amd64.deb.sig" \
             "dist/rdm-${VERSION}-1.x86_64.rpm" \
+            "dist/rdm-${VERSION}-1.x86_64.rpm.sig" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+  update-manifest:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: release-manifest-${{ inputs.release_tag }}
+      cancel-in-progress: false
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      PLATFORM_MANIFEST: ${{ needs.package.outputs.platform_manifest }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || format('refs/tags/{0}', inputs.release_tag) }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Merge Linux entries with existing release manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p target/updater-manifest
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir target/updater-manifest
+          printf '%s' "$PLATFORM_MANIFEST" > target/updater-manifest/platform.json
+          node packaging/updater/manifest.mjs merge \
+            --version "${RELEASE_TAG#v}" \
+            --tag "$RELEASE_TAG" \
+            --notes-file CHANGELOG.md \
+            --manifest target/updater-manifest/latest.json \
+            --fragment target/updater-manifest/platform.json \
+            --out target/updater-manifest/latest.json
+          gh release upload "$RELEASE_TAG" target/updater-manifest/latest.json \
             --repo "$GITHUB_REPOSITORY" --clobber

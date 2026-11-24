@@ -54,17 +54,18 @@ impl RenderOnce for Titlebar {
                 total_bytes,
                 ..
             } => {
-                let pct = if total_bytes > 0 {
-                    (downloaded_bytes as f64 / total_bytes as f64 * 100.0) as u32
-                } else {
-                    0
-                };
+                let pct = downloaded_bytes
+                    .saturating_mul(100)
+                    .checked_div(total_bytes)
+                    .map_or(0, |value| value.min(100));
                 Some((
                     cx.lang()
                         .get_with("titlebar.updating", &[("percent", &pct.to_string())]),
                     true,
                 ))
             }
+            UpdaterStatus::Verifying { .. } => Some((cx.lang().get("titlebar.verifying"), true)),
+            UpdaterStatus::Installing { .. } => Some((cx.lang().get("titlebar.installing"), true)),
             _ => None,
         };
         let accent = cx.theme().accent();
