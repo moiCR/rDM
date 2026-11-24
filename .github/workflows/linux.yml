@@ -61,13 +61,8 @@ jobs:
 
       - name: Validate updater signing configuration
         env:
-          RDM_UPDATER_PUBLIC_KEY: ${{ secrets.RDM_UPDATER_PUBLIC_KEY || vars.RDM_UPDATER_PUBLIC_KEY }}
           RDM_SIGNING_PRIVATE_KEY: ${{ secrets.RDM_SIGNING_PRIVATE_KEY }}
         run: |
-          if [[ -z "${RDM_UPDATER_PUBLIC_KEY// }" ]]; then
-            echo "Missing RDM_UPDATER_PUBLIC_KEY repository variable or secret." >&2
-            exit 1
-          fi
           if [[ -z "${RDM_SIGNING_PRIVATE_KEY// }" ]]; then
             echo "Missing RDM_SIGNING_PRIVATE_KEY repository secret." >&2
             exit 1

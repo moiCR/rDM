@@ -23,7 +23,8 @@ use crate::error::EngineError;
 const RELEASE_URL: &str = "https://github.com/moiCR/rDM/releases/latest/download/latest.json";
 const RELEASE_DOWNLOAD_PREFIX: &str = "https://github.com/moiCR/rDM/releases/download/";
 const RELEASE_PAGE_PREFIX: &str = "https://github.com/moiCR/rDM/releases/tag/v";
-const PUBLIC_KEY: Option<&str> = option_env!("RDM_UPDATER_PUBLIC_KEY");
+const DEFAULT_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM3MUE0OTA4N0ZEQTYzNzMKUldSelk5cC9DRWthTjY4Q09JSEhXa2pOYU1CUDAxVVhiYjRqYW4wTGlkL2Z1ck00Y25GWEJHR2UK";
+const PUBLIC_KEY_OVERRIDE: Option<&str> = option_env!("RDM_UPDATER_PUBLIC_KEY");
 const MAX_UPDATE_BYTES: u64 = 1_073_741_824;
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,7 +168,12 @@ fn select_public_key(raw: Option<&str>) -> Result<&str, EngineError> {
 }
 
 fn configured_public_key() -> Result<&'static str, EngineError> {
-    select_public_key(PUBLIC_KEY)
+    select_public_key(Some(
+        PUBLIC_KEY_OVERRIDE
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .unwrap_or(DEFAULT_PUBLIC_KEY),
+    ))
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -909,6 +915,12 @@ mod tests {
         assert!(select_public_key(None).is_err());
         assert!(select_public_key(Some("   ")).is_err());
         assert_eq!(select_public_key(Some("  RWabc  "))?, "RWabc");
+        let embedded = decode_public_key(DEFAULT_PUBLIC_KEY)?;
+        assert!(
+            embedded
+                .untrusted_comment()
+                .is_some_and(|comment| comment.contains("371A49087FDA6373"))
+        );
 
         let raw_two_line = format!(
             "untrusted comment: minisign public key: E7620F1842B4E81F\n{TEST_PUBLIC_KEY_B64}"

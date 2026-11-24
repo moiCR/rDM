@@ -4,17 +4,13 @@ The `release` workflow creates a release in `moiCR/rDM` using `CHANGELOG.md`, se
 
 ## Key generation & GitHub configuration
 
-Generate a dedicated Minisign keypair for rDM (keep the private key secret and never commit it to Git):
-
-```bash
-npx @tauri-apps/cli signer generate -w ~/.rdm/rdm.key
-```
+Public key `371A49087FDA6373` is embedded in `crates/core/src/updater.rs`, so both local builds and CI builds verify signed releases out of the box.
 
 Configure these values in `moiCR/rDM` (**Settings -> Secrets and variables -> Actions**):
 
-- **Variable (or Secret) `RDM_UPDATER_PUBLIC_KEY`**: contents of the generated `.pub` file (two-line `untrusted comment:` + key, single-line base64 key, or base64-encoded `.pub` file). Embedded into release binaries at compile time via `option_env!("RDM_UPDATER_PUBLIC_KEY")`.
-- **Secret `RDM_SIGNING_PRIVATE_KEY`**: contents of the generated private key file (`~/.rdm/rdm.key`). Used by `tauri signer sign` during CI builds.
-- **Secret `RDM_SIGNING_PRIVATE_KEY_PASSWORD`**: password protecting `RDM_SIGNING_PRIVATE_KEY` (leave unset or empty if the key has no password).
+- **Secret `RDM_SIGNING_PRIVATE_KEY`** *(required)*: contents of the private Minisign key paired with public key `371A49087FDA6373`. Used by `tauri signer sign` during CI builds.
+- **Secret `RDM_SIGNING_PRIVATE_KEY_PASSWORD`** *(optional)*: password protecting `RDM_SIGNING_PRIVATE_KEY` (leave unset or empty if the key has no password).
+- **Variable or Secret `RDM_UPDATER_PUBLIC_KEY`** *(optional)*: overrides the embedded public key at compile time if rotating keys without editing source first.
 
 GitHub's `GITHUB_TOKEN` publishes releases and assets automatically.
 
