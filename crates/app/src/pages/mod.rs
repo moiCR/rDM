@@ -82,7 +82,6 @@ impl Page for HomePage {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme.background())
             .text_color(theme.text_color())
             .py_5()
             .child(

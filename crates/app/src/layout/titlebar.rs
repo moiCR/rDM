@@ -35,12 +35,14 @@ impl Default for Titlebar {
 }
 
 impl RenderOnce for Titlebar {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let background = cx.theme().background();
         let surface_hover = cx.theme().surface_hover();
         let text_color = cx.theme().text_color();
         let text_muted = cx.theme().text_muted();
         let error = cx.theme().error();
+        let show_window_controls = !cfg!(target_os = "linux")
+            || matches!(window.window_decorations(), Decorations::Client { .. });
 
         let updater_status = cx.tasks_model().read(cx).updater_status().clone();
         let update_badge = match updater_status {
@@ -69,6 +71,7 @@ impl RenderOnce for Titlebar {
             _ => None,
         };
         let accent = cx.theme().accent();
+        let radii = gpui_kit::component::window_corner_radii(window, cx);
 
         div()
             .flex()
@@ -76,6 +79,8 @@ impl RenderOnce for Titlebar {
             .justify_between()
             .h_12()
             .w_full()
+            .rounded_tl(radii.top_left)
+            .rounded_tr(radii.top_right)
             .bg(background)
             .text_xs()
             .text_color(text_muted)
@@ -105,44 +110,47 @@ impl RenderOnce for Titlebar {
                 div()
                     .id("titlebar-drag")
                     .window_control_area(WindowControlArea::Drag)
-                    .when(cfg!(target_os = "linux"), |element| {
-                        let should_move = _window.use_state(cx, |_, _| false);
-                        element
-                            .on_mouse_down_out(
-                                _window.listener_for(&should_move, |should_move, _, _, _| {
-                                    *should_move = false
-                                }),
-                            )
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                _window.listener_for(
+                    .when(
+                        cfg!(target_os = "linux") && show_window_controls,
+                        |element| {
+                            let should_move = window.use_state(cx, |_, _| false);
+                            element
+                                .on_mouse_down_out(
+                                    window.listener_for(&should_move, |should_move, _, _, _| {
+                                        *should_move = false
+                                    }),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    window.listener_for(
+                                        &should_move,
+                                        |should_move, event: &MouseDownEvent, window, _| {
+                                            *should_move = event.click_count == 1;
+                                            if event.click_count == 2 {
+                                                window.zoom_window();
+                                            }
+                                        },
+                                    ),
+                                )
+                                .on_mouse_up(
+                                    MouseButton::Left,
+                                    window.listener_for(&should_move, |should_move, _, _, _| {
+                                        *should_move = false;
+                                    }),
+                                )
+                                .on_mouse_move(window.listener_for(
                                     &should_move,
-                                    |should_move, event: &MouseDownEvent, window, _| {
-                                        *should_move = event.click_count == 1;
-                                        if event.click_count == 2 {
-                                            window.zoom_window();
+                                    |should_move, event: &MouseMoveEvent, window, _| {
+                                        if *should_move {
+                                            *should_move = false;
+                                            if event.pressed_button == Some(MouseButton::Left) {
+                                                window.start_window_move();
+                                            }
                                         }
                                     },
-                                ),
-                            )
-                            .on_mouse_up(
-                                MouseButton::Left,
-                                _window.listener_for(&should_move, |should_move, _, _, _| {
-                                    *should_move = false;
-                                }),
-                            )
-                            .on_mouse_move(_window.listener_for(
-                                &should_move,
-                                |should_move, event: &MouseMoveEvent, window, _| {
-                                    if *should_move {
-                                        *should_move = false;
-                                        if event.pressed_button == Some(MouseButton::Left) {
-                                            window.start_window_move();
-                                        }
-                                    }
-                                },
-                            ))
-                    })
+                                ))
+                        },
+                    )
                     .flex()
                     .items_center()
                     .flex_1()
@@ -184,84 +192,87 @@ impl RenderOnce for Titlebar {
                     )
                     .child(label)
             }))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .h_full()
-                    .flex_shrink_0()
-                    .child(
-                        div()
-                            .id("window-min")
-                            .group("window-min")
-                            .window_control_area(WindowControlArea::Min)
-                            .when(cfg!(target_os = "linux"), |element| {
-                                element.on_click(|_, window, _| window.minimize_window())
-                            })
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(46.0))
-                            .h_full()
-                            .hover(move |style| style.bg(surface_hover))
-                            .child(
-                                svg()
-                                    .path("icons/minus.svg")
-                                    .size_3p5()
-                                    .text_color(text_muted)
-                                    .group_hover("window-min", move |style| {
-                                        style.text_color(text_color)
-                                    }),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("window-max")
-                            .group("window-max")
-                            .window_control_area(WindowControlArea::Max)
-                            .when(cfg!(target_os = "linux"), |element| {
-                                element.on_click(|_, window, _| window.zoom_window())
-                            })
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(46.0))
-                            .h_full()
-                            .hover(move |style| style.bg(surface_hover))
-                            .child(
-                                svg()
-                                    .path("icons/square.svg")
-                                    .size_3()
-                                    .text_color(text_muted)
-                                    .group_hover("window-max", move |style| {
-                                        style.text_color(text_color)
-                                    }),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("window-close")
-                            .group("window-close")
-                            .window_control_area(WindowControlArea::Close)
-                            .when(cfg!(target_os = "linux"), |element| {
-                                element.on_click(|_, window, _| window.remove_window())
-                            })
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(46.0))
-                            .h_full()
-                            .hover(move |style| style.bg(error))
-                            .child(
-                                svg()
-                                    .path("icons/x.svg")
-                                    .size_3p5()
-                                    .text_color(text_muted)
-                                    .group_hover("window-close", |style| {
-                                        style.text_color(rgb(0xffffff))
-                                    }),
-                            ),
-                    ),
-            )
+            .when(show_window_controls, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .h_full()
+                        .flex_shrink_0()
+                        .child(
+                            div()
+                                .id("window-min")
+                                .group("window-min")
+                                .window_control_area(WindowControlArea::Min)
+                                .when(cfg!(target_os = "linux"), |element| {
+                                    element.on_click(|_, window, _| window.minimize_window())
+                                })
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .w(px(46.0))
+                                .h_full()
+                                .hover(move |style| style.bg(surface_hover))
+                                .child(
+                                    svg()
+                                        .path("icons/minus.svg")
+                                        .size_3p5()
+                                        .text_color(text_muted)
+                                        .group_hover("window-min", move |style| {
+                                            style.text_color(text_color)
+                                        }),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id("window-max")
+                                .group("window-max")
+                                .window_control_area(WindowControlArea::Max)
+                                .when(cfg!(target_os = "linux"), |element| {
+                                    element.on_click(|_, window, _| window.zoom_window())
+                                })
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .w(px(46.0))
+                                .h_full()
+                                .hover(move |style| style.bg(surface_hover))
+                                .child(
+                                    svg()
+                                        .path("icons/square.svg")
+                                        .size_3()
+                                        .text_color(text_muted)
+                                        .group_hover("window-max", move |style| {
+                                            style.text_color(text_color)
+                                        }),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id("window-close")
+                                .group("window-close")
+                                .window_control_area(WindowControlArea::Close)
+                                .when(cfg!(target_os = "linux"), |element| {
+                                    element.on_click(|_, window, _| window.remove_window())
+                                })
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .w(px(46.0))
+                                .h_full()
+                                .rounded_tr(radii.top_right)
+                                .hover(move |style| style.bg(error))
+                                .child(
+                                    svg()
+                                        .path("icons/x.svg")
+                                        .size_3p5()
+                                        .text_color(text_muted)
+                                        .group_hover("window-close", |style| {
+                                            style.text_color(rgb(0xffffff))
+                                        }),
+                                ),
+                        ),
+                )
+            })
     }
 }

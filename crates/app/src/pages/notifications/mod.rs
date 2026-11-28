@@ -27,7 +27,6 @@ impl Page for NotificationsPage {
 
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let background = theme.background();
         let surface = theme.surface();
         let surface_hover = theme.surface_hover();
         let border = theme.border();
@@ -50,7 +49,6 @@ impl Page for NotificationsPage {
             .flex()
             .flex_col()
             .size_full()
-            .bg(background)
             .text_color(text_color)
             .p_5()
             .child(

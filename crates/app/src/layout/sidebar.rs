@@ -14,7 +14,6 @@ impl RenderOnce for Sidebar {
             .flex_col()
             .w(px(200.0))
             .h_full()
-            .bg(cx.theme().background())
             .px_4()
             .pb_5()
             .child(

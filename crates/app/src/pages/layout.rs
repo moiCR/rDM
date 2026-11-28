@@ -51,6 +51,7 @@ impl PageLayout for RootLayout {
 
         let spring_config = SpringConfig::new(200.0, 24.0, 1.0);
         let collapse_spring = SpringAnimation::new(spring_config).to(!collapsed);
+        let radii = gpui_kit::component::window_corner_radii(window, cx);
 
         div()
             .relative()
@@ -77,6 +78,10 @@ impl PageLayout for RootLayout {
             .flex()
             .flex_col()
             .size_full()
+            .rounded_tl(radii.top_left)
+            .rounded_tr(radii.top_right)
+            .rounded_bl(radii.bottom_left)
+            .rounded_br(radii.bottom_right)
             .font_family("Geist")
             .bg(cx.theme().background())
             .text_color(cx.theme().text_color())

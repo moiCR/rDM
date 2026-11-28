@@ -122,21 +122,25 @@ impl ThemeManager {
         } else {
             (Box::new(dark::DarkTheme), ThemeMode::Dark)
         };
+        let active_bg = theme.background();
+        let active_border = theme.border();
         cx.global_mut::<Self>().active_theme = theme;
         ComponentTheme::change(component_mode, None, cx);
 
-        if component_mode.is_dark() {
-            let dark = dark::DarkTheme;
-            ComponentTheme::update(cx, |theme| {
-                theme.colors.background = dark.background().into();
+        ComponentTheme::update(cx, |theme| {
+            theme.window_radius = gpui::px(12.0);
+            theme.colors.background = active_bg.into();
+            theme.colors.window_border = active_border.into();
+            if component_mode.is_dark() {
+                let dark = dark::DarkTheme;
                 theme.colors.popover = dark.surface().into();
                 theme.colors.list_hover = dark.surface_hover().into();
                 theme.colors.border = dark.border().into();
                 theme.colors.input = dark.border().into();
                 theme.colors.foreground = dark.text_color().into();
                 theme.colors.muted_foreground = dark.text_muted().into();
-            });
-        }
+            }
+        });
     }
 
     pub fn set_accent(&mut self, color: Option<Rgba>) {

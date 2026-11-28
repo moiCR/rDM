@@ -147,7 +147,6 @@ impl Page for DownloadsPage {
             .flex()
             .flex_col()
             .size_full()
-            .bg(palette.background)
             .text_color(palette.text_color)
             .p_5()
             .child(

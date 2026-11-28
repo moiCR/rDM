@@ -133,6 +133,7 @@ impl RenderOnce for Modal {
         let palette_accent = cx.theme().accent();
 
         let viewport = window.viewport_size();
+        let radii = gpui_kit::component::window_corner_radii(window, cx);
         let card_w = self.width.unwrap_or_else(|| px(880.0));
         let card_max_h = self.max_height.unwrap_or_else(|| px(620.0));
         let from_bounds = self.from_bounds;
@@ -322,6 +323,10 @@ impl RenderOnce for Modal {
                             .absolute()
                             .inset_0()
                             .size_full()
+                            .rounded_tl(radii.top_left)
+                            .rounded_tr(radii.top_right)
+                            .rounded_bl(radii.bottom_left)
+                            .rounded_br(radii.bottom_right)
                             .bg(rgb(0x000000))
                             .opacity(backdrop_alpha),
                     )

@@ -204,6 +204,8 @@ pub(crate) fn open_window(cx: &mut App) -> anyhow::Result<gpui::AnyWindowHandle>
             appears_transparent: true,
             traffic_light_position: None,
         }),
+        window_background: gpui::WindowBackgroundAppearance::Transparent,
+        window_decorations: Some(gpui::WindowDecorations::Client),
         ..Default::default()
     };
     let (window, _) = gpui_kit::open_window(options, cx, move |window, cx| {
