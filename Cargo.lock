@@ -5060,7 +5060,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rDM"
-version = "1.3.1"
+version = "1.3.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5273,7 +5273,7 @@ dependencies = [
 
 [[package]]
 name = "rdm-cli"
-version = "1.3.1"
+version = "1.3.2"
 dependencies = [
  "rdm-config",
  "rdm-core",
@@ -5284,7 +5284,7 @@ dependencies = [
 
 [[package]]
 name = "rdm-config"
-version = "1.3.1"
+version = "1.3.2"
 dependencies = [
  "dirs 7.0.0",
  "serde",
@@ -5294,7 +5294,7 @@ dependencies = [
 
 [[package]]
 name = "rdm-core"
-version = "1.3.1"
+version = "1.3.2"
 dependencies = [
  "base64 0.22.1",
  "bytes",

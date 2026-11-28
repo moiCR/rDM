@@ -1,6 +1,6 @@
 #define MyAppName "rDM"
 #ifndef MyAppVersion
-#define MyAppVersion "1.3.1"
+#define MyAppVersion "1.3.2"
 #endif
 #define MyAppPublisher "moiCR"
 #define MyAppURL "https://github.com/moiCR/rDM"

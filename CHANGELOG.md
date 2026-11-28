@@ -1,12 +1,8 @@
 All notable changes to rDM are documented in this file.
 
-## v1.3.1
-
-### Features & Improvements
-
-* **Built-In Update Signature Verification.** Embedded the default rDM Minisign public key so builds verify signed update manifests and installers out of the box, while keeping compile-time key overrides via `RDM_UPDATER_PUBLIC_KEY`.
+## v1.3.2
 
 ### Fixes
 
-* **Linux Titlebar Window Dragging.** Unified the titlebar drag region so dragging the window and double-clicking to maximize work across both sides of the centered search bar without dead zones.
-* **Linux System Tray Download Interception.** Fixed a crash when capturing downloads from the browser extension while rDM is closed to the system tray on Linux, and reset window-scoped modal states cleanly when reopening the window.
+* **KDE Plasma Duplicate Titlebar.** Requested client-side window decorations (`WindowDecorations::Client`) with a transparent surface on Linux so KDE Plasma (KWin) no longer draws a native server-side titlebar above rDM's custom titlebar, and gated Linux window controls and drag handlers on active client-side decorations.
+* **Linux Rounded Window Corners.** Configured a `12px` client-side window corner radius with theme-matched borders across light and dark modes, aligned the root layout, titlebar, close-button hover state, and modal backdrops to the window's active corner radii (keeping corners square when tiled or maximized), and removed redundant inner page and sidebar backgrounds that overlapped the rounded corners on GNOME and KDE.
